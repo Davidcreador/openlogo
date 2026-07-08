@@ -1,4 +1,4 @@
-import { getActiveArtboard, getNodesForArtboard } from "./queries";
+import { getActiveArtboard, getRenderNodesForArtboard } from "./queries";
 import type { LogoDocument, LogoNode, Paint } from "./types";
 
 /**
@@ -167,7 +167,8 @@ function reviewLogoSystem(document: LogoDocument): ReviewFinding[] {
 }
 
 export function analyzeLogoDocument(document: LogoDocument): DesignReview {
-  const activeNodes = getNodesForArtboard(document);
+  // Flattened leaves so grouped shapes are reviewed individually.
+  const activeNodes = getRenderNodesForArtboard(document);
   const visibleNodes = activeNodes.filter((node) => node.visible);
   const findings = [
     ...reviewScale(visibleNodes),

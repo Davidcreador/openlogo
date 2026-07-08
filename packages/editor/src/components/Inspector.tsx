@@ -11,11 +11,14 @@ import {
   AlignStartHorizontal,
   AlignStartVertical,
   AlignVerticalSpaceBetween,
+  ChevronDown,
+  ChevronRight,
   Circle,
   Eye,
   EyeOff,
   FlipHorizontal2,
   FlipVertical2,
+  Folder,
   Lock,
   PenTool,
   RotateCw,
@@ -25,10 +28,13 @@ import {
   Unlock,
 } from "lucide-react";
 import {
+  type GroupNode,
+  type LogoDocument,
   type LogoNode,
   type NodePatch,
   analyzeLogoDocument,
-  getNodesForArtboard,
+  collectLeafNodeIds,
+  unitBounds,
 } from "@openlogo/core";
 import {
   FONT_CATALOG,
@@ -36,6 +42,11 @@ import {
   fontStore,
   nearestWeight,
 } from "../lib/font-store";
+import {
+  rotateUnitBy,
+  setUnitBounds,
+  ungroupSelection,
+} from "../lib/group-ops";
 import {
   alignNodes,
   distributeNodes,
@@ -62,6 +73,7 @@ const NODE_ICONS = {
   ellipse: Circle,
   path: PenTool,
   text: Type,
+  group: Folder,
 } as const;
 
 /** Numeric field that commits on blur/Enter and follows external changes. */
@@ -602,6 +614,104 @@ function DesignSection({
   );
 }
 
+function GroupSection({ group }: { group: GroupNode }) {
+  const document = useDocument();
+  const setSelection = useEditorStore((state) => state.setSelection);
+  // Remount key so the rotate-by field snaps back to 0 after committing.
+  const [rotateNonce, setRotateNonce] = useState(0);
+  const bounds = unitBounds(document, group.id);
+  const leafCount = collectLeafNodeIds(document, [group.id]).length;
+
+  if (!bounds) {
+    return null;
+  }
+
+  return (
+    <section className="inspector-section">
+      <h2>Group</h2>
+      <p className="muted" style={{ marginBottom: 10 }}>
+        {group.name} — {leafCount} object{leafCount === 1 ? "" : "s"}
+      </p>
+
+      <AlignPanel nodeIds={[group.id]} />
+
+      <div className="field-grid">
+        <NumberField
+          label="X"
+          value={bounds.x}
+          onCommit={(x) => setUnitBounds(group.id, { x })}
+        />
+        <NumberField
+          label="Y"
+          value={bounds.y}
+          onCommit={(y) => setUnitBounds(group.id, { y })}
+        />
+        <NumberField
+          label="W"
+          value={bounds.width}
+          onCommit={(width) =>
+            setUnitBounds(group.id, { width: Math.max(1, width) })
+          }
+        />
+        <NumberField
+          label="H"
+          value={bounds.height}
+          onCommit={(height) =>
+            setUnitBounds(group.id, { height: Math.max(1, height) })
+          }
+        />
+        <NumberField
+          key={rotateNonce}
+          label="∠+"
+          value={0}
+          onCommit={(degrees) => {
+            rotateUnitBy(group.id, degrees);
+            setRotateNonce((nonce) => nonce + 1);
+          }}
+        />
+      </div>
+
+      <div className="fill-row">
+        <div className="opacity-field">
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={group.opacity}
+            onChange={(event) =>
+              documentStore.apply({
+                type: "update-nodes",
+                updates: [
+                  {
+                    nodeId: group.id,
+                    patch: { opacity: Number(event.target.value) },
+                  },
+                ],
+              })
+            }
+            aria-label="Group opacity"
+          />
+          <span>{Math.round(group.opacity * 100)}%</span>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        className="outline-button"
+        onClick={() => {
+          const freed = ungroupSelection([group.id]);
+          if (freed.length > 0) {
+            setSelection(freed);
+          }
+        }}
+      >
+        Ungroup (⇧⌘G)
+      </button>
+    </section>
+  );
+}
+
 function SwatchesSection() {
   const document = useDocument();
   const palette = document.palettes[0];
@@ -636,73 +746,143 @@ function SwatchesSection() {
   );
 }
 
+type LayerRow = {
+  node: LogoNode;
+  depth: number;
+  /** Artboard id (top level) or parent group id. */
+  containerId: string;
+  /** z-index within the container's ordering (back-to-front). */
+  zIndex: number;
+};
+
+/** Flattened tree rows, topmost-first, honoring expanded groups. */
+function buildLayerRows(
+  document: LogoDocument,
+  containerId: string,
+  childIds: readonly string[],
+  depth: number,
+  expanded: ReadonlySet<string>,
+): LayerRow[] {
+  const rows: LayerRow[] = [];
+  for (let zIndex = childIds.length - 1; zIndex >= 0; zIndex -= 1) {
+    const node = document.nodes[childIds[zIndex]!];
+    if (!node) {
+      continue;
+    }
+    rows.push({ node, depth, containerId, zIndex });
+    if (node.type === "group" && expanded.has(node.id)) {
+      rows.push(
+        ...buildLayerRows(document, node.id, node.children, depth + 1, expanded),
+      );
+    }
+  }
+  return rows;
+}
+
 function LayersSection() {
   const document = useDocument();
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   const setSelection = useEditorStore((state) => state.setSelection);
-  const activeNodes = getNodesForArtboard(document);
+  const setActiveGroupId = useEditorStore((state) => state.setActiveGroupId);
   // Ref, not state: drop can fire before a state commit lands.
-  const dragIdRef = useRef<string | null>(null);
-  const [dropIndex, setDropIndex] = useState<number | null>(null);
+  const dragRef = useRef<LayerRow | null>(null);
+  const [dropRow, setDropRow] = useState<number | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const artboard = document.artboards.find(
+    (item) => item.id === document.activeArtboardId,
+  );
+  const rows = artboard
+    ? buildLayerRows(document, artboard.id, artboard.nodeIds, 0, expanded)
+    : [];
 
   function toggle(nodeId: string, patch: NodePatch) {
     documentStore.apply({ type: "update-nodes", updates: [{ nodeId, patch }] });
   }
 
-  /** Display list is topmost-first; nodeIds is back-to-front. */
-  function displayToZ(displayIndex: number): number {
-    return activeNodes.length - 1 - displayIndex;
+  function toggleExpanded(groupId: string) {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(groupId)) {
+        next.delete(groupId);
+      } else {
+        next.add(groupId);
+      }
+      return next;
+    });
   }
 
-  function handleDrop(displayIndex: number) {
-    const dragId = dragIdRef.current;
-    if (dragId === null) {
+  function handleDrop(target: LayerRow) {
+    const dragged = dragRef.current;
+    dragRef.current = null;
+    setDropRow(null);
+    // Reorder within one container only; cross-group moves go through
+    // group/ungroup for now.
+    if (!dragged || dragged.containerId !== target.containerId) {
       return;
     }
     documentStore.apply({
       type: "reorder-node",
-      artboardId: document.activeArtboardId,
-      nodeId: dragId,
-      toIndex: displayToZ(displayIndex),
+      containerId: dragged.containerId,
+      nodeId: dragged.node.id,
+      toIndex: target.zIndex,
     });
-    dragIdRef.current = null;
-    setDropIndex(null);
   }
 
   return (
     <section className="inspector-section">
       <h2>Layers</h2>
       <div className="layer-rows">
-        {[...activeNodes].reverse().map((node, displayIndex) => {
+        {rows.map((row, rowIndex) => {
+          const { node } = row;
           const Icon = NODE_ICONS[node.type];
           const selected = selectedNodeIds.includes(node.id);
+          const isGroup = node.type === "group";
           return (
             <div
               key={node.id}
               className={`layer-row ${selected ? "active" : ""} ${
                 node.visible ? "" : "is-hidden"
-              } ${dropIndex === displayIndex ? "drop-target" : ""}`}
+              } ${dropRow === rowIndex ? "drop-target" : ""}`}
+              style={row.depth > 0 ? { paddingLeft: row.depth * 14 } : undefined}
               draggable
               onDragStart={(event) => {
-                dragIdRef.current = node.id;
+                dragRef.current = row;
                 event.dataTransfer.effectAllowed = "move";
               }}
               onDragOver={(event) => {
                 event.preventDefault();
-                if (dropIndex !== displayIndex) {
-                  setDropIndex(displayIndex);
+                if (dropRow !== rowIndex) {
+                  setDropRow(rowIndex);
                 }
               }}
-              onDragLeave={() => setDropIndex(null)}
+              onDragLeave={() => setDropRow(null)}
               onDrop={(event) => {
                 event.preventDefault();
-                handleDrop(displayIndex);
+                handleDrop(row);
               }}
               onDragEnd={() => {
-                dragIdRef.current = null;
-                setDropIndex(null);
+                dragRef.current = null;
+                setDropRow(null);
               }}
             >
+              {isGroup && (
+                <button
+                  type="button"
+                  className="layer-toggle"
+                  onClick={() => toggleExpanded(node.id)}
+                  title={expanded.has(node.id) ? "Collapse" : "Expand"}
+                  aria-label={
+                    expanded.has(node.id) ? "Collapse group" : "Expand group"
+                  }
+                >
+                  {expanded.has(node.id) ? (
+                    <ChevronDown size={13} />
+                  ) : (
+                    <ChevronRight size={13} />
+                  )}
+                </button>
+              )}
               <button
                 type="button"
                 className="layer-main"
@@ -713,6 +893,12 @@ function LayersSection() {
                       : [node.id],
                   )
                 }
+                onDoubleClick={() => {
+                  if (isGroup) {
+                    setActiveGroupId(node.id);
+                    toggleExpanded(node.id);
+                  }
+                }}
               >
                 <Icon size={13} strokeWidth={1.75} />
                 <span>{node.name}</span>
@@ -790,7 +976,12 @@ function MultiDesignSection({
   patchSelection: (patch: NodePatch) => void;
 }) {
   const document = useDocument();
-  const first = nodes[0]!;
+  // Show the first drawable leaf's paint (a group's fill is a placeholder).
+  const firstLeafId = collectLeafNodeIds(
+    document,
+    nodes.map((node) => node.id),
+  )[0];
+  const first = (firstLeafId && document.nodes[firstLeafId]) || nodes[0]!;
   const fillColor = first.fill.type === "solid" ? first.fill.color : "#000000";
 
   return (
@@ -846,18 +1037,21 @@ function MultiDesignSection({
 export function Inspector() {
   const document = useDocument();
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
-  const activeNodes = getNodesForArtboard(document);
-  const selectedNodes = activeNodes.filter((node) =>
-    selectedNodeIds.includes(node.id),
-  );
+  // Selection may reach inside groups, so look nodes up directly.
+  const selectedNodes = selectedNodeIds
+    .map((id) => document.nodes[id])
+    .filter((node): node is LogoNode => Boolean(node));
 
+  // Paint/typography patches always land on drawable leaves; a selected
+  // group fans the patch out to its descendants.
   function patchSelection(patch: NodePatch) {
-    if (selectedNodeIds.length === 0) {
+    const leafIds = collectLeafNodeIds(document, selectedNodeIds);
+    if (leafIds.length === 0) {
       return;
     }
     documentStore.apply({
       type: "update-nodes",
-      updates: selectedNodeIds.map((nodeId) => ({ nodeId, patch })),
+      updates: leafIds.map((nodeId) => ({ nodeId, patch })),
     });
   }
 
@@ -868,6 +1062,8 @@ export function Inspector() {
           nodes={selectedNodes}
           patchSelection={patchSelection}
         />
+      ) : selectedNodes.length === 1 && selectedNodes[0]!.type === "group" ? (
+        <GroupSection group={selectedNodes[0] as GroupNode} />
       ) : selectedNodes.length === 1 ? (
         <DesignSection node={selectedNodes[0]!} patchSelection={patchSelection} />
       ) : (

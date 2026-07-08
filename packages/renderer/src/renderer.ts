@@ -19,9 +19,10 @@ import type {
   Vec2,
 } from "@openlogo/core";
 import {
-  getNodesForArtboard,
+  getRenderNodesForArtboard,
   pathGeometryToSvg,
   rotatePoint,
+  unitBounds,
 } from "@openlogo/core";
 import type { Camera } from "./camera";
 import { screenToWorld } from "./camera";
@@ -125,7 +126,11 @@ export class SceneRenderer {
     this.surface = null;
   }
 
-  /** Topmost visible, unlocked node at a screen point, or null. */
+  /**
+   * Topmost visible, unlocked LEAF node at a screen point, or null.
+   * Groups never hit directly — callers resolve the leaf to a group
+   * selection unit via the editor's active-group scope.
+   */
   hitTest(screenPoint: Vec2): LogoNode | null {
     if (!this.scene) {
       return null;
@@ -142,7 +147,7 @@ export class SceneRenderer {
     // Node coordinates are artboard-local; pointer arrives in screen space.
     const world = screenToWorld(camera, screenPoint);
     const local = { x: world.x - artboard.x, y: world.y - artboard.y };
-    const nodes = getNodesForArtboard(document);
+    const nodes = getRenderNodesForArtboard(document);
 
     for (let i = nodes.length - 1; i >= 0; i -= 1) {
       const node = nodes[i];
@@ -158,6 +163,10 @@ export class SceneRenderer {
   }
 
   private nodeContains(node: LogoNode, worldPoint: Vec2): boolean {
+    if (node.type === "group") {
+      return false; // hit-testing walks leaves only
+    }
+
     // Undo the node's rotation, then test in its local axis-aligned space.
     const center = {
       x: node.x + node.width / 2,
@@ -278,7 +287,9 @@ export class SceneRenderer {
     canvas.clipRect(rect, ck.ClipOp.Intersect, true);
     canvas.translate(artboard.x, artboard.y);
 
-    for (const node of getNodesForArtboard(document, artboard.id)) {
+    // Flattened leaves in paint order; group opacity/visibility cascade
+    // is baked in by the query.
+    for (const node of getRenderNodesForArtboard(document, artboard.id)) {
       if (node.visible && node.id !== this.scene?.hiddenNodeId) {
         this.drawNode(canvas, node);
       }
@@ -288,6 +299,10 @@ export class SceneRenderer {
   }
 
   private drawNode(canvas: Canvas, node: LogoNode): void {
+    if (node.type === "group") {
+      return; // groups draw nothing themselves
+    }
+
     const ck = this.canvasKit;
     canvas.save();
 
@@ -568,10 +583,17 @@ export class SceneRenderer {
       return;
     }
 
+    // Groups outline their derived bounds; leaves their (rotated) box.
+    const bounds =
+      node.type === "group" ? unitBounds(scene.document, node.id) : null;
+    if (node.type === "group" && !bounds) {
+      return;
+    }
+
     const ck = this.canvasKit;
     this.withActiveArtboard(canvas, scene, () => {
       canvas.save();
-      if (node.rotation !== 0) {
+      if (node.type !== "group" && node.rotation !== 0) {
         canvas.rotate(
           node.rotation,
           node.x + node.width / 2,
@@ -585,8 +607,9 @@ export class SceneRenderer {
       color[3] = 0.55;
       paint.setColor(color);
       paint.setAntiAlias(true);
+      const box = bounds ?? node;
       canvas.drawRect(
-        ck.XYWHRect(node.x, node.y, node.width, node.height),
+        ck.XYWHRect(box.x, box.y, box.width, box.height),
         paint,
       );
       paint.delete();
@@ -614,14 +637,15 @@ export class SceneRenderer {
     let maxY = -Infinity;
 
     for (const nodeId of selectedNodeIds) {
-      const node = document.nodes[nodeId];
-      if (!node) {
+      // Unit bounds: group selections use derived child bounds.
+      const bounds = unitBounds(document, nodeId);
+      if (!bounds) {
         continue;
       }
-      minX = Math.min(minX, node.x);
-      minY = Math.min(minY, node.y);
-      maxX = Math.max(maxX, node.x + node.width);
-      maxY = Math.max(maxY, node.y + node.height);
+      minX = Math.min(minX, bounds.x);
+      minY = Math.min(minY, bounds.y);
+      maxX = Math.max(maxX, bounds.x + bounds.width);
+      maxY = Math.max(maxY, bounds.y + bounds.height);
     }
 
     if (!Number.isFinite(minX)) {

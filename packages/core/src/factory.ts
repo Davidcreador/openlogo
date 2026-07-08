@@ -1,7 +1,9 @@
+import type { Bounds } from "./geometry";
 import { createId } from "./id";
 import type {
   Artboard,
   EllipseNode,
+  GroupNode,
   LogoDocument,
   LogoNode,
   LogoVariant,
@@ -89,6 +91,32 @@ export function createText(
     letterSpacing: -1,
     lineHeight: 1.2,
     align: "left",
+  };
+}
+
+/**
+ * Group node over existing children ids. Geometry fields are dead
+ * placeholders (see GroupNode docs) — pass bounds only so fresh
+ * documents serialize with plausible values.
+ */
+export function createGroup(
+  children: string[],
+  bounds?: Bounds | null,
+): GroupNode {
+  return {
+    id: createId("group"),
+    type: "group",
+    name: "Group",
+    x: bounds?.x ?? 0,
+    y: bounds?.y ?? 0,
+    width: Math.max(1, bounds?.width ?? 1),
+    height: Math.max(1, bounds?.height ?? 1),
+    rotation: 0,
+    opacity: 1,
+    visible: true,
+    locked: false,
+    fill: { type: "solid", color: "#111827" },
+    children,
   };
 }
 

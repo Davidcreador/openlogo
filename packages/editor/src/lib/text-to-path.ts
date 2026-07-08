@@ -5,7 +5,9 @@ import {
   type TextNode,
   commandsToGeometry,
   createId,
+  findContainerId,
   getActiveArtboard,
+  getContainerChildIds,
   pathGeometryBounds,
   pathGeometryToSvg,
   translatePathGeometry,
@@ -90,9 +92,11 @@ export async function convertTextToPath(nodeId: string): Promise<string | null> 
     geometry: normalized,
   };
 
+  // The outline replaces the text in its own container (group-aware).
   const artboard = getActiveArtboard(document);
-  const index = artboard.nodeIds.indexOf(node.id);
-  const insertIndex = index === -1 ? artboard.nodeIds.length - 1 : index;
+  const containerId = findContainerId(document, node.id) ?? artboard.id;
+  const index = getContainerChildIds(document, containerId).indexOf(node.id);
+  const insertIndex = index === -1 ? undefined : index;
 
   documentStore.apply({
     type: "batch",
@@ -102,8 +106,9 @@ export async function convertTextToPath(nodeId: string): Promise<string | null> 
       {
         type: "insert-nodes",
         artboardId: artboard.id,
+        ...(containerId !== artboard.id ? { containerId } : {}),
         nodes: [pathNode],
-        index: insertIndex,
+        ...(insertIndex !== undefined ? { index: insertIndex } : {}),
       },
     ],
   });

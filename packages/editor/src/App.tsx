@@ -5,7 +5,13 @@ import { PreviewStrip } from "./components/PreviewStrip";
 import { Toolbar } from "./components/Toolbar";
 import { TopBar } from "./components/TopBar";
 import { ZoomControls } from "./components/ZoomControls";
-import { createId, getActiveArtboard } from "@openlogo/core";
+import {
+  collectLeafNodeIds,
+  findContainerId,
+  getActiveArtboard,
+  getContainerChildIds,
+  getParentGroupId,
+} from "@openlogo/core";
 import { fitBounds, zoomAt } from "@openlogo/renderer";
 import {
   copyNodes,
@@ -13,6 +19,11 @@ import {
   duplicateNodes,
   pasteNodes,
 } from "./lib/clipboard";
+import {
+  deleteSelection,
+  groupSelection,
+  ungroupSelection,
+} from "./lib/group-ops";
 import { createAutosave, loadDocument } from "./lib/persistence";
 import { ensureDocumentFonts } from "./lib/text-to-path";
 import { documentStore } from "./state/document";
@@ -76,6 +87,7 @@ export default function App() {
           documentStore.undo();
         }
         state.setSelection([]);
+        state.setActiveGroupId(null); // scope target may no longer exist
         return;
       }
 
@@ -160,43 +172,45 @@ export default function App() {
           return;
         }
 
-        // ⌘G group, ⇧⌘G ungroup.
+        // ⌘G group, ⇧⌘G ungroup — real scene-graph groups.
         if (key === "g") {
           event.preventDefault();
           if (selection.length === 0) {
             return;
           }
-          const groupId = event.shiftKey ? undefined : createId("group");
-          documentStore.apply({
-            type: "update-nodes",
-            updates: selection.map((nodeId) => ({
-              nodeId,
-              patch: { groupId },
-            })),
-          });
+          if (event.shiftKey) {
+            const freed = ungroupSelection(selection);
+            if (freed.length > 0) {
+              state.setSelection(freed);
+            }
+          } else {
+            const groupId = groupSelection(selection);
+            if (groupId) {
+              state.setSelection([groupId]);
+            }
+          }
           return;
         }
 
-        // ⌘] forward, ⌘[ backward (single selection).
+        // ⌘] forward, ⌘[ backward within the node's container.
         if ((key === "]" || key === "[") && selection.length === 1) {
           event.preventDefault();
           const document = documentStore.document;
-          const artboard = document.artboards.find(
-            (item) => item.id === document.activeArtboardId,
-          );
           const nodeId = selection[0]!;
-          const index = artboard?.nodeIds.indexOf(nodeId) ?? -1;
-          if (!artboard || index === -1) {
+          const containerId = findContainerId(document, nodeId);
+          if (!containerId) {
             return;
           }
+          const list = getContainerChildIds(document, containerId);
+          const index = list.indexOf(nodeId);
           const toIndex =
             key === "]"
-              ? Math.min(artboard.nodeIds.length - 1, index + 1)
+              ? Math.min(list.length - 1, index + 1)
               : Math.max(0, index - 1);
-          if (toIndex !== index) {
+          if (index !== -1 && toIndex !== index) {
             documentStore.apply({
               type: "reorder-node",
-              artboardId: artboard.id,
+              containerId,
               nodeId,
               toIndex,
             });
@@ -213,21 +227,28 @@ export default function App() {
         }
         if (state.selectedNodeIds.length > 0) {
           event.preventDefault();
-          documentStore.apply({
-            type: "delete-nodes",
-            nodeIds: state.selectedNodeIds,
-          });
+          deleteSelection(state.selectedNodeIds);
           state.setSelection([]);
         }
         return;
       }
 
       if (key === "escape") {
+        // Step out of the active group scope one level, selecting it.
+        if (state.activeGroupId) {
+          const parent = getParentGroupId(
+            documentStore.document,
+            state.activeGroupId,
+          );
+          state.setSelection([state.activeGroupId]);
+          state.setActiveGroupId(parent);
+          return;
+        }
         state.setSelection([]);
         return;
       }
 
-      // Arrow-key nudge: 1px, 10px with Shift.
+      // Arrow-key nudge: 1px, 10px with Shift. Groups nudge their leaves.
       if (key.startsWith("arrow") && state.selectedNodeIds.length > 0) {
         if (state.editingPathId) {
           return;
@@ -238,7 +259,10 @@ export default function App() {
         const dy = key === "arrowup" ? -step : key === "arrowdown" ? step : 0;
         documentStore.apply({
           type: "update-nodes",
-          updates: state.selectedNodeIds
+          updates: collectLeafNodeIds(
+            documentStore.document,
+            state.selectedNodeIds,
+          )
             .map((nodeId) => {
               const node = documentStore.document.nodes[nodeId];
               return node && !node.locked

@@ -2,6 +2,7 @@ import type { CanvasKit } from "canvaskit-wasm";
 import {
   type LogoNode,
   type PathNode,
+  createGroup,
   createId,
   getActiveArtboard,
 } from "@openlogo/core";
@@ -233,7 +234,6 @@ function walk(
 function buildNode(
   ck: CanvasKit,
   shape: FlatShape,
-  groupId: string,
   index: number,
 ): PathNode | null {
   const path = ck.Path.MakeFromSVGString(shape.d);
@@ -277,11 +277,10 @@ function buildNode(
     d: normalized,
     intrinsicWidth: width,
     intrinsicHeight: height,
-    groupId,
   };
 }
 
-/** Import an SVG string as a group of path nodes. Returns new node ids. */
+/** Import an SVG string as one group of path nodes. Returns [groupId]. */
 export async function importSvg(svgText: string): Promise<string[]> {
   const parsed = new DOMParser().parseFromString(svgText, "image/svg+xml");
   const root = parsed.querySelector("svg");
@@ -296,9 +295,8 @@ export async function importSvg(svgText: string): Promise<string[]> {
   }
 
   const ck = await getCanvasKit();
-  const groupId = createId("group");
   const nodes = shapes
-    .map((shape, index) => buildNode(ck, shape, groupId, index))
+    .map((shape, index) => buildNode(ck, shape, index))
     .filter((node): node is PathNode => node !== null);
   if (nodes.length === 0) {
     return [];
@@ -329,11 +327,24 @@ export async function importSvg(svgText: string): Promise<string[]> {
     // Path data stays in intrinsic space; only the box scales.
   }));
 
+  // Multi-shape imports arrive as one real group; a single shape stays flat.
+  if (placed.length === 1) {
+    documentStore.apply({
+      type: "insert-nodes",
+      artboardId: artboard.id,
+      nodes: placed,
+    });
+    return [placed[0]!.id];
+  }
+
+  const group = createGroup(placed.map((node) => node.id));
+  group.name = "Imported SVG";
+
   documentStore.apply({
     type: "insert-nodes",
     artboardId: artboard.id,
-    nodes: placed,
+    nodes: [...placed, group],
   });
 
-  return placed.map((node) => node.id);
+  return [group.id];
 }

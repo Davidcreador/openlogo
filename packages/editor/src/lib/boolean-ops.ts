@@ -1,11 +1,14 @@
 import {
   type LogoNode,
   type PathNode,
+  collectLeafNodeIds,
   createId,
+  expandDeletionSet,
   getActiveArtboard,
 } from "@openlogo/core";
 import { type BooleanOp, combineNodes } from "@openlogo/renderer";
 import { getCanvasKit } from "./canvaskit";
+import { sortBySceneOrder } from "./group-ops";
 import { documentStore } from "../state/document";
 
 const OP_LABELS: Record<BooleanOp, string> = {
@@ -15,14 +18,16 @@ const OP_LABELS: Record<BooleanOp, string> = {
   exclude: "Exclude",
 };
 
-/** Selected nodes that can participate in a boolean, in z-order. */
+/**
+ * Selected shapes that can participate in a boolean, in scene z-order.
+ * Groups contribute their leaf shapes (the boolean flattens them).
+ */
 export function combinableNodes(selectedNodeIds: readonly string[]): LogoNode[] {
   const document = documentStore.document;
-  const artboard = getActiveArtboard(document);
-  const selected = new Set(selectedNodeIds);
-
-  return artboard.nodeIds
-    .filter((id) => selected.has(id))
+  return collectLeafNodeIds(
+    document,
+    sortBySceneOrder(document, selectedNodeIds),
+  )
     .map((id) => document.nodes[id])
     .filter(
       (node): node is LogoNode =>
@@ -52,12 +57,25 @@ export async function applyBooleanOp(
   const document = documentStore.document;
   const artboard = getActiveArtboard(document);
   const first = nodes[0]!;
-  const removedIds = new Set(nodes.map((node) => node.id));
+  // Deleting operands also prunes any groups the deletion empties.
+  const removedIds = new Set(
+    expandDeletionSet(
+      document,
+      nodes.map((node) => node.id),
+    ),
+  );
 
-  // Insert where the bottom-most operand sat, in post-deletion indices.
-  const firstIndex = artboard.nodeIds.indexOf(first.id);
+  // Insert where the bottom-most operand's top-level unit sat, in
+  // post-deletion indices (operands may live inside groups).
+  const firstTopIndex = artboard.nodeIds.findIndex(
+    (id) =>
+      removedIds.has(id) ||
+      collectLeafNodeIds(document, [id]).some((leafId) =>
+        removedIds.has(leafId),
+      ),
+  );
   const insertIndex = artboard.nodeIds
-    .slice(0, firstIndex)
+    .slice(0, Math.max(0, firstTopIndex))
     .filter((id) => !removedIds.has(id)).length;
 
   const pathNode: PathNode = {

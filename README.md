@@ -48,7 +48,10 @@ Key decisions:
 - Align & distribute panel (to artboard for single selection), flip H/V
 - Linear gradient fills with stop + angle editor
 - Rotate copies: radial repeat around the artboard centre for badge marks
-- Groups (⌘G/⇧⌘G): grouped nodes select and move together, ⌘-click digs in
+- Real nested groups (⌘G/⇧⌘G): scene-graph group nodes with derived bounds,
+  group move/resize/rotate as a unit, double-click to enter a group /
+  Esc to exit, ⌘-click select-through, nested layers panel with
+  expand/collapse, nested `<g>` in SVG export
 - Eyedropper (I), Alt-drag duplicate, ⌘0 fit / ⌘1 100% / ⌘± zoom
 - Rulers with draggable guides (drag from ruler; guides snap; drag off to
   delete) and blend modes (multiply/screen/overlay/darken/lighten, exported
@@ -84,7 +87,7 @@ pnpm poc          # run the original SVG prototype
 
 ## Roadmap
 
-1. Real nested groups (scene-graph group nodes) and Shape Builder
+1. Shape Builder (hover-merge regions via PathOps)
 2. Pen handle symmetry modes; snapping while drawing; distance/spacing guides
 2. Agent tools: critique, cleanup, variations, export prep (non-destructive)
 3. Export packs: dark/light/mono variants, favicon set, brand guidelines

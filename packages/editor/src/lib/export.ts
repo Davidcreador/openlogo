@@ -4,7 +4,6 @@ import {
   type LogoNode,
   type Paint,
   getActiveArtboard,
-  getNodesForArtboard,
 } from "@openlogo/core";
 
 function escapeXml(value: string): string {
@@ -40,6 +39,10 @@ function paintAttr(paint: Paint, defs: string[]): string {
 }
 
 function renderNode(node: LogoNode, defs: string[]): string {
+  if (node.type === "group") {
+    return ""; // handled by renderTree
+  }
+
   const rotate =
     node.rotation === 0
       ? ""
@@ -104,15 +107,41 @@ function renderNode(node: LogoNode, defs: string[]): string {
   )}" /></g>`;
 }
 
+/** Render a node subtree; groups become real nested `<g>` elements. */
+function renderTree(
+  document: LogoDocument,
+  nodeId: string,
+  defs: string[],
+): string {
+  const node = document.nodes[nodeId];
+  if (!node || !node.visible) {
+    return "";
+  }
+
+  if (node.type === "group") {
+    const inner = node.children
+      .map((childId) => renderTree(document, childId, defs))
+      .filter(Boolean)
+      .join("\n  ");
+    if (!inner) {
+      return "";
+    }
+    const opacity = node.opacity !== 1 ? ` opacity="${node.opacity}"` : "";
+    return `<g${opacity} data-name="${escapeXml(node.name)}">\n  ${inner}\n  </g>`;
+  }
+
+  return renderNode(node, defs);
+}
+
 export function documentToSvg(
   document: LogoDocument,
   artboard: Artboard = getActiveArtboard(document),
 ): string {
-  const nodes = getNodesForArtboard(document, artboard.id).filter(
-    (node) => node.visible,
-  );
   const defs: string[] = [];
-  const body = nodes.map((node) => renderNode(node, defs)).join("\n  ");
+  const body = artboard.nodeIds
+    .map((nodeId) => renderTree(document, nodeId, defs))
+    .filter(Boolean)
+    .join("\n  ");
   const defsBlock = defs.length > 0 ? `\n  <defs>${defs.join("")}</defs>` : "";
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${artboard.width}" height="${artboard.height}" viewBox="0 0 ${artboard.width} ${artboard.height}" role="img" aria-label="${escapeXml(

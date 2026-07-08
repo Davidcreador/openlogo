@@ -10,6 +10,7 @@ import {
   type PathPoint,
   type SnapGuide,
   type Vec2,
+  collectLeafNodeIds,
   computeSnap,
   createEllipse,
   createId,
@@ -18,12 +19,15 @@ import {
   createText,
   findSegmentNear,
   getActiveArtboard,
+  getAncestorGroupIds,
+  getContainerChildIds,
   insertAnchor,
   pathGeometryBounds,
   pathGeometryToSvg,
   removeAnchor,
   snapValue,
   translatePathGeometry,
+  unitBounds,
 } from "@openlogo/core";
 import {
   FontRegistry,
@@ -36,6 +40,7 @@ import {
   worldToScreen,
   zoomAt,
 } from "@openlogo/renderer";
+import { cloneUnits, resolveUnit } from "../lib/group-ops";
 import { documentStore, useDocument } from "../state/document";
 import { type Tool, useEditorStore } from "../state/editor-store";
 
@@ -96,10 +101,15 @@ type DragState =
   | { kind: "marquee"; startLocal: Vec2; current: Bounds | null }
   | { kind: "guide"; axis: "v" | "h"; index: number; value: number };
 
+/**
+ * Snapshot the drawable leaves under the given selection units (groups
+ * expand to their descendants) — drags patch leaves, never groups.
+ */
 function snapshotNodes(nodeIds: readonly string[]): Map<string, NodeSnapshot> {
+  const document = documentStore.document;
   const map = new Map<string, NodeSnapshot>();
-  for (const nodeId of nodeIds) {
-    const node = documentStore.document.nodes[nodeId];
+  for (const nodeId of collectLeafNodeIds(document, nodeIds)) {
+    const node = document.nodes[nodeId];
     if (node && !node.locked) {
       map.set(nodeId, {
         x: node.x,
@@ -178,15 +188,22 @@ function collectSnapTargets(excludedIds: ReadonlySet<string>): Bounds[] {
     { x: 0, y: 0, width: artboard.width, height: artboard.height },
   ];
 
+  // Top-level units: leaves snap to their box, groups to derived bounds.
+  // A unit is excluded when it, or anything inside it, is being dragged.
   for (const nodeId of artboard.nodeIds) {
     const node = document.nodes[nodeId];
-    if (node && node.visible && !excludedIds.has(nodeId)) {
-      targets.push({
-        x: node.x,
-        y: node.y,
-        width: node.width,
-        height: node.height,
-      });
+    if (!node || !node.visible) {
+      continue;
+    }
+    const containsExcluded =
+      excludedIds.has(nodeId) ||
+      collectLeafNodeIds(document, [nodeId]).some((id) => excludedIds.has(id));
+    if (containsExcluded) {
+      continue;
+    }
+    const bounds = unitBounds(document, nodeId);
+    if (bounds) {
+      targets.push(bounds);
     }
   }
 
@@ -942,7 +959,10 @@ export function CanvasStage() {
       if (hit && state.selectedNodeIds.length > 0) {
         documentStore.apply({
           type: "update-nodes",
-          updates: state.selectedNodeIds
+          updates: collectLeafNodeIds(
+            documentStore.document,
+            state.selectedNodeIds,
+          )
             .filter((id) => id !== hit.id)
             .map((nodeId) => ({
               nodeId,
@@ -1006,7 +1026,15 @@ export function CanvasStage() {
           snapshots,
           patches: [],
           moved: false,
-          snapTargets: collectSnapTargets(new Set(state.selectedNodeIds)),
+          snapTargets: collectSnapTargets(
+            new Set([
+              ...state.selectedNodeIds,
+              ...collectLeafNodeIds(
+                documentStore.document,
+                state.selectedNodeIds,
+              ),
+            ]),
+          ),
           guides: [],
         };
       }
@@ -1025,15 +1053,19 @@ export function CanvasStage() {
       return;
     }
 
-    // Group-aware target: clicking a grouped node selects the whole
-    // group; ⌘-click digs into the group for the individual node.
-    let targetIds = [hit.id];
-    if (hit.groupId && !event.metaKey) {
-      const artboard = getActiveArtboard(documentStore.document);
-      targetIds = artboard.nodeIds.filter(
-        (id) => documentStore.document.nodes[id]?.groupId === hit.groupId,
-      );
+    // Resolve the hit leaf to its selection unit: outermost group at top
+    // level, direct child inside the active group scope. ⌘-click selects
+    // through to the leaf itself.
+    const { unitId, scopeId } = resolveUnit(
+      documentStore.document,
+      hit.id,
+      state.activeGroupId,
+      event.metaKey,
+    );
+    if (scopeId !== state.activeGroupId) {
+      state.setActiveGroupId(scopeId); // clicked outside the scoped subtree
     }
+    const targetIds = [unitId];
 
     const alreadySelected = targetIds.every((id) =>
       state.selectedNodeIds.includes(id),
@@ -1046,34 +1078,35 @@ export function CanvasStage() {
         ? state.selectedNodeIds
         : targetIds;
 
-    // Alt-drag duplicates the selection and drags the copies.
+    // Alt-drag duplicates the selection (whole subtrees) and drags the copies.
     if (event.altKey && !event.shiftKey) {
       const document = documentStore.document;
       const artboard = getActiveArtboard(document);
-      const wanted = new Set(nextSelection);
-      const clones = artboard.nodeIds
-        .filter((id) => wanted.has(id))
-        .map((id) => document.nodes[id])
-        .filter((node): node is LogoNode => Boolean(node))
-        .map((node) => ({ ...structuredClone(node), id: createId("node") }));
+      const { nodes: clones, rootIds } = cloneUnits(document, nextSelection);
       if (clones.length > 0) {
         documentStore.apply({
           type: "insert-nodes",
           artboardId: artboard.id,
+          // Duplicating inside a group scope keeps the copies in it.
+          ...(state.activeGroupId ? { containerId: state.activeGroupId } : {}),
           nodes: clones,
         });
-        nextSelection = clones.map((clone) => clone.id);
+        nextSelection = rootIds;
       }
     }
 
     setSelection(nextSelection);
+    const excluded = new Set([
+      ...nextSelection,
+      ...collectLeafNodeIds(documentStore.document, nextSelection),
+    ]);
     dragRef.current = {
       kind: "move",
       startLocal: toArtboardLocal(screen),
       snapshots: snapshotNodes(nextSelection),
       patches: [],
       moved: false,
-      snapTargets: collectSnapTargets(new Set(nextSelection)),
+      snapTargets: collectSnapTargets(excluded),
       guides: [],
     };
   }
@@ -1153,10 +1186,18 @@ export function CanvasStage() {
 
     const drag = dragRef.current;
     if (!drag) {
-      // Idle hover tracking (select tool only).
+      // Idle hover tracking (select tool only); outlines the unit the
+      // click would select (group at top level, child inside scope).
       if (state.tool === "select") {
         const hit = rendererRef.current?.hitTest(screen) ?? null;
-        const nextId = hit?.id ?? null;
+        const nextId = hit
+          ? resolveUnit(
+              documentStore.document,
+              hit.id,
+              state.activeGroupId,
+              event.metaKey,
+            ).unitId
+          : null;
         if (hoverRef.current !== nextId) {
           hoverRef.current = nextId;
           syncScene();
@@ -1386,19 +1427,29 @@ export function CanvasStage() {
 
     if (drag.kind === "marquee") {
       if (drag.current && (drag.current.width > 2 || drag.current.height > 2)) {
-        const artboard = getActiveArtboard(documentStore.document);
+        const document = documentStore.document;
+        const state = useEditorStore.getState();
+        // Inside a group scope the marquee picks that group's children;
+        // at top level it picks units (groups as a whole).
+        const candidateIds = state.activeGroupId
+          ? getContainerChildIds(document, state.activeGroupId)
+          : getActiveArtboard(document).nodeIds;
         const box = drag.current;
         const hits: string[] = [];
-        for (const nodeId of artboard.nodeIds) {
-          const node = documentStore.document.nodes[nodeId];
+        for (const nodeId of candidateIds) {
+          const node = document.nodes[nodeId];
           if (!node || !node.visible || node.locked) {
             continue;
           }
+          const bounds = unitBounds(document, nodeId);
+          if (!bounds) {
+            continue;
+          }
           const intersects =
-            node.x < box.x + box.width &&
-            node.x + node.width > box.x &&
-            node.y < box.y + box.height &&
-            node.y + node.height > box.y;
+            bounds.x < box.x + box.width &&
+            bounds.x + bounds.width > box.x &&
+            bounds.y < box.y + box.height &&
+            bounds.y + bounds.height > box.y;
           if (intersects) {
             hits.push(nodeId);
           }
@@ -1424,11 +1475,8 @@ export function CanvasStage() {
   }
 
   function handleDoubleClick(event: React.MouseEvent<HTMLCanvasElement>) {
-    if (
-      editRef.current ||
-      editingTextRef.current ||
-      useEditorStore.getState().tool !== "select"
-    ) {
+    const state = useEditorStore.getState();
+    if (editRef.current || editingTextRef.current || state.tool !== "select") {
       return;
     }
 
@@ -1440,6 +1488,35 @@ export function CanvasStage() {
     });
 
     if (!hit) {
+      // Double-click on empty canvas steps out of the group scope.
+      if (state.activeGroupId) {
+        const document = documentStore.document;
+        const chain = getAncestorGroupIds(document, state.activeGroupId);
+        state.setSelection([state.activeGroupId]);
+        state.setActiveGroupId(chain[chain.length - 1] ?? null);
+        syncScene();
+      }
+      return;
+    }
+
+    // Double-clicking a group unit enters it one level, selecting the
+    // child under the cursor; on a leaf it starts path/text editing.
+    const { unitId } = resolveUnit(
+      documentStore.document,
+      hit.id,
+      state.activeGroupId,
+      false,
+    );
+    const unit = documentStore.document.nodes[unitId];
+    if (unit?.type === "group") {
+      const path = [
+        ...getAncestorGroupIds(documentStore.document, hit.id),
+        hit.id,
+      ];
+      const deeper = path[path.indexOf(unitId) + 1] ?? hit.id;
+      state.setActiveGroupId(unitId);
+      setSelection([deeper]);
+      syncScene();
       return;
     }
 

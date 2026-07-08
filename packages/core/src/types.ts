@@ -59,8 +59,6 @@ export type BaseNode = {
   locked: boolean;
   fill: Paint;
   stroke?: Stroke;
-  /** Nodes sharing a groupId select/move together (⌘G). */
-  groupId?: string;
   /** Compositing mode; normal when absent. */
   blendMode?: BlendMode;
 };
@@ -106,7 +104,27 @@ export type TextNode = BaseNode & {
   align: "left" | "center" | "right";
 };
 
-export type LogoNode = RectangleNode | EllipseNode | PathNode | TextNode;
+/**
+ * Real scene-graph group. Children are node ids ordered back-to-front
+ * within the group; the ids live in `document.nodes` but NOT in
+ * `artboard.nodeIds` (only top-level ids do). A group's own
+ * x/y/width/height/rotation/fill are unused placeholders — group
+ * geometry is always derived from its children via `unitBounds` in
+ * queries.ts, so it can never go stale. Transforms on a group cascade
+ * to leaf nodes at commit time. `visible`/`locked`/`opacity` DO apply
+ * and cascade down the subtree.
+ */
+export type GroupNode = BaseNode & {
+  type: "group";
+  children: string[];
+};
+
+export type LogoNode =
+  | RectangleNode
+  | EllipseNode
+  | PathNode
+  | TextNode
+  | GroupNode;
 export type NodeType = LogoNode["type"];
 
 export type Artboard = {
@@ -135,7 +153,7 @@ export type ColorPalette = {
   colors: string[];
 };
 
-export const DOCUMENT_SCHEMA_VERSION = 1;
+export const DOCUMENT_SCHEMA_VERSION = 2;
 
 export type LogoDocument = {
   schemaVersion: number;

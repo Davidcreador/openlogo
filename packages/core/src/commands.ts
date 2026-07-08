@@ -1,5 +1,5 @@
 import type { PathGeometry } from "./path-data";
-import type { Artboard, LogoDocument, LogoNode } from "./types";
+import type { Artboard, GroupNode, LogoDocument, LogoNode } from "./types";
 
 /**
  * Every document mutation is a serializable command. `applyCommand` returns
@@ -25,7 +25,6 @@ export type NodePatch = Partial<
       locked: boolean;
       fill: LogoNode["fill"];
       stroke: LogoNode["stroke"];
-      groupId: string | undefined;
       blendMode: LogoNode["blendMode"];
       cornerRadius: number;
       d: string;
@@ -50,20 +49,31 @@ export type Command =
   | {
       type: "insert-nodes";
       artboardId: string;
+      /**
+       * Nodes to add. May contain whole subtrees: any node referenced as
+       * a child of an inserted group is added to the node table only —
+       * just the roots are spliced into the container's ordering.
+       */
       nodes: LogoNode[];
       /** Insertion index in z-order; appends when omitted. */
       index?: number;
+      /** Group to insert into; the artboard's top level when omitted. */
+      containerId?: string;
     }
   | {
       type: "delete-nodes";
+      /** Deleting a group deletes its whole subtree. */
       nodeIds: string[];
     }
   | {
       type: "restore-nodes";
-      /** Inverse of delete-nodes: nodes plus their artboard/z positions. */
+      /**
+       * Inverse of delete-nodes: nodes plus their container (artboard id
+       * or group id) and index within that container's ordering.
+       */
       entries: Array<{
         node: LogoNode;
-        artboardId: string;
+        containerId: string;
         index: number;
       }>;
     }
@@ -73,9 +83,30 @@ export type Command =
     }
   | {
       type: "reorder-node";
-      artboardId: string;
+      /** Artboard id (top level) or group id. */
+      containerId: string;
       nodeId: string;
       toIndex: number;
+    }
+  | {
+      type: "group-nodes";
+      /** Artboard id (top level) or parent group id holding the children. */
+      containerId: string;
+      /** The group node; `children` must already live in the container. */
+      group: GroupNode;
+      /** Index the group takes in the container after children are pulled. */
+      index: number;
+    }
+  | {
+      type: "ungroup-nodes";
+      groupId: string;
+      /**
+       * Original container indices of the children, ascending pair-wise
+       * with `children` order — set by group-nodes' inverse so undoing a
+       * group restores non-contiguous stacking exactly. When omitted the
+       * children splice in contiguously at the group's position.
+       */
+      restoreIndices?: number[];
     }
   | {
       type: "add-artboard";
@@ -129,6 +160,44 @@ function patchNode(node: LogoNode, patch: NodePatch): LogoNode {
   return { ...node, ...patch } as LogoNode;
 }
 
+/**
+ * Replace a container's ordered child list. Containers are either an
+ * artboard (top-level `nodeIds`) or a group node (`children`). Mutates
+ * the passed `nodes` copy for group containers; returns the artboard
+ * list to use.
+ */
+function withContainerList(
+  document: LogoDocument,
+  nodes: Record<string, LogoNode>,
+  containerId: string,
+  list: string[],
+): Artboard[] {
+  const artboard = document.artboards.find((item) => item.id === containerId);
+  if (artboard) {
+    return document.artboards.map((item) =>
+      item.id === containerId ? { ...item, nodeIds: list } : item,
+    );
+  }
+  const container = nodes[containerId];
+  if (container?.type === "group") {
+    nodes[containerId] = { ...container, children: list };
+  }
+  return document.artboards;
+}
+
+/** Ordered child list of a container, or null when it doesn't exist. */
+function containerListOf(
+  document: LogoDocument,
+  containerId: string,
+): readonly string[] | null {
+  const artboard = document.artboards.find((item) => item.id === containerId);
+  if (artboard) {
+    return artboard.nodeIds;
+  }
+  const node = document.nodes[containerId];
+  return node?.type === "group" ? node.children : null;
+}
+
 export function applyCommand(
   document: LogoDocument,
   command: Command,
@@ -140,27 +209,52 @@ export function applyCommand(
         nodes[node.id] = node;
       }
 
-      const insertedIds = command.nodes.map((node) => node.id);
-      const artboards = document.artboards.map((artboard) => {
-        if (artboard.id !== command.artboardId) {
-          return artboard;
+      // Nodes referenced as children of an inserted group ride along in
+      // the node table; only roots enter the container's ordering.
+      const insertedChildIds = new Set<string>();
+      for (const node of command.nodes) {
+        if (node.type === "group") {
+          for (const childId of node.children) {
+            insertedChildIds.add(childId);
+          }
         }
-        const nodeIds = [...artboard.nodeIds];
-        nodeIds.splice(command.index ?? nodeIds.length, 0, ...insertedIds);
-        return { ...artboard, nodeIds };
-      });
+      }
+      const rootIds = command.nodes
+        .map((node) => node.id)
+        .filter((id) => !insertedChildIds.has(id));
+
+      const containerId =
+        command.containerId && nodes[command.containerId]?.type === "group"
+          ? command.containerId
+          : command.artboardId;
+      const list = [...(containerListOf(document, containerId) ?? [])];
+      list.splice(command.index ?? list.length, 0, ...rootIds);
+      const artboards = withContainerList(document, nodes, containerId, list);
 
       return {
         document: { ...document, nodes, artboards },
-        inverse: { type: "delete-nodes", nodeIds: insertedIds },
+        inverse: { type: "delete-nodes", nodeIds: rootIds },
       };
     }
 
     case "delete-nodes": {
-      const removed = new Set(command.nodeIds);
+      // Deleting a group takes its whole subtree with it.
+      const removed = new Set<string>();
+      const visit = (id: string) => {
+        const node = document.nodes[id];
+        if (!node || removed.has(id)) {
+          return;
+        }
+        removed.add(id);
+        if (node.type === "group") {
+          node.children.forEach(visit);
+        }
+      };
+      command.nodeIds.forEach(visit);
+
       const entries: Array<{
         node: LogoNode;
-        artboardId: string;
+        containerId: string;
         index: number;
       }> = [];
 
@@ -168,14 +262,37 @@ export function applyCommand(
         artboard.nodeIds.forEach((nodeId, index) => {
           const node = document.nodes[nodeId];
           if (node && removed.has(nodeId)) {
-            entries.push({ node, artboardId: artboard.id, index });
+            entries.push({ node, containerId: artboard.id, index });
+          }
+        });
+      }
+      for (const container of Object.values(document.nodes)) {
+        if (container.type !== "group") {
+          continue;
+        }
+        container.children.forEach((childId, index) => {
+          const node = document.nodes[childId];
+          if (node && removed.has(childId)) {
+            entries.push({ node, containerId: container.id, index });
           }
         });
       }
 
       const nodes = { ...document.nodes };
-      for (const nodeId of command.nodeIds) {
+      for (const nodeId of removed) {
         delete nodes[nodeId];
+      }
+      // Surviving groups drop any removed children.
+      for (const [id, node] of Object.entries(nodes)) {
+        if (
+          node.type === "group" &&
+          node.children.some((childId) => removed.has(childId))
+        ) {
+          nodes[id] = {
+            ...node,
+            children: node.children.filter((childId) => !removed.has(childId)),
+          };
+        }
       }
 
       const artboards = document.artboards.map((artboard) => ({
@@ -195,28 +312,43 @@ export function applyCommand(
         nodes[entry.node.id] = entry.node;
       }
 
-      // Restore in ascending index order so splice targets stay valid.
-      const byArtboard = new Map<
-        string,
-        Array<{ node: LogoNode; index: number }>
-      >();
+      const byContainer = new Map<string, Array<{ id: string; index: number }>>();
       for (const entry of command.entries) {
-        const list = byArtboard.get(entry.artboardId) ?? [];
-        list.push({ node: entry.node, index: entry.index });
-        byArtboard.set(entry.artboardId, list);
+        const list = byContainer.get(entry.containerId) ?? [];
+        list.push({ id: entry.node.id, index: entry.index });
+        byContainer.set(entry.containerId, list);
       }
 
+      // Ascending splice keeps indices valid. A restored group carries
+      // its children list, so skip ids a container already holds.
+      const spliceAll = (
+        list: string[],
+        items: Array<{ id: string; index: number }>,
+      ) => {
+        for (const item of [...items].sort((a, b) => a.index - b.index)) {
+          if (!list.includes(item.id)) {
+            list.splice(Math.min(item.index, list.length), 0, item.id);
+          }
+        }
+        return list;
+      };
+
       const artboards = document.artboards.map((artboard) => {
-        const list = byArtboard.get(artboard.id);
-        if (!list) {
-          return artboard;
-        }
-        const nodeIds = [...artboard.nodeIds];
-        for (const item of [...list].sort((a, b) => a.index - b.index)) {
-          nodeIds.splice(Math.min(item.index, nodeIds.length), 0, item.node.id);
-        }
-        return { ...artboard, nodeIds };
+        const items = byContainer.get(artboard.id);
+        return items
+          ? { ...artboard, nodeIds: spliceAll([...artboard.nodeIds], items) }
+          : artboard;
       });
+
+      for (const [containerId, items] of byContainer) {
+        const container = nodes[containerId];
+        if (container?.type === "group") {
+          nodes[containerId] = {
+            ...container,
+            children: spliceAll([...container.children], items),
+          };
+        }
+      }
 
       return {
         document: { ...document, nodes, artboards },
@@ -250,27 +382,111 @@ export function applyCommand(
     }
 
     case "reorder-node": {
-      const artboards = document.artboards.map((artboard) => {
-        if (artboard.id !== command.artboardId) {
-          return artboard;
-        }
-        const nodeIds = artboard.nodeIds.filter((id) => id !== command.nodeId);
-        nodeIds.splice(
-          Math.min(command.toIndex, nodeIds.length),
-          0,
-          command.nodeId,
-        );
-        return { ...artboard, nodeIds };
-      });
+      const list = containerListOf(document, command.containerId);
+      if (!list || !list.includes(command.nodeId)) {
+        return { document, inverse: command };
+      }
 
-      const fromIndex =
-        document.artboards
-          .find((artboard) => artboard.id === command.artboardId)
-          ?.nodeIds.indexOf(command.nodeId) ?? 0;
+      const fromIndex = list.indexOf(command.nodeId);
+      const next = list.filter((id) => id !== command.nodeId);
+      next.splice(Math.min(command.toIndex, next.length), 0, command.nodeId);
+
+      const nodes = { ...document.nodes };
+      const artboards = withContainerList(
+        document,
+        nodes,
+        command.containerId,
+        next,
+      );
 
       return {
-        document: { ...document, artboards },
+        document: { ...document, nodes, artboards },
         inverse: { ...command, toIndex: fromIndex },
+      };
+    }
+
+    case "group-nodes": {
+      const { group } = command;
+      const list = containerListOf(document, command.containerId);
+      if (!list) {
+        return { document, inverse: command };
+      }
+
+      // Pair-wise with group.children so the inverse can put each child
+      // back at its exact pre-group container index.
+      const restoreIndices = group.children.map((childId) =>
+        list.indexOf(childId),
+      );
+
+      const childSet = new Set(group.children);
+      const next = list.filter((id) => !childSet.has(id));
+      next.splice(Math.min(command.index, next.length), 0, group.id);
+
+      const nodes = { ...document.nodes, [group.id]: group };
+      const artboards = withContainerList(
+        document,
+        nodes,
+        command.containerId,
+        next,
+      );
+
+      return {
+        document: { ...document, nodes, artboards },
+        inverse: { type: "ungroup-nodes", groupId: group.id, restoreIndices },
+      };
+    }
+
+    case "ungroup-nodes": {
+      const group = document.nodes[command.groupId];
+      if (group?.type !== "group") {
+        return { document, inverse: command };
+      }
+
+      const artboard = document.artboards.find((item) =>
+        item.nodeIds.includes(group.id),
+      );
+      const parentGroup = artboard
+        ? undefined
+        : Object.values(document.nodes).find(
+            (node): node is GroupNode =>
+              node.type === "group" && node.children.includes(group.id),
+          );
+      const containerId = artboard?.id ?? parentGroup?.id;
+      const list = containerId ? containerListOf(document, containerId) : null;
+      if (!containerId || !list) {
+        return { document, inverse: command };
+      }
+
+      const fromIndex = list.indexOf(group.id);
+      const next = list.filter((id) => id !== group.id);
+
+      if (
+        command.restoreIndices &&
+        command.restoreIndices.length === group.children.length
+      ) {
+        const pairs = group.children
+          .map((id, i) => ({
+            id,
+            index:
+              command.restoreIndices![i]! >= 0
+                ? command.restoreIndices![i]!
+                : next.length,
+          }))
+          .sort((a, b) => a.index - b.index);
+        for (const pair of pairs) {
+          next.splice(Math.min(pair.index, next.length), 0, pair.id);
+        }
+      } else {
+        next.splice(fromIndex, 0, ...group.children);
+      }
+
+      const nodes = { ...document.nodes };
+      delete nodes[group.id];
+      const artboards = withContainerList(document, nodes, containerId, next);
+
+      return {
+        document: { ...document, nodes, artboards },
+        inverse: { type: "group-nodes", containerId, group, index: fromIndex },
       };
     }
 

@@ -65,7 +65,7 @@ describe("applyCommand", () => {
 
     const { document: next, inverse } = applyCommand(doc, {
       type: "reorder-node",
-      artboardId: artboard.id,
+      containerId: artboard.id,
       nodeId: first!,
       toIndex: 2,
     });
