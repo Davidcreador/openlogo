@@ -895,7 +895,18 @@ export function CanvasStage() {
     }
 
     if (state.tool === "pen") {
-      const local = toArtboardLocal(screen);
+      let local = toArtboardLocal(screen);
+
+      // Snap new anchors to guides/nodes/artboard (Alt disables).
+      if (!event.altKey) {
+        const snap = computeSnap(
+          { x: local.x, y: local.y, width: 0, height: 0 },
+          collectSnapTargets(new Set()),
+          6 / state.camera.zoom,
+        );
+        local = { x: local.x + snap.dx, y: local.y + snap.dy };
+      }
+
       const pen = penRef.current;
 
       // Clicking the first anchor closes the path.
