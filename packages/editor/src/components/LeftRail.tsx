@@ -9,7 +9,8 @@ const tools: Array<{ id: Tool; label: string; shortcut: string }> = [
   { id: "select", label: "Select", shortcut: "V" },
   { id: "rectangle", label: "Rectangle", shortcut: "R" },
   { id: "ellipse", label: "Ellipse", shortcut: "O" },
-  { id: "path", label: "Mark", shortcut: "P" },
+  { id: "pen", label: "Pen", shortcut: "P" },
+  { id: "path", label: "Mark", shortcut: "M" },
   { id: "text", label: "Text", shortcut: "T" },
 ];
 

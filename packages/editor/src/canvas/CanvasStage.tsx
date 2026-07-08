@@ -1,22 +1,30 @@
 import { useCallback, useEffect, useRef } from "react";
-import wasmUrl from "canvaskit-wasm/bin/canvaskit.wasm?url";
+import { getCanvasKit } from "../lib/canvaskit";
 import {
   type Bounds,
   type LogoNode,
   type NodePatch,
+  type PathGeometry,
+  type PathNode,
+  type PathPoint,
+  type SnapGuide,
   type Vec2,
+  computeSnap,
   createEllipse,
+  createId,
   createPath,
   createRectangle,
   createText,
   getActiveArtboard,
+  pathGeometryBounds,
+  pathGeometryToSvg,
+  translatePathGeometry,
 } from "@openlogo/core";
 import {
   FontRegistry,
   type HandleId,
   SceneRenderer,
   fitBounds,
-  loadCanvasKit,
   panBy,
   screenToWorld,
   selectionHandles,
@@ -37,6 +45,25 @@ type NodeSnapshot = {
   fontSize?: number;
 };
 
+type PenSession = {
+  points: PathPoint[];
+  /** Dragging out handles for the last placed anchor. */
+  dragging: boolean;
+  cursor: Vec2 | null;
+};
+
+type PathEditSession = {
+  nodeId: string;
+  /** Geometry denormalised into artboard-local coordinates. */
+  geometry: PathGeometry;
+  drag: {
+    subpath: number;
+    index: number;
+    part: "anchor" | "in" | "out";
+  } | null;
+  changed: boolean;
+};
+
 type DragState =
   | { kind: "pan"; last: Vec2 }
   | {
@@ -45,6 +72,9 @@ type DragState =
       snapshots: Map<string, NodeSnapshot>;
       patches: Array<{ nodeId: string; patch: NodePatch }>;
       moved: boolean;
+      /** Static snap candidates: unselected nodes + the artboard box. */
+      snapTargets: Bounds[];
+      guides: SnapGuide[];
     }
   | {
       kind: "resize";
@@ -132,6 +162,72 @@ function resizeBounds(
   return { x, y, width, height };
 }
 
+function collectSnapTargets(excludedIds: ReadonlySet<string>): Bounds[] {
+  const document = documentStore.document;
+  const artboard = getActiveArtboard(document);
+  const targets: Bounds[] = [
+    { x: 0, y: 0, width: artboard.width, height: artboard.height },
+  ];
+
+  for (const nodeId of artboard.nodeIds) {
+    const node = document.nodes[nodeId];
+    if (node && node.visible && !excludedIds.has(nodeId)) {
+      targets.push({
+        x: node.x,
+        y: node.y,
+        width: node.width,
+        height: node.height,
+      });
+    }
+  }
+
+  return targets;
+}
+
+/** Node patch for a path whose artboard-local geometry changed. */
+function patchFromLocalGeometry(geometry: PathGeometry): NodePatch | null {
+  const bounds = pathGeometryBounds(geometry);
+  if (!bounds) {
+    return null;
+  }
+
+  const normalized = translatePathGeometry(geometry, -bounds.x, -bounds.y);
+  return {
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    intrinsicWidth: bounds.width,
+    intrinsicHeight: bounds.height,
+    d: pathGeometryToSvg(normalized),
+    geometry: normalized,
+  };
+}
+
+/** Denormalise a path node's geometry into artboard-local coordinates. */
+function localGeometryOf(node: PathNode): PathGeometry | null {
+  if (!node.geometry) {
+    return null;
+  }
+  const sx = node.width / node.intrinsicWidth;
+  const sy = node.height / node.intrinsicHeight;
+  const map = (p: Vec2): Vec2 => ({
+    x: node.x + p.x * sx,
+    y: node.y + p.y * sy,
+  });
+
+  return {
+    subpaths: node.geometry.subpaths.map((subpath) => ({
+      closed: subpath.closed,
+      points: subpath.points.map((point) => ({
+        ...map(point),
+        ...(point.handleIn ? { handleIn: map(point.handleIn) } : {}),
+        ...(point.handleOut ? { handleOut: map(point.handleOut) } : {}),
+      })),
+    })),
+  };
+}
+
 function makeNodeForTool(tool: Tool, point: Vec2): LogoNode | null {
   const centered = (w: number, h: number) => ({
     x: Math.round(point.x - w / 2),
@@ -159,15 +255,19 @@ export function CanvasStage() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<SceneRenderer | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  const penRef = useRef<PenSession | null>(null);
+  const editRef = useRef<PathEditSession | null>(null);
   const cameraFittedRef = useRef(false);
 
   const document = useDocument();
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   const camera = useEditorStore((state) => state.camera);
+  const tool = useEditorStore((state) => state.tool);
   const setTool = useEditorStore((state) => state.setTool);
   const setSelection = useEditorStore((state) => state.setSelection);
   const setCamera = useEditorStore((state) => state.setCamera);
   const setRendererReady = useEditorStore((state) => state.setRendererReady);
+  const setEditingPathId = useEditorStore((state) => state.setEditingPathId);
 
   const syncScene = useCallback(() => {
     const renderer = rendererRef.current;
@@ -176,11 +276,16 @@ export function CanvasStage() {
     }
     const state = useEditorStore.getState();
     const drag = dragRef.current;
+    const pen = penRef.current;
+    const edit = editRef.current;
     renderer.setScene({
       document: documentStore.document,
       camera: state.camera,
-      selectedNodeIds: state.selectedNodeIds,
+      selectedNodeIds: edit ? [] : state.selectedNodeIds,
       marquee: drag?.kind === "marquee" ? drag.current : null,
+      guides: drag?.kind === "move" ? drag.guides : null,
+      penPreview: pen ? { points: pen.points, cursor: pen.cursor } : null,
+      pathEdit: edit ? { geometry: edit.geometry } : null,
     });
   }, []);
 
@@ -194,7 +299,7 @@ export function CanvasStage() {
     }
 
     void (async () => {
-      const canvasKit = await loadCanvasKit(wasmUrl);
+      const canvasKit = await getCanvasKit();
       if (cancelled) {
         return;
       }
@@ -249,6 +354,48 @@ export function CanvasStage() {
     syncScene();
   }, [document, camera, selectedNodeIds, syncScene]);
 
+  // Leaving the pen tool cancels an in-progress path.
+  useEffect(() => {
+    if (tool !== "pen" && penRef.current) {
+      penRef.current = null;
+      syncScene();
+    }
+  }, [tool, syncScene]);
+
+  // Enter/Escape finish pen drawing and bezier editing.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLTextAreaElement ||
+        event.target instanceof HTMLSelectElement
+      ) {
+        return;
+      }
+
+      if (penRef.current) {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          finalizePen(false);
+        } else if (event.key === "Escape") {
+          cancelPen();
+        }
+        return;
+      }
+
+      if (editRef.current) {
+        if (event.key === "Enter" || event.key === "Escape") {
+          event.preventDefault();
+          commitPathEdit();
+        }
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const getScreenPoint = useCallback((event: React.PointerEvent): Vec2 => {
     const rect = canvasRef.current!.getBoundingClientRect();
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
@@ -290,6 +437,137 @@ export function CanvasStage() {
     [],
   );
 
+  function finalizePen(closed: boolean) {
+    const pen = penRef.current;
+    penRef.current = null;
+
+    if (!pen || pen.points.length < 2) {
+      syncScene();
+      return;
+    }
+
+    const geometry: PathGeometry = {
+      subpaths: [{ closed, points: pen.points }],
+    };
+    const patch = patchFromLocalGeometry(geometry);
+    if (!patch) {
+      syncScene();
+      return;
+    }
+
+    const node: PathNode = {
+      id: createId("node"),
+      type: "path",
+      name: "Pen path",
+      x: patch.x!,
+      y: patch.y!,
+      width: patch.width!,
+      height: patch.height!,
+      rotation: 0,
+      opacity: 1,
+      visible: true,
+      locked: false,
+      fill: { type: "solid", color: "#111827" },
+      d: patch.d!,
+      intrinsicWidth: patch.intrinsicWidth!,
+      intrinsicHeight: patch.intrinsicHeight!,
+      geometry: patch.geometry!,
+    };
+
+    documentStore.apply({
+      type: "insert-nodes",
+      artboardId: documentStore.document.activeArtboardId,
+      nodes: [node],
+    });
+    setSelection([node.id]);
+    setTool("select");
+    syncScene();
+  }
+
+  function cancelPen() {
+    if (penRef.current) {
+      penRef.current = null;
+      syncScene();
+    }
+  }
+
+  function startPathEdit(node: PathNode) {
+    const geometry = localGeometryOf(node);
+    if (!geometry) {
+      return;
+    }
+    editRef.current = {
+      nodeId: node.id,
+      geometry,
+      drag: null,
+      changed: false,
+    };
+    setEditingPathId(node.id);
+    setSelection([]);
+    syncScene();
+  }
+
+  function commitPathEdit() {
+    const edit = editRef.current;
+    editRef.current = null;
+    setEditingPathId(null);
+
+    if (edit && edit.changed) {
+      const patch = patchFromLocalGeometry(edit.geometry);
+      if (patch) {
+        documentStore.apply({
+          type: "update-nodes",
+          updates: [{ nodeId: edit.nodeId, patch }],
+        });
+      }
+    } else {
+      documentStore.cancelPreview();
+    }
+
+    if (edit) {
+      setSelection([edit.nodeId]);
+    }
+    syncScene();
+  }
+
+  function hitEditTarget(
+    screen: Vec2,
+  ): { subpath: number; index: number; part: "anchor" | "in" | "out" } | null {
+    const edit = editRef.current;
+    if (!edit) {
+      return null;
+    }
+
+    const artboard = getActiveArtboard(documentStore.document);
+    const camera = useEditorStore.getState().camera;
+    const toScreen = (p: Vec2) =>
+      worldToScreen(camera, { x: p.x + artboard.x, y: p.y + artboard.y });
+    const within = (p: Vec2) => {
+      const s = toScreen(p);
+      return (
+        Math.abs(s.x - screen.x) <= HANDLE_HIT_RADIUS &&
+        Math.abs(s.y - screen.y) <= HANDLE_HIT_RADIUS
+      );
+    };
+
+    for (const [si, subpath] of edit.geometry.subpaths.entries()) {
+      for (const [pi, point] of subpath.points.entries()) {
+        // Handles first so they stay grabbable near their anchor.
+        if (point.handleIn && within(point.handleIn)) {
+          return { subpath: si, index: pi, part: "in" };
+        }
+        if (point.handleOut && within(point.handleOut)) {
+          return { subpath: si, index: pi, part: "out" };
+        }
+        if (within(point)) {
+          return { subpath: si, index: pi, part: "anchor" };
+        }
+      }
+    }
+
+    return null;
+  }
+
   function handlePointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
     const renderer = rendererRef.current;
@@ -307,6 +585,48 @@ export function CanvasStage() {
     }
 
     const state = useEditorStore.getState();
+
+    // Bezier edit mode captures all pointer input.
+    if (editRef.current) {
+      const target = hitEditTarget(screen);
+      if (target) {
+        editRef.current.drag = target;
+      } else {
+        commitPathEdit();
+      }
+      return;
+    }
+
+    if (state.tool === "pen") {
+      const local = toArtboardLocal(screen);
+      const pen = penRef.current;
+
+      // Clicking the first anchor closes the path.
+      if (pen && pen.points.length >= 2) {
+        const first = pen.points[0]!;
+        const zoom = state.camera.zoom;
+        if (
+          Math.hypot(first.x - local.x, first.y - local.y) <=
+          HANDLE_HIT_RADIUS / zoom
+        ) {
+          finalizePen(true);
+          return;
+        }
+      }
+
+      if (!pen) {
+        penRef.current = {
+          points: [{ x: local.x, y: local.y }],
+          dragging: true,
+          cursor: null,
+        };
+      } else {
+        pen.points.push({ x: local.x, y: local.y });
+        pen.dragging = true;
+      }
+      syncScene();
+      return;
+    }
 
     if (state.tool !== "select") {
       const local = toArtboardLocal(screen);
@@ -369,16 +689,88 @@ export function CanvasStage() {
       snapshots: snapshotNodes(nextSelection),
       patches: [],
       moved: false,
+      snapTargets: collectSnapTargets(new Set(nextSelection)),
+      guides: [],
     };
   }
 
   function handlePointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
+    const screen = getScreenPoint(event);
+
+    // Bezier edit mode.
+    const edit = editRef.current;
+    if (edit) {
+      if (!edit.drag) {
+        return;
+      }
+      const local = toArtboardLocal(screen);
+      const point = edit.geometry.subpaths[edit.drag.subpath]?.points[
+        edit.drag.index
+      ];
+      if (!point) {
+        return;
+      }
+
+      if (edit.drag.part === "anchor") {
+        const dx = local.x - point.x;
+        const dy = local.y - point.y;
+        point.x = local.x;
+        point.y = local.y;
+        if (point.handleIn) {
+          point.handleIn = {
+            x: point.handleIn.x + dx,
+            y: point.handleIn.y + dy,
+          };
+        }
+        if (point.handleOut) {
+          point.handleOut = {
+            x: point.handleOut.x + dx,
+            y: point.handleOut.y + dy,
+          };
+        }
+      } else if (edit.drag.part === "in") {
+        point.handleIn = { x: local.x, y: local.y };
+      } else {
+        point.handleOut = { x: local.x, y: local.y };
+      }
+
+      edit.changed = true;
+      const patch = patchFromLocalGeometry(edit.geometry);
+      if (patch) {
+        documentStore.preview([{ nodeId: edit.nodeId, patch }]);
+      }
+      syncScene();
+      return;
+    }
+
+    // Pen tool.
+    const state = useEditorStore.getState();
+    if (state.tool === "pen") {
+      const pen = penRef.current;
+      if (!pen) {
+        return;
+      }
+      const local = toArtboardLocal(screen);
+
+      if (pen.dragging && event.buttons > 0) {
+        // Drag out symmetric handles for the last anchor.
+        const anchor = pen.points[pen.points.length - 1]!;
+        anchor.handleOut = { x: local.x, y: local.y };
+        anchor.handleIn = {
+          x: anchor.x * 2 - local.x,
+          y: anchor.y * 2 - local.y,
+        };
+      } else {
+        pen.cursor = local;
+      }
+      syncScene();
+      return;
+    }
+
     const drag = dragRef.current;
     if (!drag) {
       return;
     }
-
-    const screen = getScreenPoint(event);
 
     if (drag.kind === "pan") {
       const camera = useEditorStore.getState().camera;
@@ -410,12 +802,33 @@ export function CanvasStage() {
     const dy = local.y - drag.startLocal.y;
 
     if (drag.kind === "move") {
+      let snapDx = 0;
+      let snapDy = 0;
+      drag.guides = [];
+
+      // Alt disables snapping, Illustrator-style.
+      if (!event.altKey) {
+        const startBounds = snapshotBounds(drag.snapshots);
+        if (startBounds) {
+          const zoom = useEditorStore.getState().camera.zoom;
+          const snap = computeSnap(
+            { ...startBounds, x: startBounds.x + dx, y: startBounds.y + dy },
+            drag.snapTargets,
+            6 / zoom,
+          );
+          snapDx = snap.dx;
+          snapDy = snap.dy;
+          drag.guides = snap.guides;
+        }
+      }
+
       drag.patches = [...drag.snapshots.entries()].map(([nodeId, snap]) => ({
         nodeId,
-        patch: { x: snap.x + dx, y: snap.y + dy },
+        patch: { x: snap.x + dx + snapDx, y: snap.y + dy + snapDy },
       }));
       drag.moved = drag.moved || dx !== 0 || dy !== 0;
       documentStore.preview(drag.patches);
+      syncScene();
       return;
     }
 
@@ -461,6 +874,18 @@ export function CanvasStage() {
   }
 
   function handlePointerUp() {
+    const edit = editRef.current;
+    if (edit) {
+      edit.drag = null;
+      return;
+    }
+
+    const pen = penRef.current;
+    if (pen) {
+      pen.dragging = false;
+      return;
+    }
+
     const drag = dragRef.current;
     dragRef.current = null;
 
@@ -502,6 +927,26 @@ export function CanvasStage() {
     } else if (drag.kind === "move" || drag.kind === "resize") {
       documentStore.cancelPreview();
     }
+
+    // Drop any lingering smart guides.
+    syncScene();
+  }
+
+  function handleDoubleClick(event: React.MouseEvent<HTMLCanvasElement>) {
+    if (editRef.current || useEditorStore.getState().tool !== "select") {
+      return;
+    }
+
+    const renderer = rendererRef.current;
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const hit = renderer?.hitTest({
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    });
+
+    if (hit && hit.type === "path" && hit.geometry && hit.rotation === 0) {
+      startPathEdit(hit);
+    }
   }
 
   function handleWheel(event: React.WheelEvent<HTMLCanvasElement>) {
@@ -524,11 +969,12 @@ export function CanvasStage() {
     <div ref={containerRef} className="canvas-host">
       <canvas
         ref={canvasRef}
-        className="gpu-canvas"
+        className={`gpu-canvas ${tool === "pen" ? "is-pen" : ""}`}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
+        onDoubleClick={handleDoubleClick}
         onWheel={handleWheel}
         aria-label="OpenLogo canvas"
       />

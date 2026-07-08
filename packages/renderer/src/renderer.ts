@@ -12,10 +12,17 @@ import type {
   LogoDocument,
   LogoNode,
   Paint,
+  PathGeometry,
+  PathPoint,
+  SnapGuide,
   TextNode,
   Vec2,
 } from "@openlogo/core";
-import { getNodesForArtboard, rotatePoint } from "@openlogo/core";
+import {
+  getNodesForArtboard,
+  pathGeometryToSvg,
+  rotatePoint,
+} from "@openlogo/core";
 import type { Camera } from "./camera";
 import { screenToWorld } from "./camera";
 import { FontRegistry } from "./fonts";
@@ -26,10 +33,22 @@ export type Scene = {
   selectedNodeIds: readonly string[];
   /** Marquee rectangle in world space while drag-selecting. */
   marquee?: Bounds | null;
+  /** Smart guides in active-artboard-local space while dragging. */
+  guides?: readonly SnapGuide[] | null;
+  /** In-progress pen drawing, artboard-local coordinates. */
+  penPreview?: {
+    points: readonly PathPoint[];
+    cursor: Vec2 | null;
+  } | null;
+  /** Bezier node editing overlay, artboard-local coordinates. */
+  pathEdit?: {
+    geometry: PathGeometry;
+  } | null;
 };
 
 const EDITOR_BACKGROUND = "#e5e9f0";
 const SELECTION_COLOR = "#2563eb";
+const GUIDE_COLOR = "#ec4899";
 
 type ParagraphCacheEntry = {
   key: string;
@@ -201,6 +220,9 @@ export class SceneRenderer {
     }
 
     this.drawSelection(canvas, scene);
+    this.drawGuides(canvas, scene);
+    this.drawPenPreview(canvas, scene);
+    this.drawPathEdit(canvas, scene);
     this.drawMarquee(canvas, scene);
 
     canvas.restore();
@@ -560,6 +582,219 @@ export class SceneRenderer {
     handleFill.delete();
     handleStroke.delete();
     canvas.restore();
+  }
+
+  private drawGuides(canvas: Canvas, scene: Scene): void {
+    const guides = scene.guides;
+    if (!guides || guides.length === 0) {
+      return;
+    }
+
+    const ck = this.canvasKit;
+    const artboard = scene.document.artboards.find(
+      (item) => item.id === scene.document.activeArtboardId,
+    );
+    if (!artboard) {
+      return;
+    }
+
+    canvas.save();
+    canvas.translate(artboard.x, artboard.y);
+
+    const paint = new ck.Paint();
+    paint.setStyle(ck.PaintStyle.Stroke);
+    paint.setStrokeWidth(1 / scene.camera.zoom);
+    paint.setColor(ck.parseColorString(GUIDE_COLOR));
+    paint.setAntiAlias(true);
+
+    const overshoot = 6 / scene.camera.zoom;
+    for (const guide of guides) {
+      const path = new ck.Path();
+      if (guide.axis === "x") {
+        path.moveTo(guide.position, guide.start - overshoot);
+        path.lineTo(guide.position, guide.end + overshoot);
+      } else {
+        path.moveTo(guide.start - overshoot, guide.position);
+        path.lineTo(guide.end + overshoot, guide.position);
+      }
+      canvas.drawPath(path, paint);
+      path.delete();
+    }
+
+    paint.delete();
+    canvas.restore();
+  }
+
+  private withActiveArtboard(
+    canvas: Canvas,
+    scene: Scene,
+    draw: () => void,
+  ): void {
+    const artboard = scene.document.artboards.find(
+      (item) => item.id === scene.document.activeArtboardId,
+    );
+    if (!artboard) {
+      return;
+    }
+    canvas.save();
+    canvas.translate(artboard.x, artboard.y);
+    draw();
+    canvas.restore();
+  }
+
+  private drawAnchor(
+    canvas: Canvas,
+    point: Vec2,
+    zoom: number,
+    filled: boolean,
+  ): void {
+    const ck = this.canvasKit;
+    const size = 7 / zoom;
+    const rect = ck.XYWHRect(
+      point.x - size / 2,
+      point.y - size / 2,
+      size,
+      size,
+    );
+
+    const fill = new ck.Paint();
+    fill.setColor(ck.parseColorString(filled ? SELECTION_COLOR : "#ffffff"));
+    fill.setAntiAlias(true);
+    canvas.drawRect(rect, fill);
+    fill.delete();
+
+    const stroke = new ck.Paint();
+    stroke.setStyle(ck.PaintStyle.Stroke);
+    stroke.setStrokeWidth(1.25 / zoom);
+    stroke.setColor(ck.parseColorString(SELECTION_COLOR));
+    stroke.setAntiAlias(true);
+    canvas.drawRect(rect, stroke);
+    stroke.delete();
+  }
+
+  private drawHandle(
+    canvas: Canvas,
+    anchor: Vec2,
+    handle: Vec2,
+    zoom: number,
+  ): void {
+    const ck = this.canvasKit;
+    const line = new ck.Paint();
+    line.setStyle(ck.PaintStyle.Stroke);
+    line.setStrokeWidth(1 / zoom);
+    line.setColor(ck.parseColorString("#93c5fd"));
+    line.setAntiAlias(true);
+    const path = new ck.Path();
+    path.moveTo(anchor.x, anchor.y);
+    path.lineTo(handle.x, handle.y);
+    canvas.drawPath(path, line);
+    path.delete();
+    line.delete();
+
+    const dot = new ck.Paint();
+    dot.setColor(ck.parseColorString(SELECTION_COLOR));
+    dot.setAntiAlias(true);
+    canvas.drawCircle(handle.x, handle.y, 3.5 / zoom, dot);
+    dot.delete();
+  }
+
+  private strokeOutlinePaint(zoom: number): SkPaint {
+    const ck = this.canvasKit;
+    const paint = new ck.Paint();
+    paint.setStyle(ck.PaintStyle.Stroke);
+    paint.setStrokeWidth(1.5 / zoom);
+    paint.setColor(ck.parseColorString(SELECTION_COLOR));
+    paint.setAntiAlias(true);
+    return paint;
+  }
+
+  private drawPenPreview(canvas: Canvas, scene: Scene): void {
+    const preview = scene.penPreview;
+    if (!preview || preview.points.length === 0) {
+      return;
+    }
+
+    const ck = this.canvasKit;
+    const zoom = scene.camera.zoom;
+
+    this.withActiveArtboard(canvas, scene, () => {
+      const d = pathGeometryToSvg({
+        subpaths: [{ closed: false, points: [...preview.points] }],
+      });
+      const path = ck.Path.MakeFromSVGString(d);
+      const outline = this.strokeOutlinePaint(zoom);
+
+      if (path) {
+        canvas.drawPath(path, outline);
+        path.delete();
+      }
+
+      // Rubber band to the cursor.
+      const last = preview.points[preview.points.length - 1]!;
+      if (preview.cursor) {
+        const rubber = new ck.Path();
+        const from = last.handleOut ?? last;
+        rubber.moveTo(last.x, last.y);
+        if (last.handleOut) {
+          rubber.cubicTo(
+            from.x,
+            from.y,
+            preview.cursor.x,
+            preview.cursor.y,
+            preview.cursor.x,
+            preview.cursor.y,
+          );
+        } else {
+          rubber.lineTo(preview.cursor.x, preview.cursor.y);
+        }
+        canvas.drawPath(rubber, outline);
+        rubber.delete();
+      }
+      outline.delete();
+
+      for (const [index, point] of preview.points.entries()) {
+        if (point.handleOut) {
+          this.drawHandle(canvas, point, point.handleOut, zoom);
+        }
+        if (point.handleIn) {
+          this.drawHandle(canvas, point, point.handleIn, zoom);
+        }
+        this.drawAnchor(canvas, point, zoom, index === 0);
+      }
+    });
+  }
+
+  private drawPathEdit(canvas: Canvas, scene: Scene): void {
+    const edit = scene.pathEdit;
+    if (!edit) {
+      return;
+    }
+
+    const ck = this.canvasKit;
+    const zoom = scene.camera.zoom;
+
+    this.withActiveArtboard(canvas, scene, () => {
+      const d = pathGeometryToSvg(edit.geometry);
+      const path = ck.Path.MakeFromSVGString(d);
+      if (path) {
+        const outline = this.strokeOutlinePaint(zoom);
+        canvas.drawPath(path, outline);
+        outline.delete();
+        path.delete();
+      }
+
+      for (const subpath of edit.geometry.subpaths) {
+        for (const point of subpath.points) {
+          if (point.handleIn) {
+            this.drawHandle(canvas, point, point.handleIn, zoom);
+          }
+          if (point.handleOut) {
+            this.drawHandle(canvas, point, point.handleOut, zoom);
+          }
+          this.drawAnchor(canvas, point, zoom, false);
+        }
+      }
+    });
   }
 
   private drawMarquee(canvas: Canvas, scene: Scene): void {

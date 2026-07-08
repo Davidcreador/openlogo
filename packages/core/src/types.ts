@@ -9,6 +9,8 @@
  *   a document in place.
  */
 
+import type { PathGeometry } from "./path-data";
+
 export type LogoVariant =
   | "primary"
   | "icon"
@@ -75,6 +77,11 @@ export type PathNode = BaseNode & {
   /** Intrinsic coordinate space the path data is authored in. */
   intrinsicWidth: number;
   intrinsicHeight: number;
+  /**
+   * Structured editable geometry (pen tool). Same intrinsic space as `d`,
+   * which is derived from it. Absent on imported/legacy paths.
+   */
+  geometry?: PathGeometry;
 };
 
 export type TextNode = BaseNode & {

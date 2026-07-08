@@ -1,4 +1,6 @@
 import { getActiveArtboard } from "@openlogo/core";
+import type { BooleanOp } from "@openlogo/renderer";
+import { applyBooleanOp, combinableNodes } from "../lib/boolean-ops";
 import {
   documentToSvg,
   downloadPngFromSvg,
@@ -7,11 +9,26 @@ import {
 import { documentStore, useDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
 
+const BOOLEAN_OPS: Array<{ id: BooleanOp; label: string }> = [
+  { id: "union", label: "Union" },
+  { id: "subtract", label: "Subtract" },
+  { id: "intersect", label: "Intersect" },
+  { id: "exclude", label: "Exclude" },
+];
+
 export function TopBar() {
   const document = useDocument();
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   const setSelection = useEditorStore((state) => state.setSelection);
   const artboard = getActiveArtboard(document);
+  const canCombine = combinableNodes(selectedNodeIds).length >= 2;
+
+  async function runBoolean(op: BooleanOp) {
+    const newId = await applyBooleanOp(op, selectedNodeIds);
+    if (newId) {
+      setSelection([newId]);
+    }
+  }
 
   function deleteSelection() {
     if (selectedNodeIds.length === 0) {
@@ -49,6 +66,19 @@ export function TopBar() {
         </span>
       </div>
       <div className="top-actions">
+        <div className="boolean-group" role="group" aria-label="Boolean operations">
+          {BOOLEAN_OPS.map((op) => (
+            <button
+              key={op.id}
+              type="button"
+              onClick={() => void runBoolean(op.id)}
+              disabled={!canCombine}
+              title={`${op.label} selected shapes`}
+            >
+              {op.label}
+            </button>
+          ))}
+        </div>
         <button
           type="button"
           onClick={() => {

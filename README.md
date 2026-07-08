@@ -28,7 +28,14 @@ Key decisions:
 ## Current features
 
 - GPU canvas with pan (middle-drag / scroll) and zoom (⌘/Ctrl + scroll), zoom-to-cursor
-- Tools: select (V), rectangle (R), ellipse (O), mark (P), text (T)
+- Tools: select (V), rectangle (R), ellipse (O), pen (P), mark (M), text (T)
+- Pen tool: click for corners, click-drag for smooth bezier points, click first
+  anchor or Enter to finish, Escape to cancel
+- Bezier node editing: double-click a pen path to edit anchors and handles
+- Boolean operations via Skia PathOps: union, subtract (minus front),
+  intersect, exclude — atomic single-undo replacement of the operands
+- Smart-guide snapping while moving: edges and centers against other nodes
+  and the artboard (hold Alt to disable)
 - Move, 8-handle resize, marquee selection, shift multi-select
 - Fill, opacity, rotation, corner radius, typography property controls
 - Real text shaping with variable-weight Inter (bundled)
@@ -52,10 +59,10 @@ pnpm poc          # run the original SVG prototype
 
 ## Roadmap
 
-1. Pen tool and Bezier node editing (Skia path segments)
-2. Boolean/pathfinder operations (Skia PathOps — engine already loaded)
-3. Snapping, smart guides, optical alignment, construction helpers
-4. Font browsing (Google Fonts pipeline) and text-to-path conversion
-5. Agent tools: critique, cleanup, variations, export prep (non-destructive)
-6. Export packs: dark/light/mono variants, favicon set, brand guidelines
-7. Workers for geometry ops and export off the main thread
+1. Pen tool refinements: add/remove anchors on existing paths, handle
+   symmetry modes, snapping while drawing
+2. Snapping during resize; distance/spacing guides
+3. Font browsing (Google Fonts pipeline) and text-to-path conversion
+4. Agent tools: critique, cleanup, variations, export prep (non-destructive)
+5. Export packs: dark/light/mono variants, favicon set, brand guidelines
+6. Workers for geometry ops and export off the main thread

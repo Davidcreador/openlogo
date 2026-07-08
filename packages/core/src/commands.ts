@@ -1,3 +1,4 @@
+import type { PathGeometry } from "./path-data";
 import type { Artboard, LogoDocument, LogoNode } from "./types";
 
 /**
@@ -28,6 +29,7 @@ export type NodePatch = Partial<
       d: string;
       intrinsicWidth: number;
       intrinsicHeight: number;
+      geometry: PathGeometry;
       content: string;
       fontFamily: string;
       fontSize: number;
@@ -94,6 +96,13 @@ export type Command =
   | {
       type: "rename-document";
       name: string;
+    }
+  | {
+      type: "batch";
+      /** Applied in order; undone as one history entry. */
+      commands: Command[];
+      /** Optional label for future history UI. */
+      label?: string;
     };
 
 export type ApplyResult = {
@@ -351,6 +360,26 @@ export function applyCommand(
       return {
         document: { ...document, name: command.name },
         inverse: { type: "rename-document", name: document.name },
+      };
+    }
+
+    case "batch": {
+      let next = document;
+      const inverses: Command[] = [];
+
+      for (const child of command.commands) {
+        const result = applyCommand(next, child);
+        next = result.document;
+        inverses.push(result.inverse);
+      }
+
+      return {
+        document: next,
+        inverse: {
+          type: "batch",
+          commands: inverses.reverse(),
+          ...(command.label !== undefined ? { label: command.label } : {}),
+        },
       };
     }
   }

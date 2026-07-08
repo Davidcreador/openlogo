@@ -61,6 +61,27 @@ const nodeSchema = z.discriminatedUnion("type", [
     d: z.string(),
     intrinsicWidth: z.number().positive(),
     intrinsicHeight: z.number().positive(),
+    geometry: z
+      .object({
+        subpaths: z.array(
+          z.object({
+            closed: z.boolean(),
+            points: z.array(
+              z.object({
+                x: z.number(),
+                y: z.number(),
+                handleIn: z
+                  .object({ x: z.number(), y: z.number() })
+                  .optional(),
+                handleOut: z
+                  .object({ x: z.number(), y: z.number() })
+                  .optional(),
+              }),
+            ),
+          }),
+        ),
+      })
+      .optional(),
   }),
   z.object({
     ...baseNodeShape,

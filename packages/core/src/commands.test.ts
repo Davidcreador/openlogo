@@ -109,6 +109,30 @@ describe("applyCommand", () => {
     expect(next.artboards).toHaveLength(1);
   });
 
+  it("batch applies in order and inverse undoes everything atomically", () => {
+    const doc = createInitialDocument();
+    const artboard = getActiveArtboard(doc);
+    const rect = createRectangle({ x: 10, y: 10 });
+    const victimId = artboard.nodeIds[0]!;
+
+    const { document: next, inverse } = applyCommand(doc, {
+      type: "batch",
+      label: "replace",
+      commands: [
+        { type: "delete-nodes", nodeIds: [victimId] },
+        { type: "insert-nodes", artboardId: artboard.id, nodes: [rect] },
+      ],
+    });
+
+    expect(next.nodes[victimId]).toBeUndefined();
+    expect(next.nodes[rect.id]).toBeDefined();
+
+    const { document: reverted } = applyCommand(next, inverse);
+    expect(reverted.nodes[victimId]).toBeDefined();
+    expect(reverted.nodes[rect.id]).toBeUndefined();
+    expect(getActiveArtboard(reverted).nodeIds).toEqual(artboard.nodeIds);
+  });
+
   it("getNodesForArtboard respects z-order", () => {
     const doc = createInitialDocument();
     const nodes = getNodesForArtboard(doc);

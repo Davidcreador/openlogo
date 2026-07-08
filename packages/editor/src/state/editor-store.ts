@@ -2,7 +2,13 @@ import { create } from "zustand";
 import type { DesignReview } from "@openlogo/core";
 import { type Camera, createCamera } from "@openlogo/renderer";
 
-export type Tool = "select" | "rectangle" | "ellipse" | "path" | "text";
+export type Tool =
+  | "select"
+  | "rectangle"
+  | "ellipse"
+  | "path"
+  | "pen"
+  | "text";
 
 type EditorState = {
   tool: Tool;
@@ -10,7 +16,10 @@ type EditorState = {
   camera: Camera;
   review: DesignReview | null;
   rendererReady: boolean;
+  /** Path node currently in bezier edit mode. */
+  editingPathId: string | null;
   setTool: (tool: Tool) => void;
+  setEditingPathId: (id: string | null) => void;
   setSelection: (ids: string[]) => void;
   setCamera: (camera: Camera) => void;
   setReview: (review: DesignReview | null) => void;
@@ -23,7 +32,9 @@ export const useEditorStore = create<EditorState>((set) => ({
   camera: createCamera(),
   review: null,
   rendererReady: false,
+  editingPathId: null,
   setTool: (tool) => set({ tool }),
+  setEditingPathId: (editingPathId) => set({ editingPathId }),
   setSelection: (selectedNodeIds) => set({ selectedNodeIds }),
   setCamera: (camera) => set({ camera }),
   setReview: (review) => set({ review }),

@@ -12,7 +12,8 @@ const TOOL_SHORTCUTS: Record<string, Tool> = {
   v: "select",
   r: "rectangle",
   o: "ellipse",
-  p: "path",
+  p: "pen",
+  m: "path",
   t: "text",
 };
 
@@ -71,6 +72,9 @@ export default function App() {
       }
 
       if (key === "delete" || key === "backspace") {
+        if (state.editingPathId) {
+          return; // Bezier edit mode owns these keys.
+        }
         if (state.selectedNodeIds.length > 0) {
           event.preventDefault();
           documentStore.apply({
