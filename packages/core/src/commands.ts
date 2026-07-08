@@ -25,6 +25,7 @@ export type NodePatch = Partial<
       locked: boolean;
       fill: LogoNode["fill"];
       stroke: LogoNode["stroke"];
+      groupId: string | undefined;
       cornerRadius: number;
       d: string;
       intrinsicWidth: number;

@@ -2,6 +2,7 @@ import {
   Circle,
   MousePointer2,
   PenTool,
+  Pipette,
   Shapes,
   Square,
   Type,
@@ -20,6 +21,7 @@ const tools: Array<{
   { id: "pen", label: "Pen", shortcut: "P", icon: PenTool },
   { id: "path", label: "Starter mark", shortcut: "M", icon: Shapes },
   { id: "text", label: "Text", shortcut: "T", icon: Type },
+  { id: "eyedropper", label: "Eyedropper", shortcut: "I", icon: Pipette },
 ];
 
 export function Toolbar() {

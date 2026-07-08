@@ -8,7 +8,8 @@ export type Tool =
   | "ellipse"
   | "path"
   | "pen"
-  | "text";
+  | "text"
+  | "eyedropper";
 
 type EditorState = {
   tool: Tool;

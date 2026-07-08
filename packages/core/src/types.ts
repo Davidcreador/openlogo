@@ -59,6 +59,8 @@ export type BaseNode = {
   locked: boolean;
   fill: Paint;
   stroke?: Stroke;
+  /** Nodes sharing a groupId select/move together (⌘G). */
+  groupId?: string;
 };
 
 export type RectangleNode = BaseNode & {

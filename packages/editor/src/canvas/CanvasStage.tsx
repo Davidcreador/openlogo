@@ -825,6 +825,27 @@ export function CanvasStage() {
       return;
     }
 
+    // Eyedropper: apply the clicked node's paint to the selection.
+    if (state.tool === "eyedropper") {
+      const hit = renderer.hitTest(screen);
+      if (hit && state.selectedNodeIds.length > 0) {
+        documentStore.apply({
+          type: "update-nodes",
+          updates: state.selectedNodeIds
+            .filter((id) => id !== hit.id)
+            .map((nodeId) => ({
+              nodeId,
+              patch: {
+                fill: structuredClone(hit.fill),
+                stroke: hit.stroke ? { ...hit.stroke } : undefined,
+              },
+            })),
+        });
+      }
+      setTool("select");
+      return;
+    }
+
     if (state.tool !== "select") {
       const local = toArtboardLocal(screen);
       const node = makeNodeForTool(state.tool, local);
@@ -873,13 +894,46 @@ export function CanvasStage() {
       return;
     }
 
-    const nextSelection = event.shiftKey
-      ? state.selectedNodeIds.includes(hit.id)
-        ? state.selectedNodeIds.filter((id) => id !== hit.id)
-        : [...state.selectedNodeIds, hit.id]
-      : state.selectedNodeIds.includes(hit.id)
+    // Group-aware target: clicking a grouped node selects the whole
+    // group; ⌘-click digs into the group for the individual node.
+    let targetIds = [hit.id];
+    if (hit.groupId && !event.metaKey) {
+      const artboard = getActiveArtboard(documentStore.document);
+      targetIds = artboard.nodeIds.filter(
+        (id) => documentStore.document.nodes[id]?.groupId === hit.groupId,
+      );
+    }
+
+    const alreadySelected = targetIds.every((id) =>
+      state.selectedNodeIds.includes(id),
+    );
+    let nextSelection = event.shiftKey
+      ? alreadySelected
+        ? state.selectedNodeIds.filter((id) => !targetIds.includes(id))
+        : [...new Set([...state.selectedNodeIds, ...targetIds])]
+      : alreadySelected
         ? state.selectedNodeIds
-        : [hit.id];
+        : targetIds;
+
+    // Alt-drag duplicates the selection and drags the copies.
+    if (event.altKey && !event.shiftKey) {
+      const document = documentStore.document;
+      const artboard = getActiveArtboard(document);
+      const wanted = new Set(nextSelection);
+      const clones = artboard.nodeIds
+        .filter((id) => wanted.has(id))
+        .map((id) => document.nodes[id])
+        .filter((node): node is LogoNode => Boolean(node))
+        .map((node) => ({ ...structuredClone(node), id: createId("node") }));
+      if (clones.length > 0) {
+        documentStore.apply({
+          type: "insert-nodes",
+          artboardId: artboard.id,
+          nodes: clones,
+        });
+        nextSelection = clones.map((clone) => clone.id);
+      }
+    }
 
     setSelection(nextSelection);
     dragRef.current = {

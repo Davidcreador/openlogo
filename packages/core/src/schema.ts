@@ -43,6 +43,7 @@ const baseNodeShape = {
   locked: z.boolean(),
   fill: paintSchema,
   stroke: strokeSchema.optional(),
+  groupId: z.string().optional(),
 };
 
 const nodeSchema = z.discriminatedUnion("type", [

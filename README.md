@@ -44,6 +44,12 @@ Key decisions:
 - Clipboard: copy/cut/paste/duplicate (⌘C/⌘X/⌘V/⌘D), select all (⌘A),
   arrow-key nudge (⇧ = 10px), bring forward / send backward (⌘] / ⌘[)
 - Text alignment (left/center/right, respected in SVG export) and line height
+- Stroke controls with Expand (Skia outline-stroke → editable filled path)
+- Align & distribute panel (to artboard for single selection), flip H/V
+- Linear gradient fills with stop + angle editor
+- Rotate copies: radial repeat around the artboard centre for badge marks
+- Groups (⌘G/⇧⌘G): grouped nodes select and move together, ⌘-click digs in
+- Eyedropper (I), Alt-drag duplicate, ⌘0 fit / ⌘1 100% / ⌘± zoom
 - Fill, opacity, rotation, corner radius, typography property controls
 - Real text shaping with variable-weight Inter (bundled)
 - Font browsing: curated 13-family catalog (sans/serif/display/mono) served

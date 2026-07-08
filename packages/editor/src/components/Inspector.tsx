@@ -1,13 +1,24 @@
 import { useEffect, useRef, useState } from "react";
 import {
   AlignCenter,
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignEndHorizontal,
+  AlignEndVertical,
+  AlignHorizontalSpaceBetween,
   AlignLeft,
   AlignRight,
+  AlignStartHorizontal,
+  AlignStartVertical,
+  AlignVerticalSpaceBetween,
   Circle,
   Eye,
   EyeOff,
+  FlipHorizontal2,
+  FlipVertical2,
   Lock,
   PenTool,
+  RotateCw,
   Sparkles,
   Square,
   Type,
@@ -25,6 +36,13 @@ import {
   fontStore,
   nearestWeight,
 } from "../lib/font-store";
+import {
+  alignNodes,
+  distributeNodes,
+  expandStrokeOp,
+  flipNodes,
+  rotateCopies,
+} from "../lib/object-ops";
 import { convertTextToPath } from "../lib/text-to-path";
 import { documentStore, useDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
@@ -91,6 +109,271 @@ function NumberField({
   );
 }
 
+function AlignPanel({ nodeIds }: { nodeIds: readonly string[] }) {
+  const canDistribute = nodeIds.length >= 3;
+
+  const alignButtons = [
+    { edge: "left", icon: AlignStartVertical, label: "Align left" },
+    { edge: "centerX", icon: AlignCenterVertical, label: "Align center" },
+    { edge: "right", icon: AlignEndVertical, label: "Align right" },
+    { edge: "top", icon: AlignStartHorizontal, label: "Align top" },
+    { edge: "centerY", icon: AlignCenterHorizontal, label: "Align middle" },
+    { edge: "bottom", icon: AlignEndHorizontal, label: "Align bottom" },
+  ] as const;
+
+  return (
+    <div className="align-panel" role="group" aria-label="Align and distribute">
+      {alignButtons.map(({ edge, icon: Icon, label }) => (
+        <button
+          key={edge}
+          type="button"
+          title={label}
+          aria-label={label}
+          onClick={() => alignNodes(nodeIds, edge)}
+        >
+          <Icon size={14} />
+        </button>
+      ))}
+      <button
+        type="button"
+        title="Distribute horizontally"
+        aria-label="Distribute horizontally"
+        disabled={!canDistribute}
+        onClick={() => distributeNodes(nodeIds, "horizontal")}
+      >
+        <AlignHorizontalSpaceBetween size={14} />
+      </button>
+      <button
+        type="button"
+        title="Distribute vertically"
+        aria-label="Distribute vertically"
+        disabled={!canDistribute}
+        onClick={() => distributeNodes(nodeIds, "vertical")}
+      >
+        <AlignVerticalSpaceBetween size={14} />
+      </button>
+      <button
+        type="button"
+        title="Flip horizontal"
+        aria-label="Flip horizontal"
+        onClick={() => flipNodes(nodeIds, "horizontal")}
+      >
+        <FlipHorizontal2 size={14} />
+      </button>
+      <button
+        type="button"
+        title="Flip vertical"
+        aria-label="Flip vertical"
+        onClick={() => flipNodes(nodeIds, "vertical")}
+      >
+        <FlipVertical2 size={14} />
+      </button>
+    </div>
+  );
+}
+
+function FillEditor({
+  node,
+  patchSelection,
+}: {
+  node: LogoNode;
+  patchSelection: (patch: NodePatch) => void;
+}) {
+  const isGradient = node.fill.type === "linear-gradient";
+  const solidColor = node.fill.type === "solid" ? node.fill.color : "#000000";
+
+  return (
+    <>
+      <div className="fill-type-toggle" role="group" aria-label="Fill type">
+        <button
+          type="button"
+          className={isGradient ? "" : "active"}
+          onClick={() => {
+            if (isGradient) {
+              patchSelection({
+                fill: {
+                  type: "solid",
+                  color:
+                    node.fill.type === "linear-gradient"
+                      ? (node.fill.stops[0]?.color ?? "#111827")
+                      : "#111827",
+                },
+              });
+            }
+          }}
+        >
+          Solid
+        </button>
+        <button
+          type="button"
+          className={isGradient ? "active" : ""}
+          onClick={() => {
+            if (!isGradient) {
+              patchSelection({
+                fill: {
+                  type: "linear-gradient",
+                  angle: 90,
+                  stops: [
+                    { offset: 0, color: solidColor },
+                    { offset: 1, color: "#4f6bf6" },
+                  ],
+                },
+              });
+            }
+          }}
+        >
+          Gradient
+        </button>
+      </div>
+
+      {node.fill.type === "linear-gradient" ? (
+        <div className="gradient-editor">
+          <div
+            className="gradient-bar"
+            style={{
+              background: `linear-gradient(90deg, ${node.fill.stops
+                .map((stop) => `${stop.color} ${stop.offset * 100}%`)
+                .join(", ")})`,
+            }}
+          />
+          <div className="fill-row">
+            {node.fill.stops.map((stop, index) => (
+              <input
+                key={index}
+                type="color"
+                className="fill-swatch"
+                value={stop.color}
+                aria-label={`Gradient stop ${index + 1}`}
+                onChange={(event) => {
+                  if (node.fill.type !== "linear-gradient") {
+                    return;
+                  }
+                  const stops = node.fill.stops.map((item, i) =>
+                    i === index ? { ...item, color: event.target.value } : item,
+                  );
+                  patchSelection({ fill: { ...node.fill, stops } });
+                }}
+              />
+            ))}
+            <NumberField
+              label="∠"
+              value={node.fill.angle}
+              onCommit={(angle) => {
+                if (node.fill.type === "linear-gradient") {
+                  patchSelection({ fill: { ...node.fill, angle } });
+                }
+              }}
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="fill-row">
+          <input
+            type="color"
+            className="fill-swatch"
+            value={solidColor}
+            onChange={(event) =>
+              patchSelection({
+                fill: { type: "solid", color: event.target.value },
+              })
+            }
+            aria-label="Fill color"
+          />
+          <input
+            className="fill-hex"
+            value={solidColor.toUpperCase()}
+            onChange={(event) => {
+              const value = event.target.value.trim();
+              if (/^#[0-9a-fA-F]{6}$/.test(value)) {
+                patchSelection({ fill: { type: "solid", color: value } });
+              }
+            }}
+            aria-label="Fill hex"
+          />
+          <div className="opacity-field">
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={node.opacity}
+              onChange={(event) =>
+                patchSelection({ opacity: Number(event.target.value) })
+              }
+              aria-label="Opacity"
+            />
+            <span>{Math.round(node.opacity * 100)}%</span>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function StrokeEditor({
+  node,
+  patchSelection,
+}: {
+  node: LogoNode;
+  patchSelection: (patch: NodePatch) => void;
+}) {
+  const stroke = node.stroke;
+
+  return (
+    <div className="stroke-block">
+      <div className="stroke-head">
+        <span>Stroke</span>
+        <button
+          type="button"
+          className="stroke-toggle"
+          onClick={() =>
+            patchSelection({
+              stroke: stroke
+                ? undefined
+                : { color: "#111827", width: 2, align: "center" },
+            })
+          }
+        >
+          {stroke ? "Remove" : "Add"}
+        </button>
+      </div>
+      {stroke && (
+        <div className="fill-row">
+          <input
+            type="color"
+            className="fill-swatch"
+            value={stroke.color}
+            aria-label="Stroke color"
+            onChange={(event) =>
+              patchSelection({
+                stroke: { ...stroke, color: event.target.value },
+              })
+            }
+          />
+          <NumberField
+            label="W"
+            value={stroke.width}
+            step={0.5}
+            onCommit={(width) =>
+              patchSelection({ stroke: { ...stroke, width: Math.max(0, width) } })
+            }
+          />
+          {node.type !== "text" && (
+            <button
+              type="button"
+              className="stroke-toggle"
+              title="Outline stroke into a filled path"
+              onClick={() => void expandStrokeOp(node.id)}
+            >
+              Expand
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DesignSection({
   node,
   patchSelection,
@@ -100,11 +383,13 @@ function DesignSection({
 }) {
   const document = useDocument();
   const setSelection = useEditorStore((state) => state.setSelection);
-  const fillColor = node.fill.type === "solid" ? node.fill.color : "#000000";
+  const [copiesCount, setCopiesCount] = useState(6);
 
   return (
     <section className="inspector-section">
       <h2>Design</h2>
+
+      <AlignPanel nodeIds={[node.id]} />
 
       <div className="field-grid">
         <NumberField label="X" value={node.x} onCommit={(x) => patchSelection({ x })} />
@@ -135,41 +420,30 @@ function DesignSection({
         )}
       </div>
 
-      <div className="fill-row">
-        <input
-          type="color"
-          className="fill-swatch"
-          value={fillColor}
-          onChange={(event) =>
-            patchSelection({ fill: { type: "solid", color: event.target.value } })
+      <FillEditor node={node} patchSelection={patchSelection} />
+      <StrokeEditor node={node} patchSelection={patchSelection} />
+
+      <div className="rotate-copies">
+        <NumberField
+          label="×"
+          value={copiesCount}
+          onCommit={(value) =>
+            setCopiesCount(Math.max(2, Math.min(64, Math.round(value))))
           }
-          aria-label="Fill color"
         />
-        <input
-          className="fill-hex"
-          value={fillColor.toUpperCase()}
-          onChange={(event) => {
-            const value = event.target.value.trim();
-            if (/^#[0-9a-fA-F]{6}$/.test(value)) {
-              patchSelection({ fill: { type: "solid", color: value } });
+        <button
+          type="button"
+          className="stroke-toggle"
+          title="Repeat rotated copies around the artboard centre"
+          onClick={() => {
+            const ids = rotateCopies(node.id, copiesCount);
+            if (ids.length > 0) {
+              setSelection([node.id, ...ids]);
             }
           }}
-          aria-label="Fill hex"
-        />
-        <div className="opacity-field">
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={node.opacity}
-            onChange={(event) =>
-              patchSelection({ opacity: Number(event.target.value) })
-            }
-            aria-label="Opacity"
-          />
-          <span>{Math.round(node.opacity * 100)}%</span>
-        </div>
+        >
+          <RotateCw size={12} /> Rotate copies
+        </button>
       </div>
 
       <div className="swatch-row">
@@ -467,6 +741,7 @@ function MultiDesignSection({
       <p className="muted" style={{ marginBottom: 10 }}>
         {nodes.length} objects selected
       </p>
+      <AlignPanel nodeIds={nodes.map((node) => node.id)} />
       <div className="fill-row">
         <input
           type="color"

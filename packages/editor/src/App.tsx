@@ -5,6 +5,8 @@ import { PreviewStrip } from "./components/PreviewStrip";
 import { Toolbar } from "./components/Toolbar";
 import { TopBar } from "./components/TopBar";
 import { ZoomControls } from "./components/ZoomControls";
+import { createId, getActiveArtboard } from "@openlogo/core";
+import { fitBounds, zoomAt } from "@openlogo/renderer";
 import {
   copyNodes,
   cutNodes,
@@ -23,6 +25,7 @@ const TOOL_SHORTCUTS: Record<string, Tool> = {
   p: "pen",
   m: "path",
   t: "text",
+  i: "eyedropper",
 };
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -126,6 +129,51 @@ export default function App() {
             );
             state.setTool("select");
           }
+          return;
+        }
+
+        // Zoom: ⌘0 fit, ⌘1 100%, ⌘+/⌘−.
+        if (key === "0" || key === "1" || key === "=" || key === "+" || key === "-") {
+          event.preventDefault();
+          const { camera, viewport, setCamera } = state;
+          if (viewport.width === 0) {
+            return;
+          }
+          if (key === "0") {
+            setCamera(
+              fitBounds(
+                getActiveArtboard(documentStore.document),
+                viewport.width,
+                viewport.height,
+              ),
+            );
+          } else {
+            const center = { x: viewport.width / 2, y: viewport.height / 2 };
+            const zoom =
+              key === "1"
+                ? 1
+                : key === "-"
+                  ? camera.zoom / 1.25
+                  : camera.zoom * 1.25;
+            setCamera(zoomAt(camera, center, zoom));
+          }
+          return;
+        }
+
+        // ⌘G group, ⇧⌘G ungroup.
+        if (key === "g") {
+          event.preventDefault();
+          if (selection.length === 0) {
+            return;
+          }
+          const groupId = event.shiftKey ? undefined : createId("group");
+          documentStore.apply({
+            type: "update-nodes",
+            updates: selection.map((nodeId) => ({
+              nodeId,
+              patch: { groupId },
+            })),
+          });
           return;
         }
 

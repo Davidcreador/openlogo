@@ -68,6 +68,47 @@ export function nodeToSkPath(ck: CanvasKit, node: LogoNode): Path | null {
 }
 
 /**
+ * Convert a node's stroke into a filled outline path (Illustrator's
+ * "Outline Stroke"). Returns the outline normalised to its own origin.
+ */
+export function expandStroke(
+  ck: CanvasKit,
+  node: LogoNode,
+): CombineResult | null {
+  if (!node.stroke || node.stroke.width <= 0) {
+    return null;
+  }
+
+  const path = nodeToSkPath(ck, node);
+  if (!path) {
+    return null;
+  }
+
+  const ok = path.stroke({
+    width: node.stroke.width,
+    join: ck.StrokeJoin.Miter,
+    cap: ck.StrokeCap.Butt,
+    miter_limit: 4,
+    precision: 0.3,
+  });
+
+  if (!ok) {
+    path.delete();
+    return null;
+  }
+
+  const bounds = path.computeTightBounds();
+  const [left = 0, top = 0, right = 0, bottom = 0] = bounds;
+  const width = Math.max(1, right - left);
+  const height = Math.max(1, bottom - top);
+  path.transform([1, 0, -left, 0, 1, -top, 0, 0, 1]);
+  const d = path.toSVGString();
+  path.delete();
+
+  return { d, x: left, y: top, width, height };
+}
+
+/**
  * Combine nodes with a Skia PathOp. Nodes must be in z-order
  * (back to front); `subtract` removes every later node from the first
  * ("minus front"). Returns null when fewer than two nodes are combinable.
