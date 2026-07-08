@@ -307,6 +307,99 @@ export function removeAnchor(
   return { subpaths };
 }
 
+/**
+ * Generic absolute path command, the shape emitted by font engines
+ * (opentype.js) and SVG parsers. Quadratics are converted to cubics so
+ * everything downstream deals with one curve type.
+ */
+export type PathCommand =
+  | { type: "M"; x: number; y: number }
+  | { type: "L"; x: number; y: number }
+  | { type: "C"; x1: number; y1: number; x2: number; y2: number; x: number; y: number }
+  | { type: "Q"; x1: number; y1: number; x: number; y: number }
+  | { type: "Z" };
+
+export function commandsToGeometry(commands: PathCommand[]): PathGeometry {
+  const subpaths: SubPath[] = [];
+  let points: PathPoint[] = [];
+
+  const flush = (closed: boolean) => {
+    if (points.length > 0) {
+      // Closed contours often repeat the first point; drop the duplicate.
+      if (closed && points.length > 1) {
+        const first = points[0]!;
+        const last = points[points.length - 1]!;
+        if (
+          Math.abs(first.x - last.x) < 1e-6 &&
+          Math.abs(first.y - last.y) < 1e-6
+        ) {
+          if (last.handleIn) {
+            first.handleIn = last.handleIn;
+          }
+          points.pop();
+        }
+      }
+      if (points.length > 1) {
+        subpaths.push({ closed, points });
+      }
+      points = [];
+    }
+  };
+
+  for (const command of commands) {
+    switch (command.type) {
+      case "M":
+        flush(false);
+        points.push({ x: command.x, y: command.y });
+        break;
+
+      case "L":
+        points.push({ x: command.x, y: command.y });
+        break;
+
+      case "C": {
+        const previous = points[points.length - 1];
+        if (previous) {
+          previous.handleOut = { x: command.x1, y: command.y1 };
+        }
+        points.push({
+          x: command.x,
+          y: command.y,
+          handleIn: { x: command.x2, y: command.y2 },
+        });
+        break;
+      }
+
+      case "Q": {
+        // Exact quadratic → cubic elevation: c1 = p0 + 2/3(q - p0),
+        // c2 = p1 + 2/3(q - p1).
+        const previous = points[points.length - 1];
+        if (!previous) {
+          break;
+        }
+        const c1 = {
+          x: previous.x + (2 / 3) * (command.x1 - previous.x),
+          y: previous.y + (2 / 3) * (command.y1 - previous.y),
+        };
+        const c2 = {
+          x: command.x + (2 / 3) * (command.x1 - command.x),
+          y: command.y + (2 / 3) * (command.y1 - command.y),
+        };
+        previous.handleOut = c1;
+        points.push({ x: command.x, y: command.y, handleIn: c2 });
+        break;
+      }
+
+      case "Z":
+        flush(true);
+        break;
+    }
+  }
+
+  flush(false);
+  return { subpaths };
+}
+
 function mapPathGeometry(
   geometry: PathGeometry,
   transform: (point: Vec2) => Vec2,

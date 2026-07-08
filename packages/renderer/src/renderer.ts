@@ -47,8 +47,8 @@ export type Scene = {
   } | null;
 };
 
-const EDITOR_BACKGROUND = "#e5e9f0";
-const SELECTION_COLOR = "#2563eb";
+const EDITOR_BACKGROUND = "#e8eaef";
+const SELECTION_COLOR = "#4f6bf6";
 const GUIDE_COLOR = "#ec4899";
 
 type ParagraphCacheEntry = {

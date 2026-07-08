@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   type PathGeometry,
+  commandsToGeometry,
   findSegmentNear,
   insertAnchor,
   pathGeometryBounds,
@@ -198,6 +199,71 @@ describe("removeAnchor", () => {
     };
 
     expect(removeAnchor(line, 0, 0)).toBeNull();
+  });
+});
+
+describe("commandsToGeometry", () => {
+  it("builds subpaths from M/L/Z", () => {
+    const geometry = commandsToGeometry([
+      { type: "M", x: 0, y: 0 },
+      { type: "L", x: 10, y: 0 },
+      { type: "L", x: 5, y: 8 },
+      { type: "Z" },
+    ]);
+
+    expect(geometry.subpaths).toHaveLength(1);
+    expect(geometry.subpaths[0]!.closed).toBe(true);
+    expect(geometry.subpaths[0]!.points).toHaveLength(3);
+  });
+
+  it("maps cubics onto handles", () => {
+    const geometry = commandsToGeometry([
+      { type: "M", x: 0, y: 0 },
+      { type: "C", x1: 10, y1: 20, x2: 30, y2: 20, x: 40, y: 0 },
+    ]);
+
+    const [a, b] = geometry.subpaths[0]!.points;
+    expect(a!.handleOut).toEqual({ x: 10, y: 20 });
+    expect(b!.handleIn).toEqual({ x: 30, y: 20 });
+  });
+
+  it("elevates quadratics to cubics exactly", () => {
+    const geometry = commandsToGeometry([
+      { type: "M", x: 0, y: 0 },
+      { type: "Q", x1: 30, y1: 60, x: 60, y: 0 },
+    ]);
+
+    const [a, b] = geometry.subpaths[0]!.points;
+    expect(a!.handleOut).toEqual({ x: 20, y: 40 });
+    expect(b!.handleIn).toEqual({ x: 40, y: 40 });
+  });
+
+  it("deduplicates the repeated closing point of font contours", () => {
+    const geometry = commandsToGeometry([
+      { type: "M", x: 0, y: 0 },
+      { type: "L", x: 10, y: 0 },
+      { type: "L", x: 5, y: 8 },
+      { type: "L", x: 0, y: 0 },
+      { type: "Z" },
+    ]);
+
+    expect(geometry.subpaths[0]!.points).toHaveLength(3);
+    expect(geometry.subpaths[0]!.closed).toBe(true);
+  });
+
+  it("handles multiple contours (glyph counters)", () => {
+    const geometry = commandsToGeometry([
+      { type: "M", x: 0, y: 0 },
+      { type: "L", x: 20, y: 0 },
+      { type: "L", x: 10, y: 20 },
+      { type: "Z" },
+      { type: "M", x: 8, y: 4 },
+      { type: "L", x: 12, y: 4 },
+      { type: "L", x: 10, y: 8 },
+      { type: "Z" },
+    ]);
+
+    expect(geometry.subpaths).toHaveLength(2);
   });
 });
 

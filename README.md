@@ -41,6 +41,11 @@ Key decisions:
 - Move, 8-handle resize, marquee selection, shift multi-select
 - Fill, opacity, rotation, corner radius, typography property controls
 - Real text shaping with variable-weight Inter (bundled)
+- Font browsing: curated 13-family catalog (sans/serif/display/mono) served
+  as raw TTFs from the Fontsource CDN, fetched and registered on demand
+- Text-to-path: convert wordmarks to editable glyph outlines (opentype.js on
+  the same TTF bytes Skia renders with; kerning + letter-spacing preserved,
+  quadratics elevated to cubics so outlines are pen-editable)
 - Logo system artboard variants: icon, wordmark, horizontal, stacked
 - Small-size preview strip (128/64/32/16 px) rendered from the actual SVG export
 - SVG and PNG export
@@ -61,8 +66,8 @@ pnpm poc          # run the original SVG prototype
 
 ## Roadmap
 
-1. Font browsing (Google Fonts pipeline) and text-to-path conversion
-2. Pen handle symmetry modes; snapping while drawing; distance/spacing guides
-3. Agent tools: critique, cleanup, variations, export prep (non-destructive)
-4. Export packs: dark/light/mono variants, favicon set, brand guidelines
+1. Pen handle symmetry modes; snapping while drawing; distance/spacing guides
+2. Agent tools: critique, cleanup, variations, export prep (non-destructive)
+3. Export packs: dark/light/mono variants, favicon set, brand guidelines
+4. Font search over the full Google Fonts index; font pairing suggestions
 5. Workers for geometry ops and export off the main thread

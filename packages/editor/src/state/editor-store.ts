@@ -18,8 +18,11 @@ type EditorState = {
   rendererReady: boolean;
   /** Path node currently in bezier edit mode. */
   editingPathId: string | null;
+  /** Canvas viewport CSS size, kept fresh by CanvasStage's resize observer. */
+  viewport: { width: number; height: number };
   setTool: (tool: Tool) => void;
   setEditingPathId: (id: string | null) => void;
+  setViewport: (viewport: { width: number; height: number }) => void;
   setSelection: (ids: string[]) => void;
   setCamera: (camera: Camera) => void;
   setReview: (review: DesignReview | null) => void;
@@ -33,8 +36,10 @@ export const useEditorStore = create<EditorState>((set) => ({
   review: null,
   rendererReady: false,
   editingPathId: null,
+  viewport: { width: 0, height: 0 },
   setTool: (tool) => set({ tool }),
   setEditingPathId: (editingPathId) => set({ editingPathId }),
+  setViewport: (viewport) => set({ viewport }),
   setSelection: (selectedNodeIds) => set({ selectedNodeIds }),
   setCamera: (camera) => set({ camera }),
   setReview: (review) => set({ review }),

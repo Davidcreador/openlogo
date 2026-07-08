@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { getCanvasKit } from "../lib/canvaskit";
+import { fontStore } from "../lib/font-store";
 import {
   type Bounds,
   type LogoNode,
@@ -327,12 +328,16 @@ export function CanvasStage() {
 
       const renderer = new SceneRenderer(canvasKit, canvas, fonts);
       rendererRef.current = renderer;
+      fontStore.attach(fonts, renderer);
 
       const applySize = () => {
         const rect = container.getBoundingClientRect();
         canvas.style.width = `${rect.width}px`;
         canvas.style.height = `${rect.height}px`;
         renderer.resize(rect.width, rect.height, window.devicePixelRatio || 1);
+        useEditorStore
+          .getState()
+          .setViewport({ width: rect.width, height: rect.height });
 
         if (!cameraFittedRef.current && rect.width > 0) {
           cameraFittedRef.current = true;
@@ -354,6 +359,7 @@ export function CanvasStage() {
 
     return () => {
       cancelled = true;
+      fontStore.detach();
       rendererRef.current?.dispose();
       rendererRef.current = null;
     };
@@ -1124,7 +1130,7 @@ export function CanvasStage() {
         onWheel={handleWheel}
         aria-label="OpenLogo canvas"
       />
-      <div className="zoom-pill">{Math.round(camera.zoom * 100)}%</div>
+
     </div>
   );
 }

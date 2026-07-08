@@ -1,10 +1,12 @@
 import { useEffect } from "react";
 import { CanvasStage } from "./canvas/CanvasStage";
-import { LeftRail } from "./components/LeftRail";
+import { Inspector } from "./components/Inspector";
 import { PreviewStrip } from "./components/PreviewStrip";
-import { RightRail } from "./components/RightRail";
+import { Toolbar } from "./components/Toolbar";
 import { TopBar } from "./components/TopBar";
+import { ZoomControls } from "./components/ZoomControls";
 import { createAutosave, loadDocument } from "./lib/persistence";
+import { ensureDocumentFonts } from "./lib/text-to-path";
 import { documentStore } from "./state/document";
 import { type Tool, useEditorStore } from "./state/editor-store";
 
@@ -35,6 +37,7 @@ export default function App() {
       if (stored && !disposed) {
         documentStore.reset(stored);
       }
+      ensureDocumentFonts();
     });
 
     const autosave = createAutosave(() => documentStore.document);
@@ -103,13 +106,16 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <LeftRail />
-      <section className="workspace" aria-label="Logo canvas workspace">
-        <TopBar />
-        <CanvasStage />
-        <PreviewStrip />
-      </section>
-      <RightRail />
+      <TopBar />
+      <div className="app-main">
+        <Toolbar />
+        <section className="canvas-area" aria-label="Logo canvas workspace">
+          <CanvasStage />
+          <ZoomControls />
+          <PreviewStrip />
+        </section>
+        <Inspector />
+      </div>
     </main>
   );
 }
