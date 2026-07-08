@@ -45,6 +45,8 @@ const variantOptions: Array<{ id: LogoVariant; label: string }> = [
   { id: "stacked", label: "Stacked" },
 ];
 
+const pathCoordinateSize = 96;
+
 function cloneNode(node: LogoNode): LogoNode {
   return { ...node, fill: { ...node.fill }, stroke: node.stroke && { ...node.stroke } };
 }
@@ -177,15 +179,23 @@ function renderSvgNode(node: LogoNode, isSelected: boolean) {
   }
 
   if (node.type === "path") {
+    const transform = `translate(${node.x + node.width / 2} ${
+      node.y + node.height / 2
+    }) rotate(${node.rotation}) scale(${node.width / pathCoordinateSize} ${
+      node.height / pathCoordinateSize
+    }) translate(${-pathCoordinateSize / 2} ${-pathCoordinateSize / 2})`;
+
     return (
-      <path
+      <g
         key={node.id}
         {...commonProps}
+        transform={transform}
+      >
+        <path
         d={node.d}
-        transform={`translate(${node.x} ${node.y}) scale(${node.width / 96} ${
-          node.height / 96
-        })`}
-      />
+          vectorEffect="non-scaling-stroke"
+        />
+      </g>
     );
   }
 
@@ -349,12 +359,28 @@ export default function App() {
           }
 
           if (dragState.mode === "resize") {
+            const width = Math.max(12, snapshot.width + deltaX);
+            const height = Math.max(12, snapshot.height + deltaY);
+
+            if (snapshot.type === "text" && node.type === "text") {
+              const scale = height / Math.max(1, snapshot.height);
+              return [
+                id,
+                {
+                  ...node,
+                  width,
+                  height,
+                  fontSize: Math.max(8, snapshot.fontSize * scale),
+                },
+              ];
+            }
+
             return [
               id,
               {
                 ...node,
-                width: Math.max(12, snapshot.width + deltaX),
-                height: Math.max(12, snapshot.height + deltaY),
+                width,
+                height,
               },
             ];
           }
@@ -451,6 +477,8 @@ export default function App() {
     await downloadPngFromSvg(
       svg,
       `${artboard.name.toLowerCase().replaceAll(" ", "-")}@2x.png`,
+      artboard.width,
+      artboard.height,
     );
   }
 

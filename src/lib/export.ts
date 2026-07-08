@@ -6,6 +6,8 @@ import {
   getNodesForArtboard,
 } from "./document";
 
+const pathCoordinateSize = 96;
+
 function escapeXml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -44,13 +46,19 @@ function renderNode(node: LogoNode): string {
   }
 
   if (node.type === "path") {
-    return `<path id="${escapeXml(node.id)}" opacity="${node.opacity}" fill="${
+    const transform = `translate(${node.x + node.width / 2} ${
+      node.y + node.height / 2
+    }) rotate(${node.rotation}) scale(${node.width / pathCoordinateSize} ${
+      node.height / pathCoordinateSize
+    }) translate(${-pathCoordinateSize / 2} ${-pathCoordinateSize / 2})`;
+
+    return `<g id="${escapeXml(node.id)}" opacity="${node.opacity}" fill="${
       node.fill.value
-    }"${node.stroke ? ` stroke="${node.stroke.color}" stroke-width="${node.stroke.width}"` : ""} d="${escapeXml(
+    }"${node.stroke ? ` stroke="${node.stroke.color}" stroke-width="${node.stroke.width}"` : ""} transform="${transform}">
+    <path d="${escapeXml(
       node.d,
-    )}" transform="translate(${node.x} ${node.y}) scale(${node.width / 96} ${
-      node.height / 96
-    })" />`;
+    )}" vector-effect="non-scaling-stroke" />
+  </g>`;
   }
 
   return "";
@@ -90,6 +98,8 @@ export function downloadTextFile(
 export async function downloadPngFromSvg(
   svg: string,
   filename: string,
+  width: number,
+  height: number,
   scale = 2,
 ): Promise<void> {
   const svgBlob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
@@ -103,8 +113,8 @@ export async function downloadPngFromSvg(
   });
 
   const canvas = document.createElement("canvas");
-  canvas.width = image.width * scale;
-  canvas.height = image.height * scale;
+  canvas.width = width * scale;
+  canvas.height = height * scale;
   const context = canvas.getContext("2d");
 
   if (!context) {
