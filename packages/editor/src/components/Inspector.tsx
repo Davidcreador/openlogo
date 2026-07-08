@@ -43,6 +43,7 @@ import {
   flipNodes,
   rotateCopies,
 } from "../lib/object-ops";
+import { editSwatch } from "../lib/swatches";
 import { convertTextToPath } from "../lib/text-to-path";
 import { documentStore, useDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
@@ -601,6 +602,40 @@ function DesignSection({
   );
 }
 
+function SwatchesSection() {
+  const document = useDocument();
+  const palette = document.palettes[0];
+  if (!palette) {
+    return null;
+  }
+
+  return (
+    <section className="inspector-section">
+      <h2>Brand colors</h2>
+      <div className="swatch-row">
+        {palette.colors.map((color, index) => (
+          <input
+            key={`${index}-${color}`}
+            type="color"
+            className="swatch swatch-editable"
+            defaultValue={color}
+            aria-label={`Edit brand color ${index + 1}`}
+            title="Edit — recolors every use"
+            onBlur={(event) => {
+              if (event.target.value !== color) {
+                editSwatch(palette.id, index, event.target.value);
+              }
+            }}
+          />
+        ))}
+      </div>
+      <p className="muted" style={{ marginTop: 8 }}>
+        Editing a swatch recolors every object using it.
+      </p>
+    </section>
+  );
+}
+
 function LayersSection() {
   const document = useDocument();
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
@@ -841,6 +876,7 @@ export function Inspector() {
           <p className="muted">Select an object to edit its properties.</p>
         </section>
       )}
+      <SwatchesSection />
       <LayersSection />
       <AssistantSection />
     </aside>

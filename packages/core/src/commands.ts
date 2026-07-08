@@ -100,6 +100,11 @@ export type Command =
       name: string;
     }
   | {
+      type: "update-palette";
+      paletteId: string;
+      colors: string[];
+    }
+  | {
       type: "batch";
       /** Applied in order; undone as one history entry. */
       commands: Command[];
@@ -362,6 +367,27 @@ export function applyCommand(
       return {
         document: { ...document, name: command.name },
         inverse: { type: "rename-document", name: document.name },
+      };
+    }
+
+    case "update-palette": {
+      const previous = document.palettes.find(
+        (item) => item.id === command.paletteId,
+      );
+      return {
+        document: {
+          ...document,
+          palettes: document.palettes.map((item) =>
+            item.id === command.paletteId
+              ? { ...item, colors: command.colors }
+              : item,
+          ),
+        },
+        inverse: {
+          type: "update-palette",
+          paletteId: command.paletteId,
+          colors: previous?.colors ?? [],
+        },
       };
     }
 

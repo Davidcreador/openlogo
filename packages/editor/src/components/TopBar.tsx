@@ -4,6 +4,7 @@ import {
   ChevronDown,
   Download,
   Plus,
+  Upload,
   Redo2,
   SquaresExclude,
   SquaresIntersect,
@@ -20,6 +21,8 @@ import {
   downloadPngFromSvg,
   downloadTextFile,
 } from "../lib/export";
+import { exportPack } from "../lib/export-pack";
+import { importSvg } from "../lib/svg-import";
 import { documentStore, useDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
 
@@ -185,6 +188,18 @@ function ExportMenu() {
           >
             <span className="menu-label">PNG (2×)</span>
           </button>
+          <div className="menu-divider" />
+          <button
+            type="button"
+            className="menu-item"
+            onClick={() => {
+              void exportPack();
+              setOpen(false);
+            }}
+          >
+            <span className="menu-label">Export pack</span>
+            <small>svg · mono · reversed · favicons</small>
+          </button>
         </div>
       )}
     </div>
@@ -210,6 +225,22 @@ export function TopBar() {
     }
     documentStore.apply({ type: "delete-nodes", nodeIds: selectedNodeIds });
     setSelection([]);
+  }
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  async function handleImportFile(
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+    const ids = await importSvg(await file.text());
+    if (ids.length > 0) {
+      setSelection(ids);
+    }
   }
 
   return (
@@ -278,6 +309,22 @@ export function TopBar() {
           <Trash2 size={16} />
         </button>
         <div className="topbar-separator" />
+        <button
+          type="button"
+          className="icon-button"
+          onClick={() => fileInputRef.current?.click()}
+          title="Import SVG"
+          aria-label="Import SVG"
+        >
+          <Upload size={16} />
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".svg,image/svg+xml"
+          style={{ display: "none" }}
+          onChange={(event) => void handleImportFile(event)}
+        />
         <ExportMenu />
       </div>
     </header>

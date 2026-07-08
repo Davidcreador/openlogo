@@ -62,7 +62,11 @@ Key decisions:
   quadratics elevated to cubics so outlines are pen-editable)
 - Logo system artboard variants: icon, wordmark, horizontal, stacked
 - Small-size preview strip (128/64/32/16 px) rendered from the actual SVG export
-- SVG and PNG export
+- SVG import (shapes, nested transforms, styles — flattened to editable
+  paths, placed as a group) and SVG/PNG export
+- Export pack: original + mono + reversed SVGs plus favicon 16/32/48 and
+  512px icon PNGs in one click
+- Brand colors: editing a swatch recolors every object using it (one undo)
 - Patch-based undo/redo (⌘Z / ⇧⌘Z), 200-entry history
 - Autosave + restore via IndexedDB
 - Local "design mate" review pass for logo craft checks
@@ -80,7 +84,8 @@ pnpm poc          # run the original SVG prototype
 
 ## Roadmap
 
-1. Pen handle symmetry modes; snapping while drawing; distance/spacing guides
+1. Real nested groups (scene-graph group nodes) and Shape Builder
+2. Pen handle symmetry modes; snapping while drawing; distance/spacing guides
 2. Agent tools: critique, cleanup, variations, export prep (non-destructive)
 3. Export packs: dark/light/mono variants, favicon set, brand guidelines
 4. Font search over the full Google Fonts index; font pairing suggestions

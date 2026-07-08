@@ -607,6 +607,23 @@ button {
   transform: scale(1.12);
 }
 
+.swatch-editable {
+  padding: 0;
+  border: 1px solid rgb(0 0 0 / 0.08);
+  background: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.swatch-editable::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.swatch-editable::-webkit-color-swatch {
+  border: 0;
+  border-radius: 5px;
+}
+
 .type-block {
   margin-top: 12px;
   display: grid;
