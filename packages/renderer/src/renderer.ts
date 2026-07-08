@@ -54,6 +54,7 @@ export type Scene = {
 const EDITOR_BACKGROUND = "#e8eaef";
 const SELECTION_COLOR = "#4f6bf6";
 const GUIDE_COLOR = "#ec4899";
+const RULER_GUIDE_COLOR = "#06b6d4";
 
 type ParagraphCacheEntry = {
   key: string;
@@ -224,6 +225,7 @@ export class SceneRenderer {
       this.drawArtboard(canvas, document, artboard, camera);
     }
 
+    this.drawRulerGuides(canvas, scene);
     this.drawHover(canvas, scene);
     this.drawSelection(canvas, scene);
     this.drawGuides(canvas, scene);
@@ -298,6 +300,16 @@ export class SceneRenderer {
     }
 
     const fill = this.makePaint(node.fill, node, node.opacity);
+    if (node.blendMode) {
+      const modes = {
+        multiply: ck.BlendMode.Multiply,
+        screen: ck.BlendMode.Screen,
+        overlay: ck.BlendMode.Overlay,
+        darken: ck.BlendMode.Darken,
+        lighten: ck.BlendMode.Lighten,
+      } as const;
+      fill.setBlendMode(modes[node.blendMode]);
+    }
 
     if (node.type === "rectangle") {
       const rrect = ck.RRectXY(
@@ -508,6 +520,41 @@ export class SceneRenderer {
 
     this.pathCache.set(d, path);
     return path;
+  }
+
+  private drawRulerGuides(canvas: Canvas, scene: Scene): void {
+    const artboard = scene.document.artboards.find(
+      (item) => item.id === scene.document.activeArtboardId,
+    );
+    const guides = artboard?.guides;
+    if (!artboard || !guides || (guides.v.length === 0 && guides.h.length === 0)) {
+      return;
+    }
+
+    const ck = this.canvasKit;
+    this.withActiveArtboard(canvas, scene, () => {
+      const paint = new ck.Paint();
+      paint.setStyle(ck.PaintStyle.Stroke);
+      paint.setStrokeWidth(1 / scene.camera.zoom);
+      paint.setColor(ck.parseColorString(RULER_GUIDE_COLOR));
+      paint.setAntiAlias(true);
+
+      for (const x of guides.v) {
+        const path = new ck.Path();
+        path.moveTo(x, 0);
+        path.lineTo(x, artboard.height);
+        canvas.drawPath(path, paint);
+        path.delete();
+      }
+      for (const y of guides.h) {
+        const path = new ck.Path();
+        path.moveTo(0, y);
+        path.lineTo(artboard.width, y);
+        canvas.drawPath(path, paint);
+        path.delete();
+      }
+      paint.delete();
+    });
   }
 
   private drawHover(canvas: Canvas, scene: Scene): void {

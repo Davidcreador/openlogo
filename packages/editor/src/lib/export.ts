@@ -50,7 +50,10 @@ function renderNode(node: LogoNode, defs: string[]): string {
   const stroke = node.stroke
     ? ` stroke="${node.stroke.color}" stroke-width="${node.stroke.width}"`
     : "";
-  const base = `opacity="${node.opacity}" fill="${fill}"${stroke}${rotate}`;
+  const blend = node.blendMode
+    ? ` style="mix-blend-mode:${node.blendMode}"`
+    : "";
+  const base = `opacity="${node.opacity}" fill="${fill}"${stroke}${blend}${rotate}`;
 
   if (node.type === "rectangle") {
     return `<rect ${base} x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" rx="${node.cornerRadius}" />`;

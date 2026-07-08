@@ -44,6 +44,9 @@ const baseNodeShape = {
   fill: paintSchema,
   stroke: strokeSchema.optional(),
   groupId: z.string().optional(),
+  blendMode: z
+    .enum(["multiply", "screen", "overlay", "darken", "lighten"])
+    .optional(),
 };
 
 const nodeSchema = z.discriminatedUnion("type", [
@@ -107,6 +110,9 @@ const artboardSchema = z.object({
   background: z.string(),
   purpose: z.enum(["primary", "icon", "wordmark", "horizontal", "stacked"]),
   nodeIds: z.array(z.string()),
+  guides: z
+    .object({ v: z.array(z.number()), h: z.array(z.number()) })
+    .optional(),
 });
 
 export const documentSchema = z.object({

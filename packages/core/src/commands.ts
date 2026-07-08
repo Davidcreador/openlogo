@@ -26,6 +26,7 @@ export type NodePatch = Partial<
       fill: LogoNode["fill"];
       stroke: LogoNode["stroke"];
       groupId: string | undefined;
+      blendMode: LogoNode["blendMode"];
       cornerRadius: number;
       d: string;
       intrinsicWidth: number;

@@ -50,6 +50,9 @@ Key decisions:
 - Rotate copies: radial repeat around the artboard centre for badge marks
 - Groups (⌘G/⇧⌘G): grouped nodes select and move together, ⌘-click digs in
 - Eyedropper (I), Alt-drag duplicate, ⌘0 fit / ⌘1 100% / ⌘± zoom
+- Rulers with draggable guides (drag from ruler; guides snap; drag off to
+  delete) and blend modes (multiply/screen/overlay/darken/lighten, exported
+  as mix-blend-mode)
 - Fill, opacity, rotation, corner radius, typography property controls
 - Real text shaping with variable-weight Inter (bundled)
 - Font browsing: curated 13-family catalog (sans/serif/display/mono) served

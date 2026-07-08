@@ -61,7 +61,16 @@ export type BaseNode = {
   stroke?: Stroke;
   /** Nodes sharing a groupId select/move together (⌘G). */
   groupId?: string;
+  /** Compositing mode; normal when absent. */
+  blendMode?: BlendMode;
 };
+
+export type BlendMode =
+  | "multiply"
+  | "screen"
+  | "overlay"
+  | "darken"
+  | "lighten";
 
 export type RectangleNode = BaseNode & {
   type: "rectangle";
@@ -111,6 +120,13 @@ export type Artboard = {
   purpose: LogoVariant;
   /** z-order, back to front. */
   nodeIds: string[];
+  /** Ruler guides in artboard-local coordinates. */
+  guides?: {
+    /** Vertical guide x positions. */
+    v: number[];
+    /** Horizontal guide y positions. */
+    h: number[];
+  };
 };
 
 export type ColorPalette = {

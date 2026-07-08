@@ -325,6 +325,52 @@ button {
   outline: none;
 }
 
+.ruler {
+  position: absolute;
+  z-index: 15;
+  background-color: rgb(255 255 255 / 0.92);
+  background-image: linear-gradient(
+    to right,
+    transparent calc(100% - 1px),
+    #c6cbd4 calc(100% - 1px)
+  );
+}
+
+.ruler-top {
+  top: 0;
+  left: 18px;
+  right: 0;
+  height: 18px;
+  border-bottom: 1px solid var(--panel-border);
+  cursor: row-resize;
+}
+
+.ruler-left {
+  top: 18px;
+  left: 0;
+  bottom: 0;
+  width: 18px;
+  border-right: 1px solid var(--panel-border);
+  cursor: col-resize;
+  background-image: linear-gradient(
+    to bottom,
+    transparent calc(100% - 1px),
+    #c6cbd4 calc(100% - 1px)
+  );
+}
+
+.ruler-corner {
+  position: absolute;
+  z-index: 16;
+  top: 0;
+  left: 0;
+  width: 18px;
+  height: 18px;
+  background: rgb(255 255 255 / 0.92);
+  border-right: 1px solid var(--panel-border);
+  border-bottom: 1px solid var(--panel-border);
+}
+
 .zoom-controls {
   position: absolute;
   right: 14px;

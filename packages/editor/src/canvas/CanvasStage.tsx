@@ -93,7 +93,8 @@ type DragState =
       snapTargets: Bounds[];
       guides: SnapGuide[];
     }
-  | { kind: "marquee"; startLocal: Vec2; current: Bounds | null };
+  | { kind: "marquee"; startLocal: Vec2; current: Bounds | null }
+  | { kind: "guide"; axis: "v" | "h"; index: number; value: number };
 
 function snapshotNodes(nodeIds: readonly string[]): Map<string, NodeSnapshot> {
   const map = new Map<string, NodeSnapshot>();
@@ -187,6 +188,14 @@ function collectSnapTargets(excludedIds: ReadonlySet<string>): Bounds[] {
         height: node.height,
       });
     }
+  }
+
+  // Ruler guides snap as zero-thickness lines.
+  for (const x of artboard.guides?.v ?? []) {
+    targets.push({ x, y: 0, width: 0, height: artboard.height });
+  }
+  for (const y of artboard.guides?.h ?? []) {
+    targets.push({ x: 0, y, width: artboard.width, height: 0 });
   }
 
   return targets;
@@ -355,8 +364,31 @@ export function CanvasStage() {
     const drag = dragRef.current;
     const pen = penRef.current;
     const edit = editRef.current;
+
+    // Live guide-drag preview without touching history.
+    let sceneDocument = documentStore.document;
+    if (drag?.kind === "guide") {
+      const artboard = getActiveArtboard(sceneDocument);
+      const guides = {
+        v: [...(artboard.guides?.v ?? [])],
+        h: [...(artboard.guides?.h ?? [])],
+      };
+      const list = drag.axis === "v" ? guides.v : guides.h;
+      if (drag.index === -1) {
+        list.push(drag.value);
+      } else {
+        list[drag.index] = drag.value;
+      }
+      sceneDocument = {
+        ...sceneDocument,
+        artboards: sceneDocument.artboards.map((item) =>
+          item.id === artboard.id ? { ...item, guides } : item,
+        ),
+      };
+    }
+
     renderer.setScene({
-      document: documentStore.document,
+      document: sceneDocument,
       camera: state.camera,
       selectedNodeIds: edit ? [] : state.selectedNodeIds,
       hoveredNodeId: edit || pen ? null : hoverRef.current,
@@ -723,6 +755,74 @@ export function CanvasStage() {
     return null;
   }
 
+  function commitGuideDrag() {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    if (!drag || drag.kind !== "guide") {
+      return;
+    }
+
+    const artboard = getActiveArtboard(documentStore.document);
+    const guides = {
+      v: [...(artboard.guides?.v ?? [])],
+      h: [...(artboard.guides?.h ?? [])],
+    };
+    const list = drag.axis === "v" ? guides.v : guides.h;
+    const limit = drag.axis === "v" ? artboard.width : artboard.height;
+    const inRange = drag.value >= 0 && drag.value <= limit;
+
+    if (drag.index === -1) {
+      if (inRange) {
+        list.push(Math.round(drag.value * 2) / 2);
+      }
+    } else if (inRange) {
+      list[drag.index] = Math.round(drag.value * 2) / 2;
+    } else {
+      list.splice(drag.index, 1); // dragged off the artboard = delete
+    }
+
+    documentStore.apply({
+      type: "update-artboard",
+      artboardId: artboard.id,
+      patch: { guides },
+    });
+    syncScene();
+  }
+
+  function startGuideFromRuler(axis: "v" | "h") {
+    return (event: React.PointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      (event.target as HTMLElement).setPointerCapture(event.pointerId);
+      const canvasRect = canvasRef.current!.getBoundingClientRect();
+      const screen = {
+        x: event.clientX - canvasRect.left,
+        y: event.clientY - canvasRect.top,
+      };
+      const local = toArtboardLocal(screen);
+      dragRef.current = {
+        kind: "guide",
+        axis,
+        index: -1,
+        value: axis === "v" ? local.x : local.y,
+      };
+      syncScene();
+    };
+  }
+
+  function moveGuideFromRuler(event: React.PointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.kind !== "guide") {
+      return;
+    }
+    const canvasRect = canvasRef.current!.getBoundingClientRect();
+    const local = toArtboardLocal({
+      x: event.clientX - canvasRect.left,
+      y: event.clientY - canvasRect.top,
+    });
+    drag.value = drag.axis === "v" ? local.x : local.y;
+    syncScene();
+  }
+
   function handlePointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
     const renderer = rendererRef.current;
@@ -859,6 +959,26 @@ export function CanvasStage() {
         setTool("select");
       }
       return;
+    }
+
+    // Existing ruler guides are grabbable near the line.
+    {
+      const artboard = getActiveArtboard(documentStore.document);
+      const local = toArtboardLocal(screen);
+      const tolerance = 5 / state.camera.zoom;
+      const vIndex = (artboard.guides?.v ?? []).findIndex(
+        (x) => Math.abs(x - local.x) <= tolerance,
+      );
+      const hIndex = (artboard.guides?.h ?? []).findIndex(
+        (y) => Math.abs(y - local.y) <= tolerance,
+      );
+      if (vIndex !== -1 || hIndex !== -1) {
+        dragRef.current =
+          vIndex !== -1
+            ? { kind: "guide", axis: "v", index: vIndex, value: local.x }
+            : { kind: "guide", axis: "h", index: hIndex, value: local.y };
+        return;
+      }
     }
 
     // Resize handle first — takes priority over node hits.
@@ -1053,6 +1173,13 @@ export function CanvasStage() {
       return;
     }
 
+    if (drag.kind === "guide") {
+      const local = toArtboardLocal(screen);
+      drag.value = drag.axis === "v" ? local.x : local.y;
+      syncScene();
+      return;
+    }
+
     const local = toArtboardLocal(screen);
 
     if (drag.kind === "marquee") {
@@ -1222,6 +1349,11 @@ export function CanvasStage() {
   }
 
   function handlePointerUp() {
+    if (dragRef.current?.kind === "guide") {
+      commitGuideDrag();
+      return;
+    }
+
     const edit = editRef.current;
     if (edit) {
       edit.drag = null;
@@ -1343,6 +1475,10 @@ export function CanvasStage() {
     }
   }
 
+  const tickSpacing = 50 * camera.zoom;
+  const tickOffsetX = ((-camera.offset.x * camera.zoom) % tickSpacing) - 0.5;
+  const tickOffsetY = ((-camera.offset.y * camera.zoom) % tickSpacing) - 0.5;
+
   return (
     <div ref={containerRef} className="canvas-host">
       <canvas
@@ -1361,6 +1497,29 @@ export function CanvasStage() {
       {editingTextId && (
         <TextEditOverlay nodeId={editingTextId} onDone={finishTextEdit} />
       )}
+      <div
+        className="ruler ruler-top"
+        style={{
+          backgroundPositionX: tickOffsetX,
+          backgroundSize: `${tickSpacing}px 100%`,
+        }}
+        onPointerDown={startGuideFromRuler("h")}
+        onPointerMove={moveGuideFromRuler}
+        onPointerUp={commitGuideDrag}
+        title="Drag down to add a horizontal guide"
+      />
+      <div
+        className="ruler ruler-left"
+        style={{
+          backgroundPositionY: tickOffsetY,
+          backgroundSize: `100% ${tickSpacing}px`,
+        }}
+        onPointerDown={startGuideFromRuler("v")}
+        onPointerMove={moveGuideFromRuler}
+        onPointerUp={commitGuideDrag}
+        title="Drag right to add a vertical guide"
+      />
+      <div className="ruler-corner" />
     </div>
   );
 }

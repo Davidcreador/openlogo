@@ -423,6 +423,29 @@ function DesignSection({
       <FillEditor node={node} patchSelection={patchSelection} />
       <StrokeEditor node={node} patchSelection={patchSelection} />
 
+      <div className="field-row" style={{ marginBottom: 10 }}>
+        <select
+          className="font-select"
+          value={node.blendMode ?? "normal"}
+          aria-label="Blend mode"
+          onChange={(event) =>
+            patchSelection({
+              blendMode:
+                event.target.value === "normal"
+                  ? undefined
+                  : (event.target.value as LogoNode["blendMode"]),
+            })
+          }
+        >
+          <option value="normal">Normal</option>
+          <option value="multiply">Multiply</option>
+          <option value="screen">Screen</option>
+          <option value="overlay">Overlay</option>
+          <option value="darken">Darken</option>
+          <option value="lighten">Lighten</option>
+        </select>
+      </div>
+
       <div className="rotate-copies">
         <NumberField
           label="×"
