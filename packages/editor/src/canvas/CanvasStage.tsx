@@ -15,9 +15,13 @@ import {
   createPath,
   createRectangle,
   createText,
+  findSegmentNear,
   getActiveArtboard,
+  insertAnchor,
   pathGeometryBounds,
   pathGeometryToSvg,
+  removeAnchor,
+  snapValue,
   translatePathGeometry,
 } from "@openlogo/core";
 import {
@@ -61,6 +65,7 @@ type PathEditSession = {
     index: number;
     part: "anchor" | "in" | "out";
   } | null;
+  selected: { subpath: number; index: number } | null;
   changed: boolean;
 };
 
@@ -84,6 +89,8 @@ type DragState =
       snapshots: Map<string, NodeSnapshot>;
       patches: Array<{ nodeId: string; patch: NodePatch }>;
       moved: boolean;
+      snapTargets: Bounds[];
+      guides: SnapGuide[];
     }
   | { kind: "marquee"; startLocal: Vec2; current: Bounds | null };
 
@@ -283,9 +290,12 @@ export function CanvasStage() {
       camera: state.camera,
       selectedNodeIds: edit ? [] : state.selectedNodeIds,
       marquee: drag?.kind === "marquee" ? drag.current : null,
-      guides: drag?.kind === "move" ? drag.guides : null,
+      guides:
+        drag?.kind === "move" || drag?.kind === "resize" ? drag.guides : null,
       penPreview: pen ? { points: pen.points, cursor: pen.cursor } : null,
-      pathEdit: edit ? { geometry: edit.geometry } : null,
+      pathEdit: edit
+        ? { geometry: edit.geometry, selected: edit.selected }
+        : null,
     });
   }, []);
 
@@ -384,9 +394,46 @@ export function CanvasStage() {
       }
 
       if (editRef.current) {
+        const edit = editRef.current;
+
         if (event.key === "Enter" || event.key === "Escape") {
           event.preventDefault();
           commitPathEdit();
+          return;
+        }
+
+        if (
+          (event.key === "Backspace" || event.key === "Delete") &&
+          edit.selected
+        ) {
+          event.preventDefault();
+          const next = removeAnchor(
+            edit.geometry,
+            edit.selected.subpath,
+            edit.selected.index,
+          );
+
+          if (!next) {
+            // Path would be empty: delete the node and leave edit mode.
+            const nodeId = edit.nodeId;
+            editRef.current = null;
+            setEditingPathId(null);
+            documentStore.cancelPreview();
+            documentStore.apply({ type: "delete-nodes", nodeIds: [nodeId] });
+            setSelection([]);
+            syncScene();
+            return;
+          }
+
+          edit.geometry = next;
+          edit.selected = null;
+          edit.drag = null;
+          edit.changed = true;
+          const patch = patchFromLocalGeometry(edit.geometry);
+          if (patch) {
+            documentStore.preview([{ nodeId: edit.nodeId, patch }]);
+          }
+          syncScene();
         }
       }
     }
@@ -500,6 +547,7 @@ export function CanvasStage() {
       nodeId: node.id,
       geometry,
       drag: null,
+      selected: null,
       changed: false,
     };
     setEditingPathId(node.id);
@@ -588,12 +636,49 @@ export function CanvasStage() {
 
     // Bezier edit mode captures all pointer input.
     if (editRef.current) {
+      const edit = editRef.current;
       const target = hitEditTarget(screen);
+
       if (target) {
-        editRef.current.drag = target;
-      } else {
-        commitPathEdit();
+        edit.drag = target;
+        edit.selected =
+          target.part === "anchor"
+            ? { subpath: target.subpath, index: target.index }
+            : edit.selected;
+        syncScene();
+        return;
       }
+
+      // Clicking a segment inserts an anchor there.
+      const local = toArtboardLocal(screen);
+      const zoom = state.camera.zoom;
+      const segment = findSegmentNear(edit.geometry, local, 6 / zoom);
+      if (segment) {
+        const inserted = insertAnchor(
+          edit.geometry,
+          segment.subpath,
+          segment.index,
+          segment.t,
+        );
+        if (inserted) {
+          edit.geometry = inserted.geometry;
+          edit.selected = { subpath: segment.subpath, index: inserted.index };
+          edit.drag = {
+            subpath: segment.subpath,
+            index: inserted.index,
+            part: "anchor",
+          };
+          edit.changed = true;
+          const patch = patchFromLocalGeometry(edit.geometry);
+          if (patch) {
+            documentStore.preview([{ nodeId: edit.nodeId, patch }]);
+          }
+          syncScene();
+        }
+        return;
+      }
+
+      commitPathEdit();
       return;
     }
 
@@ -657,6 +742,8 @@ export function CanvasStage() {
           snapshots,
           patches: [],
           moved: false,
+          snapTargets: collectSnapTargets(new Set(state.selectedNodeIds)),
+          guides: [],
         };
       }
       return;
@@ -833,7 +920,65 @@ export function CanvasStage() {
     }
 
     // Resize.
-    const next = resizeBounds(drag.startBounds, drag.handle, dx, dy);
+    let next = resizeBounds(drag.startBounds, drag.handle, dx, dy);
+    drag.guides = [];
+
+    // Snap the dragged edges (Alt disables).
+    if (!event.altKey) {
+      const zoom = useEditorStore.getState().camera.zoom;
+      const threshold = 6 / zoom;
+      const extentY = { start: next.y, end: next.y + next.height };
+      const extentX = { start: next.x, end: next.x + next.width };
+
+      if (drag.handle.includes("w")) {
+        const snap = snapValue(next.x, extentY, drag.snapTargets, "x", threshold);
+        if (snap.guide) {
+          next = {
+            ...next,
+            x: next.x + snap.delta,
+            width: Math.max(8, next.width - snap.delta),
+          };
+          drag.guides.push(snap.guide);
+        }
+      } else if (drag.handle.includes("e")) {
+        const snap = snapValue(
+          next.x + next.width,
+          extentY,
+          drag.snapTargets,
+          "x",
+          threshold,
+        );
+        if (snap.guide) {
+          next = { ...next, width: Math.max(8, next.width + snap.delta) };
+          drag.guides.push(snap.guide);
+        }
+      }
+
+      if (drag.handle.includes("n")) {
+        const snap = snapValue(next.y, extentX, drag.snapTargets, "y", threshold);
+        if (snap.guide) {
+          next = {
+            ...next,
+            y: next.y + snap.delta,
+            height: Math.max(8, next.height - snap.delta),
+          };
+          drag.guides.push(snap.guide);
+        }
+      } else if (drag.handle.includes("s")) {
+        const snap = snapValue(
+          next.y + next.height,
+          extentX,
+          drag.snapTargets,
+          "y",
+          threshold,
+        );
+        if (snap.guide) {
+          next = { ...next, height: Math.max(8, next.height + snap.delta) };
+          drag.guides.push(snap.guide);
+        }
+      }
+    }
+
     const sx = next.width / drag.startBounds.width;
     const sy = next.height / drag.startBounds.height;
     const isCorner = drag.handle.length === 2;
@@ -852,6 +997,7 @@ export function CanvasStage() {
     });
     drag.moved = true;
     documentStore.preview(drag.patches);
+    syncScene();
   }
 
   function syncSceneWithMarquee(marquee: Bounds) {

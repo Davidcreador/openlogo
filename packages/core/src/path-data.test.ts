@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   type PathGeometry,
+  findSegmentNear,
+  insertAnchor,
   pathGeometryBounds,
   pathGeometryToSvg,
+  removeAnchor,
   scalePathGeometry,
   translatePathGeometry,
 } from "./path-data";
@@ -92,6 +95,109 @@ describe("pathGeometryBounds", () => {
 
   it("returns null for empty geometry", () => {
     expect(pathGeometryBounds({ subpaths: [] })).toBeNull();
+  });
+});
+
+describe("findSegmentNear", () => {
+  it("finds the closest point on a straight segment", () => {
+    const hit = findSegmentNear(triangle, { x: 50, y: 5 }, 10);
+
+    expect(hit).not.toBeNull();
+    expect(hit!.subpath).toBe(0);
+    expect(hit!.index).toBe(0); // segment (0,0) → (100,0)
+    expect(hit!.point.y).toBeCloseTo(0, 5);
+    expect(hit!.point.x).toBeCloseTo(50, 1);
+  });
+
+  it("considers the closing segment of a closed subpath", () => {
+    // Closing segment runs (50,80) → (0,0); midpoint ≈ (25,40).
+    const hit = findSegmentNear(triangle, { x: 25, y: 40 }, 5);
+
+    expect(hit).not.toBeNull();
+    expect(hit!.index).toBe(2);
+  });
+
+  it("returns null outside tolerance", () => {
+    expect(findSegmentNear(triangle, { x: 50, y: 200 }, 10)).toBeNull();
+  });
+});
+
+describe("insertAnchor", () => {
+  it("inserts a corner point on a straight segment", () => {
+    const result = insertAnchor(triangle, 0, 0, 0.5);
+
+    expect(result).not.toBeNull();
+    expect(result!.index).toBe(1);
+    const point = result!.geometry.subpaths[0]!.points[1]!;
+    expect(point).toEqual({ x: 50, y: 0 });
+    expect(result!.geometry.subpaths[0]!.points).toHaveLength(4);
+  });
+
+  it("splits a cubic with de Casteljau preserving shape endpoints", () => {
+    const curve: PathGeometry = {
+      subpaths: [
+        {
+          closed: false,
+          points: [
+            { x: 0, y: 0, handleOut: { x: 0, y: 100 } },
+            { x: 100, y: 0, handleIn: { x: 100, y: 100 } },
+          ],
+        },
+      ],
+    };
+
+    const result = insertAnchor(curve, 0, 0, 0.5);
+    const points = result!.geometry.subpaths[0]!.points;
+
+    expect(points).toHaveLength(3);
+    const mid = points[1]!;
+    // Symmetric curve: midpoint x = 50, y = 75 (cubic at t=0.5).
+    expect(mid.x).toBeCloseTo(50, 5);
+    expect(mid.y).toBeCloseTo(75, 5);
+    expect(mid.handleIn).toBeDefined();
+    expect(mid.handleOut).toBeDefined();
+    // Original endpoints keep their positions.
+    expect(points[0]!.x).toBe(0);
+    expect(points[2]!.x).toBe(100);
+  });
+
+  it("splitting at t and rendering yields identical curve endpoints", () => {
+    const curve: PathGeometry = {
+      subpaths: [
+        {
+          closed: false,
+          points: [
+            { x: 0, y: 0, handleOut: { x: 30, y: 60 } },
+            { x: 100, y: 0, handleIn: { x: 70, y: 60 } },
+          ],
+        },
+      ],
+    };
+    const before = findSegmentNear(curve, { x: 50, y: 45 }, 10)!;
+    const result = insertAnchor(curve, 0, 0, before.t)!;
+    const inserted = result.geometry.subpaths[0]!.points[1]!;
+
+    expect(inserted.x).toBeCloseTo(before.point.x, 5);
+    expect(inserted.y).toBeCloseTo(before.point.y, 5);
+  });
+});
+
+describe("removeAnchor", () => {
+  it("removes a point and keeps the subpath", () => {
+    const result = removeAnchor(triangle, 0, 1);
+
+    expect(result).not.toBeNull();
+    expect(result!.subpaths[0]!.points).toHaveLength(2);
+  });
+
+  it("drops the subpath when fewer than 2 points remain and returns null when empty", () => {
+    const line: PathGeometry = {
+      subpaths: [
+        { closed: false, points: [{ x: 0, y: 0 }, { x: 10, y: 0 }] },
+      ],
+    };
+
+    expect(removeAnchor(line, 0, 0)).toBeNull();
   });
 });
 

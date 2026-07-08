@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeSnap } from "./snapping";
+import { computeSnap, snapValue } from "./snapping";
 
 const target = { x: 100, y: 100, width: 50, height: 50 };
 
@@ -47,6 +47,34 @@ describe("computeSnap", () => {
     const result = computeSnap(moving, [target, near], 6);
 
     expect(result.dx).toBe(-1);
+  });
+
+  it("snapValue snaps a single edge and reports the guide", () => {
+    const result = snapValue(
+      148,
+      { start: 300, end: 340 },
+      [target],
+      "x",
+      5,
+    );
+
+    expect(result.delta).toBe(2); // 148 → 150 (target right edge)
+    expect(result.guide).toMatchObject({ axis: "x", position: 150 });
+    expect(result.guide!.start).toBe(100);
+    expect(result.guide!.end).toBe(340);
+  });
+
+  it("snapValue returns zero delta outside threshold", () => {
+    const result = snapValue(
+      170,
+      { start: 0, end: 10 },
+      [target],
+      "x",
+      5,
+    );
+
+    expect(result.delta).toBe(0);
+    expect(result.guide).toBeNull();
   });
 
   it("guide extent spans both boxes", () => {

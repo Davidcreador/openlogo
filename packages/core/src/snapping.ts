@@ -104,6 +104,48 @@ function bestSnapForAxis(
   return { delta: bestDelta, guides };
 }
 
+/**
+ * Snap a single edge value (resize drags move one edge, not the box).
+ * Returns the delta to apply and the matched guide, if any.
+ */
+export function snapValue(
+  value: number,
+  extent: { start: number; end: number },
+  targets: Bounds[],
+  axis: "x" | "y",
+  threshold: number,
+): { delta: number; guide: SnapGuide | null } {
+  let bestDelta = Infinity;
+  let bestEdge: Edge | null = null;
+
+  for (const target of targets) {
+    for (const targetEdge of edgesOf(target, axis)) {
+      const delta = targetEdge.value - value;
+      if (
+        Math.abs(delta) <= threshold &&
+        Math.abs(delta) < Math.abs(bestDelta)
+      ) {
+        bestDelta = delta;
+        bestEdge = targetEdge;
+      }
+    }
+  }
+
+  if (!bestEdge || !Number.isFinite(bestDelta)) {
+    return { delta: 0, guide: null };
+  }
+
+  return {
+    delta: bestDelta,
+    guide: {
+      axis,
+      position: bestEdge.value,
+      start: Math.min(bestEdge.start, extent.start),
+      end: Math.max(bestEdge.end, extent.end),
+    },
+  };
+}
+
 export function computeSnap(
   moving: Bounds,
   targets: Bounds[],

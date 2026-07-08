@@ -125,6 +125,188 @@ export function scalePathGeometry(
   }));
 }
 
+function lerp(a: Vec2, b: Vec2, t: number): Vec2 {
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+}
+
+type SegmentRef = {
+  subpath: number;
+  /** Segment from points[index] to points[(index+1) % length]. */
+  index: number;
+  t: number;
+  point: Vec2;
+  distance: number;
+};
+
+function segmentPointAt(from: PathPoint, to: PathPoint, t: number): Vec2 {
+  if (!from.handleOut && !to.handleIn) {
+    return lerp(from, to, t);
+  }
+  const c1 = from.handleOut ?? { x: from.x, y: from.y };
+  const c2 = to.handleIn ?? { x: to.x, y: to.y };
+  const q0 = lerp(from, c1, t);
+  const q1 = lerp(c1, c2, t);
+  const q2 = lerp(c2, to, t);
+  const r0 = lerp(q0, q1, t);
+  const r1 = lerp(q1, q2, t);
+  return lerp(r0, r1, t);
+}
+
+/**
+ * Closest point on any segment within `tolerance` of `target`.
+ * Coarse sampling plus local refinement — plenty for hit-testing.
+ */
+export function findSegmentNear(
+  geometry: PathGeometry,
+  target: Vec2,
+  tolerance: number,
+): SegmentRef | null {
+  let best: SegmentRef | null = null;
+
+  for (const [si, subpath] of geometry.subpaths.entries()) {
+    const count = subpath.points.length;
+    const segments = subpath.closed ? count : count - 1;
+
+    for (let i = 0; i < segments; i += 1) {
+      const from = subpath.points[i]!;
+      const to = subpath.points[(i + 1) % count]!;
+
+      // Coarse scan.
+      let bestT = 0;
+      let bestDist = Infinity;
+      const SAMPLES = 32;
+      for (let s = 0; s <= SAMPLES; s += 1) {
+        const t = s / SAMPLES;
+        const point = segmentPointAt(from, to, t);
+        const dist = Math.hypot(point.x - target.x, point.y - target.y);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestT = t;
+        }
+      }
+
+      // Local refinement.
+      let step = 1 / SAMPLES / 2;
+      for (let iter = 0; iter < 20; iter += 1) {
+        for (const t of [bestT - step, bestT + step]) {
+          if (t < 0 || t > 1) {
+            continue;
+          }
+          const point = segmentPointAt(from, to, t);
+          const dist = Math.hypot(point.x - target.x, point.y - target.y);
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestT = t;
+          }
+        }
+        step /= 2;
+      }
+
+      if (bestDist <= tolerance && (!best || bestDist < best.distance)) {
+        best = {
+          subpath: si,
+          index: i,
+          t: bestT,
+          point: segmentPointAt(from, to, bestT),
+          distance: bestDist,
+        };
+      }
+    }
+  }
+
+  return best;
+}
+
+/**
+ * Split a segment at parameter t, inserting a new anchor. Cubic segments
+ * split with de Casteljau so the curve shape is preserved exactly;
+ * straight segments insert a plain corner point. Returns new geometry and
+ * the inserted point's index.
+ */
+export function insertAnchor(
+  geometry: PathGeometry,
+  subpathIndex: number,
+  segmentIndex: number,
+  t: number,
+): { geometry: PathGeometry; index: number } | null {
+  const subpath = geometry.subpaths[subpathIndex];
+  if (!subpath) {
+    return null;
+  }
+
+  const count = subpath.points.length;
+  const from = subpath.points[segmentIndex];
+  const to = subpath.points[(segmentIndex + 1) % count];
+  if (!from || !to) {
+    return null;
+  }
+
+  let newFrom: PathPoint;
+  let inserted: PathPoint;
+  let newTo: PathPoint;
+
+  if (!from.handleOut && !to.handleIn) {
+    const point = lerp(from, to, t);
+    newFrom = { ...from };
+    inserted = { x: point.x, y: point.y };
+    newTo = { ...to };
+  } else {
+    const c1 = from.handleOut ?? { x: from.x, y: from.y };
+    const c2 = to.handleIn ?? { x: to.x, y: to.y };
+    const q0 = lerp(from, c1, t);
+    const q1 = lerp(c1, c2, t);
+    const q2 = lerp(c2, to, t);
+    const r0 = lerp(q0, q1, t);
+    const r1 = lerp(q1, q2, t);
+    const s = lerp(r0, r1, t);
+
+    newFrom = { ...from, handleOut: q0 };
+    inserted = { x: s.x, y: s.y, handleIn: r0, handleOut: r1 };
+    newTo = { ...to, handleIn: q2 };
+  }
+
+  const points = [...subpath.points];
+  points[segmentIndex] = newFrom;
+  points[(segmentIndex + 1) % count] = newTo;
+  points.splice(segmentIndex + 1, 0, inserted);
+
+  const subpaths = [...geometry.subpaths];
+  subpaths[subpathIndex] = { ...subpath, points };
+
+  return { geometry: { subpaths }, index: segmentIndex + 1 };
+}
+
+/**
+ * Remove an anchor. Subpaths that fall below 2 points are dropped;
+ * returns null when the whole geometry would become empty (caller should
+ * delete the node instead).
+ */
+export function removeAnchor(
+  geometry: PathGeometry,
+  subpathIndex: number,
+  pointIndex: number,
+): PathGeometry | null {
+  const subpath = geometry.subpaths[subpathIndex];
+  if (!subpath || !subpath.points[pointIndex]) {
+    return null;
+  }
+
+  const points = subpath.points.filter((_, index) => index !== pointIndex);
+  const subpaths = [...geometry.subpaths];
+
+  if (points.length < 2) {
+    subpaths.splice(subpathIndex, 1);
+  } else {
+    subpaths[subpathIndex] = { ...subpath, points };
+  }
+
+  if (subpaths.every((item) => item.points.length === 0) || subpaths.length === 0) {
+    return null;
+  }
+
+  return { subpaths };
+}
+
 function mapPathGeometry(
   geometry: PathGeometry,
   transform: (point: Vec2) => Vec2,

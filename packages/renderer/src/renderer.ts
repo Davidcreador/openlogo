@@ -43,6 +43,7 @@ export type Scene = {
   /** Bezier node editing overlay, artboard-local coordinates. */
   pathEdit?: {
     geometry: PathGeometry;
+    selected?: { subpath: number; index: number } | null;
   } | null;
 };
 
@@ -783,15 +784,17 @@ export class SceneRenderer {
         path.delete();
       }
 
-      for (const subpath of edit.geometry.subpaths) {
-        for (const point of subpath.points) {
+      for (const [si, subpath] of edit.geometry.subpaths.entries()) {
+        for (const [pi, point] of subpath.points.entries()) {
           if (point.handleIn) {
             this.drawHandle(canvas, point, point.handleIn, zoom);
           }
           if (point.handleOut) {
             this.drawHandle(canvas, point, point.handleOut, zoom);
           }
-          this.drawAnchor(canvas, point, zoom, false);
+          const isSelected =
+            edit.selected?.subpath === si && edit.selected?.index === pi;
+          this.drawAnchor(canvas, point, zoom, isSelected);
         }
       }
     });
