@@ -99,6 +99,19 @@ class FontStore {
         // Registry consumes the buffer; hand it a copy.
         this.registry?.register(family.name, bytes.slice(0));
         this.renderer?.invalidate();
+
+        // Also register as a CSS FontFace so DOM surfaces (inline text
+        // editor, SVG preview strip) render with the same glyphs.
+        try {
+          const face = new FontFace(family.name, bytes.slice(0), {
+            weight: String(resolvedWeight),
+          });
+          await face.load();
+          document.fonts.add(face);
+        } catch {
+          // Non-fatal: DOM fallback fonts still work.
+        }
+
         return bytes;
       } catch (error) {
         console.warn(`Font load failed: ${key}`, error);

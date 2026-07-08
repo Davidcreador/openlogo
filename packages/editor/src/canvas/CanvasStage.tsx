@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getCanvasKit } from "../lib/canvaskit";
 import { fontStore } from "../lib/font-store";
 import {
@@ -236,6 +236,70 @@ function localGeometryOf(node: PathNode): PathGeometry | null {
   };
 }
 
+function TextEditOverlay({
+  nodeId,
+  onDone,
+}: {
+  nodeId: string;
+  onDone: (nodeId: string, content: string, commit: boolean) => void;
+}) {
+  const document = useDocument();
+  const camera = useEditorStore((state) => state.camera);
+  const node = document.nodes[nodeId];
+  const [draft, setDraft] = useState(
+    node?.type === "text" ? node.content : "",
+  );
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  if (!node || node.type !== "text") {
+    return null;
+  }
+
+  const artboard = getActiveArtboard(document);
+  const topLeft = worldToScreen(camera, {
+    x: node.x + artboard.x,
+    y: node.y + artboard.y,
+  });
+
+  return (
+    <textarea
+      ref={inputRef}
+      className="text-edit-overlay"
+      value={draft}
+      onChange={(event) => setDraft(event.target.value.replace(/\n/g, ""))}
+      onBlur={() => onDone(nodeId, draft, true)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          onDone(nodeId, draft, true);
+        } else if (event.key === "Escape") {
+          event.stopPropagation();
+          onDone(nodeId, draft, false);
+        }
+      }}
+      style={{
+        left: topLeft.x,
+        top: topLeft.y,
+        width: Math.max(40, node.width * camera.zoom),
+        height: Math.max(24, node.height * camera.zoom),
+        fontFamily: node.fontFamily,
+        fontWeight: node.fontWeight,
+        fontSize: node.fontSize * camera.zoom,
+        letterSpacing: node.letterSpacing * camera.zoom,
+        lineHeight: node.lineHeight,
+        textAlign: node.align,
+        color: node.fill.type === "solid" ? node.fill.color : "#111827",
+      }}
+      aria-label="Edit text"
+    />
+  );
+}
+
 function makeNodeForTool(tool: Tool, point: Vec2): LogoNode | null {
   const centered = (w: number, h: number) => ({
     x: Math.round(point.x - w / 2),
@@ -265,7 +329,12 @@ export function CanvasStage() {
   const dragRef = useRef<DragState | null>(null);
   const penRef = useRef<PenSession | null>(null);
   const editRef = useRef<PathEditSession | null>(null);
+  const hoverRef = useRef<string | null>(null);
+  const spaceRef = useRef(false);
+  const editingTextRef = useRef<string | null>(null);
   const cameraFittedRef = useRef(false);
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const [editingTextId, setEditingTextId] = useState<string | null>(null);
 
   const document = useDocument();
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
@@ -290,6 +359,8 @@ export function CanvasStage() {
       document: documentStore.document,
       camera: state.camera,
       selectedNodeIds: edit ? [] : state.selectedNodeIds,
+      hoveredNodeId: edit || pen ? null : hoverRef.current,
+      hiddenNodeId: editingTextRef.current,
       marquee: drag?.kind === "marquee" ? drag.current : null,
       guides:
         drag?.kind === "move" || drag?.kind === "resize" ? drag.guides : null,
@@ -369,6 +440,36 @@ export function CanvasStage() {
   useEffect(() => {
     syncScene();
   }, [document, camera, selectedNodeIds, syncScene]);
+
+  // Space bar toggles temporary pan mode.
+  useEffect(() => {
+    function isEditable(target: EventTarget | null): boolean {
+      return (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement
+      );
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === " " && !isEditable(event.target) && !event.repeat) {
+        event.preventDefault();
+        spaceRef.current = true;
+        setSpaceHeld(true);
+      }
+    }
+    function onKeyUp(event: KeyboardEvent) {
+      if (event.key === " ") {
+        spaceRef.current = false;
+        setSpaceHeld(false);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, []);
 
   // Leaving the pen tool cancels an in-progress path.
   useEffect(() => {
@@ -632,9 +733,14 @@ export function CanvasStage() {
     canvas.setPointerCapture(event.pointerId);
     const screen = getScreenPoint(event);
 
-    // Middle mouse or space isn't tracked — middle button pans.
-    if (event.button === 1) {
+    // Middle mouse or held space pans.
+    if (event.button === 1 || spaceRef.current) {
       dragRef.current = { kind: "pan", last: screen };
+      return;
+    }
+
+    // Any canvas press while inline-editing text commits the edit.
+    if (editingTextRef.current) {
       return;
     }
 
@@ -862,7 +968,23 @@ export function CanvasStage() {
 
     const drag = dragRef.current;
     if (!drag) {
+      // Idle hover tracking (select tool only).
+      if (state.tool === "select") {
+        const hit = rendererRef.current?.hitTest(screen) ?? null;
+        const nextId = hit?.id ?? null;
+        if (hoverRef.current !== nextId) {
+          hoverRef.current = nextId;
+          syncScene();
+        }
+      } else if (hoverRef.current) {
+        hoverRef.current = null;
+        syncScene();
+      }
       return;
+    }
+
+    if (hoverRef.current) {
+      hoverRef.current = null;
     }
 
     if (drag.kind === "pan") {
@@ -929,8 +1051,28 @@ export function CanvasStage() {
     let next = resizeBounds(drag.startBounds, drag.handle, dx, dy);
     drag.guides = [];
 
-    // Snap the dragged edges (Alt disables).
-    if (!event.altKey) {
+    // Shift on a corner keeps the aspect ratio (dominant axis wins).
+    const isCornerHandle = drag.handle.length === 2;
+    if (event.shiftKey && isCornerHandle) {
+      const sxRaw = next.width / drag.startBounds.width;
+      const syRaw = next.height / drag.startBounds.height;
+      const s = Math.abs(sxRaw - 1) > Math.abs(syRaw - 1) ? sxRaw : syRaw;
+      const width = Math.max(8, drag.startBounds.width * s);
+      const height = Math.max(8, drag.startBounds.height * s);
+      next = {
+        x: drag.handle.includes("w")
+          ? drag.startBounds.x + drag.startBounds.width - width
+          : drag.startBounds.x,
+        y: drag.handle.includes("n")
+          ? drag.startBounds.y + drag.startBounds.height - height
+          : drag.startBounds.y,
+        width,
+        height,
+      };
+    }
+
+    // Snap the dragged edges (Alt disables; skipped while constraining).
+    if (!event.altKey && !(event.shiftKey && isCornerHandle)) {
       const zoom = useEditorStore.getState().camera.zoom;
       const threshold = 6 / zoom;
       const extentY = { start: next.y, end: next.y + next.height };
@@ -1085,7 +1227,11 @@ export function CanvasStage() {
   }
 
   function handleDoubleClick(event: React.MouseEvent<HTMLCanvasElement>) {
-    if (editRef.current || useEditorStore.getState().tool !== "select") {
+    if (
+      editRef.current ||
+      editingTextRef.current ||
+      useEditorStore.getState().tool !== "select"
+    ) {
       return;
     }
 
@@ -1096,9 +1242,35 @@ export function CanvasStage() {
       y: event.clientY - rect.top,
     });
 
-    if (hit && hit.type === "path" && hit.geometry && hit.rotation === 0) {
-      startPathEdit(hit);
+    if (!hit) {
+      return;
     }
+
+    if (hit.type === "path" && hit.geometry && hit.rotation === 0) {
+      startPathEdit(hit);
+      return;
+    }
+
+    if (hit.type === "text") {
+      editingTextRef.current = hit.id;
+      setEditingTextId(hit.id);
+      setSelection([hit.id]);
+      syncScene();
+    }
+  }
+
+  function finishTextEdit(nodeId: string, content: string, commit: boolean) {
+    editingTextRef.current = null;
+    setEditingTextId(null);
+
+    const node = documentStore.document.nodes[nodeId];
+    if (commit && node && node.type === "text" && node.content !== content) {
+      documentStore.apply({
+        type: "update-nodes",
+        updates: [{ nodeId, patch: { content } }],
+      });
+    }
+    syncScene();
   }
 
   function handleWheel(event: React.WheelEvent<HTMLCanvasElement>) {
@@ -1121,7 +1293,9 @@ export function CanvasStage() {
     <div ref={containerRef} className="canvas-host">
       <canvas
         ref={canvasRef}
-        className={`gpu-canvas ${tool === "pen" ? "is-pen" : ""}`}
+        className={`gpu-canvas ${tool === "pen" ? "is-pen" : ""} ${
+          spaceHeld ? "is-pan" : ""
+        }`}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -1130,7 +1304,9 @@ export function CanvasStage() {
         onWheel={handleWheel}
         aria-label="OpenLogo canvas"
       />
-
+      {editingTextId && (
+        <TextEditOverlay nodeId={editingTextId} onDone={finishTextEdit} />
+      )}
     </div>
   );
 }

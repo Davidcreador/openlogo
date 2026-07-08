@@ -1,5 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   Circle,
   Eye,
   EyeOff,
@@ -251,6 +254,34 @@ function DesignSection({
               step={0.1}
               onCommit={(letterSpacing) => patchSelection({ letterSpacing })}
             />
+            <NumberField
+              label="Line"
+              value={node.lineHeight}
+              step={0.05}
+              onCommit={(lineHeight) =>
+                patchSelection({ lineHeight: Math.max(0.5, lineHeight) })
+              }
+            />
+            <div className="align-group" role="group" aria-label="Text align">
+              {(
+                [
+                  ["left", AlignLeft],
+                  ["center", AlignCenter],
+                  ["right", AlignRight],
+                ] as const
+              ).map(([align, Icon]) => (
+                <button
+                  key={align}
+                  type="button"
+                  className={node.align === align ? "active" : ""}
+                  onClick={() => patchSelection({ align })}
+                  title={`Align ${align}`}
+                  aria-label={`Align ${align}`}
+                >
+                  <Icon size={14} />
+                </button>
+              ))}
+            </div>
           </div>
 
           <button
@@ -278,16 +309,39 @@ function LayersSection() {
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   const setSelection = useEditorStore((state) => state.setSelection);
   const activeNodes = getNodesForArtboard(document);
+  // Ref, not state: drop can fire before a state commit lands.
+  const dragIdRef = useRef<string | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
 
   function toggle(nodeId: string, patch: NodePatch) {
     documentStore.apply({ type: "update-nodes", updates: [{ nodeId, patch }] });
+  }
+
+  /** Display list is topmost-first; nodeIds is back-to-front. */
+  function displayToZ(displayIndex: number): number {
+    return activeNodes.length - 1 - displayIndex;
+  }
+
+  function handleDrop(displayIndex: number) {
+    const dragId = dragIdRef.current;
+    if (dragId === null) {
+      return;
+    }
+    documentStore.apply({
+      type: "reorder-node",
+      artboardId: document.activeArtboardId,
+      nodeId: dragId,
+      toIndex: displayToZ(displayIndex),
+    });
+    dragIdRef.current = null;
+    setDropIndex(null);
   }
 
   return (
     <section className="inspector-section">
       <h2>Layers</h2>
       <div className="layer-rows">
-        {[...activeNodes].reverse().map((node) => {
+        {[...activeNodes].reverse().map((node, displayIndex) => {
           const Icon = NODE_ICONS[node.type];
           const selected = selectedNodeIds.includes(node.id);
           return (
@@ -295,7 +349,27 @@ function LayersSection() {
               key={node.id}
               className={`layer-row ${selected ? "active" : ""} ${
                 node.visible ? "" : "is-hidden"
-              }`}
+              } ${dropIndex === displayIndex ? "drop-target" : ""}`}
+              draggable
+              onDragStart={(event) => {
+                dragIdRef.current = node.id;
+                event.dataTransfer.effectAllowed = "move";
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                if (dropIndex !== displayIndex) {
+                  setDropIndex(displayIndex);
+                }
+              }}
+              onDragLeave={() => setDropIndex(null)}
+              onDrop={(event) => {
+                event.preventDefault();
+                handleDrop(displayIndex);
+              }}
+              onDragEnd={() => {
+                dragIdRef.current = null;
+                setDropIndex(null);
+              }}
             >
               <button
                 type="button"
@@ -376,11 +450,71 @@ function AssistantSection() {
   );
 }
 
+function MultiDesignSection({
+  nodes,
+  patchSelection,
+}: {
+  nodes: LogoNode[];
+  patchSelection: (patch: NodePatch) => void;
+}) {
+  const document = useDocument();
+  const first = nodes[0]!;
+  const fillColor = first.fill.type === "solid" ? first.fill.color : "#000000";
+
+  return (
+    <section className="inspector-section">
+      <h2>Design</h2>
+      <p className="muted" style={{ marginBottom: 10 }}>
+        {nodes.length} objects selected
+      </p>
+      <div className="fill-row">
+        <input
+          type="color"
+          className="fill-swatch"
+          value={fillColor}
+          onChange={(event) =>
+            patchSelection({
+              fill: { type: "solid", color: event.target.value },
+            })
+          }
+          aria-label="Fill color"
+        />
+        <div className="opacity-field">
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={first.opacity}
+            onChange={(event) =>
+              patchSelection({ opacity: Number(event.target.value) })
+            }
+            aria-label="Opacity"
+          />
+          <span>{Math.round(first.opacity * 100)}%</span>
+        </div>
+      </div>
+      <div className="swatch-row">
+        {document.palettes[0]?.colors.map((color) => (
+          <button
+            key={color}
+            type="button"
+            className="swatch"
+            style={{ background: color }}
+            aria-label={`Use ${color}`}
+            onClick={() => patchSelection({ fill: { type: "solid", color } })}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function Inspector() {
   const document = useDocument();
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   const activeNodes = getNodesForArtboard(document);
-  const firstSelectedNode = activeNodes.find((node) =>
+  const selectedNodes = activeNodes.filter((node) =>
     selectedNodeIds.includes(node.id),
   );
 
@@ -396,11 +530,13 @@ export function Inspector() {
 
   return (
     <aside className="inspector" aria-label="Inspector">
-      {firstSelectedNode ? (
-        <DesignSection
-          node={firstSelectedNode}
+      {selectedNodes.length > 1 ? (
+        <MultiDesignSection
+          nodes={selectedNodes}
           patchSelection={patchSelection}
         />
+      ) : selectedNodes.length === 1 ? (
+        <DesignSection node={selectedNodes[0]!} patchSelection={patchSelection} />
       ) : (
         <section className="inspector-section">
           <h2>Design</h2>

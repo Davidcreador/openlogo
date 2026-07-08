@@ -308,6 +308,23 @@ button {
   cursor: crosshair;
 }
 
+.gpu-canvas.is-pan {
+  cursor: grab;
+}
+
+.text-edit-overlay {
+  position: absolute;
+  z-index: 20;
+  margin: 0;
+  padding: 0;
+  border: 1px dashed var(--accent);
+  background: transparent;
+  resize: none;
+  overflow: hidden;
+  white-space: nowrap;
+  outline: none;
+}
+
 .zoom-controls {
   position: absolute;
   right: 14px;
@@ -594,6 +611,32 @@ button {
   outline: none;
 }
 
+.align-group {
+  display: flex;
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-s);
+  background: var(--field-bg);
+  overflow: hidden;
+  height: 28px;
+}
+
+.align-group button {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: var(--panel-text-dim);
+}
+
+.align-group button:hover {
+  color: var(--panel-text);
+}
+
+.align-group button.active {
+  background: #ffffff;
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--field-border);
+}
+
 .outline-button {
   width: 100%;
   border: 1px dashed #b6bcc8;
@@ -633,6 +676,14 @@ button {
 
 .layer-row.active {
   background: var(--accent-soft);
+}
+
+.layer-row.drop-target {
+  box-shadow: 0 -2px 0 0 var(--accent);
+}
+
+.layer-row[draggable] {
+  cursor: grab;
 }
 
 .layer-row.is-hidden .layer-main {

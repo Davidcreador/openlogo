@@ -63,7 +63,20 @@ function renderNode(node: LogoNode, defs: string[]): string {
   }
 
   if (node.type === "text") {
-    return `<text ${base} x="${node.x}" y="${
+    const anchor =
+      node.align === "center"
+        ? ' text-anchor="middle"'
+        : node.align === "right"
+          ? ' text-anchor="end"'
+          : "";
+    const anchorX =
+      node.align === "center"
+        ? node.x + node.width / 2
+        : node.align === "right"
+          ? node.x + node.width
+          : node.x;
+
+    return `<text ${base}${anchor} x="${anchorX}" y="${
       node.y + node.fontSize
     }" font-family="${escapeXml(node.fontFamily)}" font-size="${
       node.fontSize

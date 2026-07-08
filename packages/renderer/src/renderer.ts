@@ -31,6 +31,10 @@ export type Scene = {
   document: LogoDocument;
   camera: Camera;
   selectedNodeIds: readonly string[];
+  /** Node under the cursor (select tool, not selected, not dragging). */
+  hoveredNodeId?: string | null;
+  /** Node temporarily not drawn (e.g. behind an inline text editor). */
+  hiddenNodeId?: string | null;
   /** Marquee rectangle in world space while drag-selecting. */
   marquee?: Bounds | null;
   /** Smart guides in active-artboard-local space while dragging. */
@@ -220,6 +224,7 @@ export class SceneRenderer {
       this.drawArtboard(canvas, document, artboard, camera);
     }
 
+    this.drawHover(canvas, scene);
     this.drawSelection(canvas, scene);
     this.drawGuides(canvas, scene);
     this.drawPenPreview(canvas, scene);
@@ -272,7 +277,7 @@ export class SceneRenderer {
     canvas.translate(artboard.x, artboard.y);
 
     for (const node of getNodesForArtboard(document, artboard.id)) {
-      if (node.visible) {
+      if (node.visible && node.id !== this.scene?.hiddenNodeId) {
         this.drawNode(canvas, node);
       }
     }
@@ -503,6 +508,43 @@ export class SceneRenderer {
 
     this.pathCache.set(d, path);
     return path;
+  }
+
+  private drawHover(canvas: Canvas, scene: Scene): void {
+    const hoveredId = scene.hoveredNodeId;
+    if (!hoveredId || scene.selectedNodeIds.includes(hoveredId)) {
+      return;
+    }
+
+    const node = scene.document.nodes[hoveredId];
+    if (!node) {
+      return;
+    }
+
+    const ck = this.canvasKit;
+    this.withActiveArtboard(canvas, scene, () => {
+      canvas.save();
+      if (node.rotation !== 0) {
+        canvas.rotate(
+          node.rotation,
+          node.x + node.width / 2,
+          node.y + node.height / 2,
+        );
+      }
+      const paint = new ck.Paint();
+      paint.setStyle(ck.PaintStyle.Stroke);
+      paint.setStrokeWidth(1.5 / scene.camera.zoom);
+      const color = ck.parseColorString(SELECTION_COLOR);
+      color[3] = 0.55;
+      paint.setColor(color);
+      paint.setAntiAlias(true);
+      canvas.drawRect(
+        ck.XYWHRect(node.x, node.y, node.width, node.height),
+        paint,
+      );
+      paint.delete();
+      canvas.restore();
+    });
   }
 
   private drawSelection(canvas: Canvas, scene: Scene): void {

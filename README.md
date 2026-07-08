@@ -38,7 +38,12 @@ Key decisions:
   intersect, exclude — atomic single-undo replacement of the operands
 - Smart-guide snapping while moving and resizing: edges and centers against
   other nodes and the artboard (hold Alt to disable)
-- Move, 8-handle resize, marquee selection, shift multi-select
+- Move, 8-handle resize (Shift = proportional), marquee selection, shift
+  multi-select, space-drag panning
+- Double-click a wordmark to edit text inline on the canvas
+- Clipboard: copy/cut/paste/duplicate (⌘C/⌘X/⌘V/⌘D), select all (⌘A),
+  arrow-key nudge (⇧ = 10px), bring forward / send backward (⌘] / ⌘[)
+- Text alignment (left/center/right, respected in SVG export) and line height
 - Fill, opacity, rotation, corner radius, typography property controls
 - Real text shaping with variable-weight Inter (bundled)
 - Font browsing: curated 13-family catalog (sans/serif/display/mono) served
