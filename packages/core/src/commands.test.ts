@@ -109,6 +109,61 @@ describe("applyCommand", () => {
     expect(next.artboards).toHaveLength(1);
   });
 
+  it("reorder-artboard moves the artboard and inverse restores order", () => {
+    const base = createInitialDocument();
+    let doc = base;
+    for (const name of ["Second", "Third"]) {
+      doc = applyCommand(doc, {
+        type: "add-artboard",
+        artboard: { ...getActiveArtboard(base), id: `artboard_${name}`, name, nodeIds: [] },
+        nodes: [],
+        activate: false,
+      }).document;
+    }
+    const originalOrder = doc.artboards.map((item) => item.id);
+
+    const { document: next, inverse } = applyCommand(doc, {
+      type: "reorder-artboard",
+      artboardId: originalOrder[0]!,
+      toIndex: 2,
+    });
+
+    expect(next.artboards.map((item) => item.id)).toEqual([
+      originalOrder[1],
+      originalOrder[2],
+      originalOrder[0],
+    ]);
+    // Reordering never touches nodes or the active artboard.
+    expect(next.activeArtboardId).toBe(doc.activeArtboardId);
+    expect(next.nodes).toBe(doc.nodes);
+
+    const { document: reverted } = applyCommand(next, inverse);
+    expect(reverted.artboards.map((item) => item.id)).toEqual(originalOrder);
+  });
+
+  it("reorder-artboard no-ops on an unknown artboard and clamps toIndex", () => {
+    const doc = createInitialDocument();
+    const { document: unchanged } = applyCommand(doc, {
+      type: "reorder-artboard",
+      artboardId: "missing",
+      toIndex: 3,
+    });
+    expect(unchanged).toBe(doc);
+
+    const { document: clamped, inverse } = applyCommand(doc, {
+      type: "reorder-artboard",
+      artboardId: doc.activeArtboardId,
+      toIndex: 99,
+    });
+    expect(clamped.artboards.map((item) => item.id)).toEqual(
+      doc.artboards.map((item) => item.id),
+    );
+    const { document: reverted } = applyCommand(clamped, inverse);
+    expect(reverted.artboards.map((item) => item.id)).toEqual(
+      doc.artboards.map((item) => item.id),
+    );
+  });
+
   it("batch applies in order and inverse undoes everything atomically", () => {
     const doc = createInitialDocument();
     const artboard = getActiveArtboard(doc);

@@ -1,6 +1,12 @@
 import type { PathGeometry } from "./path-data";
 import { collectSubtreeIds, findContainerId } from "./queries";
-import type { Artboard, GroupNode, LogoDocument, LogoNode } from "./types";
+import type {
+  Artboard,
+  GroupNode,
+  LogoDocument,
+  LogoNode,
+  ShapeParams,
+} from "./types";
 
 /**
  * Every document mutation is a serializable command. `applyCommand` returns
@@ -32,6 +38,8 @@ export type NodePatch = Partial<
       intrinsicWidth: number;
       intrinsicHeight: number;
       geometry: PathGeometry;
+      /** undefined detaches a shape node from its params (bezier edit). */
+      shape: ShapeParams | undefined;
       content: string;
       fontFamily: string;
       fontSize: number;
@@ -142,6 +150,12 @@ export type Command =
       type: "update-artboard";
       artboardId: string;
       patch: ArtboardPatch;
+    }
+  | {
+      type: "reorder-artboard";
+      artboardId: string;
+      /** Position in the artboard list after removal-then-splice. */
+      toIndex: number;
     }
   | {
       type: "set-active-artboard";
@@ -675,6 +689,29 @@ export function applyCommand(
           artboardId: command.artboardId,
           patch: inversePatch as ArtboardPatch,
         },
+      };
+    }
+
+    case "reorder-artboard": {
+      const fromIndex = document.artboards.findIndex(
+        (item) => item.id === command.artboardId,
+      );
+      if (fromIndex === -1) {
+        return { document, inverse: command };
+      }
+
+      const artboards = document.artboards.filter(
+        (item) => item.id !== command.artboardId,
+      );
+      artboards.splice(
+        Math.min(command.toIndex, artboards.length),
+        0,
+        document.artboards[fromIndex]!,
+      );
+
+      return {
+        document: { ...document, artboards },
+        inverse: { ...command, toIndex: fromIndex },
       };
     }
 

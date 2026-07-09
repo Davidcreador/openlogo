@@ -79,6 +79,21 @@ export type EllipseNode = BaseNode & {
   type: "ellipse";
 };
 
+export type ShapeKind = "triangle" | "polygon" | "star" | "line" | "arrow";
+
+/**
+ * Parameters of a parametric shape-library node. Geometry is regenerated
+ * from these (see shapes.ts); a bezier edit detaches the path from its
+ * params — the editor clears `shape` when committing a path edit.
+ */
+export type ShapeParams = {
+  kind: ShapeKind;
+  /** Polygon side count / star point count. */
+  sides?: number;
+  /** Star inner radius as a fraction of the outer radius (0–1). */
+  innerRatio?: number;
+};
+
 export type PathNode = BaseNode & {
   type: "path";
   /** SVG path data in the node's intrinsic coordinate space. */
@@ -91,6 +106,8 @@ export type PathNode = BaseNode & {
    * which is derived from it. Absent on imported/legacy paths.
    */
   geometry?: PathGeometry;
+  /** Present on shape-library nodes; drives param editing in the inspector. */
+  shape?: ShapeParams;
 };
 
 export type TextNode = BaseNode & {

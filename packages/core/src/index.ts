@@ -5,6 +5,7 @@ export * from "./commands";
 export * from "./path-data";
 export * from "./store";
 export * from "./factory";
+export * from "./shapes";
 export * from "./queries";
 export * from "./schema";
 export * from "./snapping";

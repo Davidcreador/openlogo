@@ -1498,3 +1498,235 @@ kbd {
   color: var(--panel-text-dim);
   font-size: 11.5px;
 }
+
+/* ---------- Shape-library flyout (toolbar) ---------- */
+
+.tool-flyout-anchor {
+  position: relative;
+}
+
+.toolbar-button.has-flyout {
+  position: relative;
+}
+
+.tool-flyout-caret {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* Corner triangle, Illustrator-style "more tools" affordance. */
+.tool-flyout-caret::after {
+  content: "";
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  border-style: solid;
+  border-width: 0 0 5px 5px;
+  border-color: transparent transparent currentColor transparent;
+  color: var(--chrome-text-dim);
+  transition: color 120ms var(--ease);
+}
+
+.tool-flyout-anchor:hover .tool-flyout-caret::after,
+.tool-flyout-caret[aria-expanded="true"]::after {
+  color: var(--chrome-text);
+}
+
+.tool-flyout {
+  top: 0;
+  left: calc(100% + 12px);
+  min-width: 168px;
+  transform-origin: top left;
+}
+
+.tool-flyout .menu-item.active {
+  background: var(--chrome-bg-raised);
+  color: #8ea0fa;
+}
+
+.tool-flyout .menu-item small {
+  text-transform: none;
+}
+
+/* ---------- Artboard manager (topbar menu) ---------- */
+
+.menu-artboards {
+  min-width: 292px;
+}
+
+.artboard-list {
+  max-height: 264px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.artboard-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 7px;
+}
+
+.artboard-row .artboard-activate {
+  flex: 1;
+  min-width: 0;
+}
+
+.artboard-row .menu-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artboard-row small {
+  font-variant-numeric: tabular-nums;
+  text-transform: none;
+}
+
+/* Revealed on hover/focus via opacity (not display) so the buttons stay
+   keyboard-focusable and hit-testable. */
+.artboard-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex-shrink: 0;
+  padding-right: 2px;
+  opacity: 0;
+  transition: opacity 120ms var(--ease);
+}
+
+.artboard-row:hover .artboard-actions,
+.artboard-row:focus-within .artboard-actions {
+  opacity: 1;
+}
+
+.artboard-actions button {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--chrome-text-dim);
+  transition:
+    background 120ms var(--ease),
+    color 120ms var(--ease);
+}
+
+.artboard-actions button:hover:not(:disabled) {
+  background: var(--chrome-bg-raised);
+  color: var(--chrome-text);
+}
+
+.artboard-actions button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.artboard-actions button.is-confirming {
+  background: #ef4444;
+  color: #ffffff;
+}
+
+.artboard-rename {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: var(--chrome-bg-raised);
+  box-shadow: 0 0 0 2px var(--accent-ring);
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--chrome-text);
+  outline: none;
+}
+
+.artboard-presets {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 2px 4px 6px;
+}
+
+.artboard-preset {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--chrome-border);
+  background: var(--chrome-bg-raised);
+  transition: border-color 120ms var(--ease), background 120ms var(--ease);
+}
+
+.artboard-preset:hover {
+  border-color: #8ea0fa;
+}
+
+.artboard-preset span {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.artboard-preset small {
+  color: var(--chrome-text-dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.artboard-custom {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 4px 4px;
+}
+
+.artboard-custom input {
+  width: 62px;
+  height: 24px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 6px;
+  background: var(--chrome-bg-raised);
+  padding: 0 6px;
+  font-size: 11.5px;
+  color: var(--chrome-text);
+  outline: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.artboard-custom input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-ring);
+}
+
+.artboard-custom span {
+  color: var(--chrome-text-dim);
+  font-size: 11px;
+}
+
+.artboard-custom button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 6px;
+  background: linear-gradient(to bottom, #5d77f7, var(--accent));
+  color: #ffffff;
+  font-size: 11.5px;
+  font-weight: 600;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.24);
+}
+
+.artboard-custom button:hover {
+  filter: brightness(1.08);
+}

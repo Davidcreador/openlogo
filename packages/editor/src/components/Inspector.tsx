@@ -29,6 +29,9 @@ import {
   Unlock,
 } from "lucide-react";
 import {
+  DEFAULT_POLYGON_SIDES,
+  DEFAULT_STAR_INNER_RATIO,
+  DEFAULT_STAR_POINTS,
   type GroupNode,
   type LogoDocument,
   type LogoNode,
@@ -36,6 +39,8 @@ import {
   analyzeLogoDocument,
   collectLeafNodeIds,
   getContainerChildIds,
+  shapeDisplayName,
+  shapeParamsPatch,
   unitBounds,
 } from "@openlogo/core";
 import {
@@ -455,7 +460,11 @@ function DesignSection({
       <header className="section-head">
         <h2>Design</h2>
         <span className="section-meta">
-          {node.type === "path" ? "Path" : node.type[0]!.toUpperCase() + node.type.slice(1)}
+          {node.type === "path"
+            ? node.shape
+              ? shapeDisplayName(node.shape.kind)
+              : "Path"
+            : node.type[0]!.toUpperCase() + node.type.slice(1)}
         </span>
       </header>
 
@@ -491,6 +500,49 @@ function DesignSection({
               patchSelection({ cornerRadius: Math.max(0, cornerRadius) })
             }
           />
+        )}
+        {node.type === "path" && node.shape?.kind === "polygon" && (
+          <NumberField
+            label="Sides"
+            value={node.shape.sides ?? DEFAULT_POLYGON_SIDES}
+            onCommit={(sides) => {
+              const patch = shapeParamsPatch(node, { ...node.shape!, sides });
+              if (patch) {
+                patchSelection(patch);
+              }
+            }}
+          />
+        )}
+        {node.type === "path" && node.shape?.kind === "star" && (
+          <>
+            <NumberField
+              label="Points"
+              value={node.shape.sides ?? DEFAULT_STAR_POINTS}
+              onCommit={(sides) => {
+                const patch = shapeParamsPatch(node, { ...node.shape!, sides });
+                if (patch) {
+                  patchSelection(patch);
+                }
+              }}
+            />
+            <NumberField
+              label="Inner"
+              unit="%"
+              step={5}
+              value={Math.round(
+                (node.shape.innerRatio ?? DEFAULT_STAR_INNER_RATIO) * 100,
+              )}
+              onCommit={(percent) => {
+                const patch = shapeParamsPatch(node, {
+                  ...node.shape!,
+                  innerRatio: percent / 100,
+                });
+                if (patch) {
+                  patchSelection(patch);
+                }
+              }}
+            />
+          </>
         )}
       </div>
 

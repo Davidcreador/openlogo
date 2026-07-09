@@ -163,7 +163,14 @@ function randomCommand(
     "ungroup",
     "batch",
     ...(opts.artboardOps
-      ? ["add-artboard", "remove-artboard", "set-active", "update-artboard", "palette"]
+      ? [
+          "add-artboard",
+          "remove-artboard",
+          "set-active",
+          "update-artboard",
+          "reorder-artboard",
+          "palette",
+        ]
       : []),
   ];
 
@@ -275,6 +282,12 @@ function randomCommand(
     }
     case "set-active":
       return { type: "set-active-artboard", artboardId: pick(rng, doc.artboards).id };
+    case "reorder-artboard":
+      return {
+        type: "reorder-artboard",
+        artboardId: pick(rng, doc.artboards).id,
+        toIndex: int(rng, doc.artboards.length + 1),
+      };
     case "update-artboard":
       return {
         type: "update-artboard",

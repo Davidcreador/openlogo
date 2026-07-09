@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
+  ChevronUp,
+  Copy,
   Download,
+  Pencil,
   Plus,
   Upload,
   Redo2,
@@ -13,8 +16,14 @@ import {
   Trash2,
   Undo2,
 } from "lucide-react";
-import { type LogoVariant, cloneArtboardForVariant, getActiveArtboard } from "@openlogo/core";
-import type { BooleanOp } from "@openlogo/renderer";
+import {
+  type Artboard,
+  type LogoVariant,
+  cloneArtboardForVariant,
+  createArtboard,
+  getActiveArtboard,
+} from "@openlogo/core";
+import { type BooleanOp, fitBounds } from "@openlogo/renderer";
 import { applyBooleanOp, combinableNodes } from "../lib/boolean-ops";
 import {
   documentToSvg,
@@ -60,17 +69,157 @@ function useClickOutside(onOutside: () => void) {
   return ref;
 }
 
+const ARTBOARD_PRESETS = [
+  { label: "Logo", width: 720, height: 420 },
+  { label: "Square", width: 1080, height: 1080 },
+  { label: "Icon", width: 512, height: 512 },
+  { label: "Social", width: 1200, height: 630 },
+  { label: "Story", width: 1080, height: 1920 },
+];
+
+/** Fit the camera to an artboard (new/switched); no-op before first layout. */
+function fitCameraTo(artboardId: string) {
+  const state = useEditorStore.getState();
+  const target = documentStore.document.artboards.find(
+    (item) => item.id === artboardId,
+  );
+  if (target && state.viewport.width > 0) {
+    state.setCamera(
+      fitBounds(target, state.viewport.width, state.viewport.height),
+    );
+  }
+}
+
+/** X for a new artboard: clear of everything, to the right. */
+function nextArtboardX(): number {
+  const artboards = documentStore.document.artboards;
+  return Math.max(...artboards.map((item) => item.x + item.width)) + 120;
+}
+
+function ArtboardRenameField({
+  artboard,
+  onDone,
+}: {
+  artboard: Artboard;
+  onDone: () => void;
+}) {
+  const [draft, setDraft] = useState(artboard.name);
+
+  function commit() {
+    const name = draft.trim();
+    if (name && name !== artboard.name) {
+      documentStore.apply({
+        type: "update-artboard",
+        artboardId: artboard.id,
+        patch: { name },
+      });
+    }
+    onDone();
+  }
+
+  return (
+    <input
+      className="artboard-rename"
+      value={draft}
+      autoFocus
+      aria-label="Artboard name"
+      onFocus={(event) => event.target.select()}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        event.stopPropagation();
+        if (event.key === "Enter") {
+          (event.target as HTMLInputElement).blur();
+        } else if (event.key === "Escape") {
+          onDone();
+        }
+      }}
+      onClick={(event) => event.stopPropagation()}
+    />
+  );
+}
+
 function ArtboardMenu() {
   const document = useDocument();
   const setSelection = useEditorStore((state) => state.setSelection);
   const [open, setOpen] = useState(false);
-  const ref = useClickOutside(() => setOpen(false));
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [customWidth, setCustomWidth] = useState("720");
+  const [customHeight, setCustomHeight] = useState("420");
+  const ref = useClickOutside(() => {
+    setOpen(false);
+    setConfirmDeleteId(null);
+    setRenamingId(null);
+  });
   const artboard = getActiveArtboard(document);
 
   function activate(artboardId: string) {
     documentStore.apply({ type: "set-active-artboard", artboardId });
     setSelection([]);
+    fitCameraTo(artboardId);
     setOpen(false);
+  }
+
+  function addArtboard(width: number, height: number) {
+    const board = createArtboard("primary", {
+      name: `Artboard ${documentStore.document.artboards.length + 1}`,
+      x: nextArtboardX(),
+      y: documentStore.document.artboards[0]?.y ?? 0,
+      width: Math.max(1, Math.round(width)),
+      height: Math.max(1, Math.round(height)),
+    });
+    documentStore.apply({ type: "add-artboard", artboard: board, nodes: [] });
+    setSelection([]);
+    fitCameraTo(board.id);
+    setOpen(false);
+  }
+
+  function duplicateArtboard(artboardId: string) {
+    const doc = documentStore.document;
+    const source = doc.artboards.find((item) => item.id === artboardId);
+    if (!source) {
+      return;
+    }
+    const { artboard: clone, nodes } = cloneArtboardForVariant(
+      doc,
+      artboardId,
+      source.purpose,
+    );
+    clone.name = `${source.name} copy`;
+    clone.x = nextArtboardX();
+    clone.y = source.y;
+    documentStore.apply({
+      type: "add-artboard",
+      artboard: clone,
+      nodes,
+      index: doc.artboards.indexOf(source) + 1,
+    });
+    setSelection([]);
+    fitCameraTo(clone.id);
+    setOpen(false);
+  }
+
+  function moveArtboard(artboardId: string, delta: -1 | 1) {
+    const artboards = documentStore.document.artboards;
+    const index = artboards.findIndex((item) => item.id === artboardId);
+    const toIndex = index + delta;
+    if (index === -1 || toIndex < 0 || toIndex >= artboards.length) {
+      return;
+    }
+    documentStore.apply({ type: "reorder-artboard", artboardId, toIndex });
+  }
+
+  function deleteArtboard(artboardId: string) {
+    // Two-step inline confirm — no blocking dialog.
+    if (confirmDeleteId !== artboardId) {
+      setConfirmDeleteId(artboardId);
+      return;
+    }
+    setConfirmDeleteId(null);
+    documentStore.apply({ type: "remove-artboard", artboardId });
+    setSelection([]);
+    fitCameraTo(documentStore.document.activeArtboardId);
   }
 
   function createVariant(purpose: LogoVariant) {
@@ -81,8 +230,11 @@ function ArtboardMenu() {
     );
     documentStore.apply({ type: "add-artboard", artboard: next, nodes });
     setSelection([]);
+    fitCameraTo(next.id);
     setOpen(false);
   }
+
+  const canDelete = document.artboards.length > 1;
 
   return (
     <div className="menu-anchor" ref={ref}>
@@ -100,22 +252,147 @@ function ArtboardMenu() {
       </button>
 
       {open && (
-        <div className="menu" role="menu">
+        <div className="menu menu-artboards" role="menu">
           <div className="menu-heading">Artboards</div>
-          {document.artboards.map((item) => (
+          <div className="artboard-list">
+            {document.artboards.map((item, index) => (
+              <div
+                key={item.id}
+                className={`artboard-row${
+                  item.id === document.activeArtboardId ? " active" : ""
+                }`}
+              >
+                <button
+                  type="button"
+                  className="menu-item artboard-activate"
+                  onClick={() => activate(item.id)}
+                >
+                  <span className="menu-check">
+                    {item.id === document.activeArtboardId && (
+                      <Check size={13} />
+                    )}
+                  </span>
+                  {renamingId === item.id ? (
+                    <ArtboardRenameField
+                      artboard={item}
+                      onDone={() => setRenamingId(null)}
+                    />
+                  ) : (
+                    <span className="menu-label">{item.name}</span>
+                  )}
+                  <small>
+                    {item.width}×{item.height}
+                  </small>
+                </button>
+                <span className="artboard-actions">
+                  <button
+                    type="button"
+                    onClick={() => setRenamingId(item.id)}
+                    title="Rename"
+                    aria-label={`Rename ${item.name}`}
+                  >
+                    <Pencil size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => duplicateArtboard(item.id)}
+                    title="Duplicate"
+                    aria-label={`Duplicate ${item.name}`}
+                  >
+                    <Copy size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveArtboard(item.id, -1)}
+                    disabled={index === 0}
+                    title="Move up"
+                    aria-label={`Move ${item.name} up`}
+                  >
+                    <ChevronUp size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveArtboard(item.id, 1)}
+                    disabled={index === document.artboards.length - 1}
+                    title="Move down"
+                    aria-label={`Move ${item.name} down`}
+                  >
+                    <ChevronDown size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      confirmDeleteId === item.id ? "is-confirming" : ""
+                    }
+                    onClick={() => deleteArtboard(item.id)}
+                    disabled={!canDelete}
+                    title={
+                      confirmDeleteId === item.id
+                        ? "Click again to delete"
+                        : "Delete"
+                    }
+                    aria-label={
+                      confirmDeleteId === item.id
+                        ? `Confirm delete ${item.name}`
+                        : `Delete ${item.name}`
+                    }
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div className="menu-divider" />
+          <div className="menu-heading">New artboard</div>
+          <div className="artboard-presets">
+            {ARTBOARD_PRESETS.map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                className="artboard-preset"
+                onClick={() => addArtboard(preset.width, preset.height)}
+                aria-label={`Add ${preset.label} artboard ${preset.width}×${preset.height}`}
+              >
+                <span>{preset.label}</span>
+                <small>
+                  {preset.width}×{preset.height}
+                </small>
+              </button>
+            ))}
+          </div>
+          <div className="artboard-custom">
+            <input
+              type="number"
+              min="1"
+              value={customWidth}
+              onChange={(event) => setCustomWidth(event.target.value)}
+              aria-label="Custom artboard width"
+            />
+            <span>×</span>
+            <input
+              type="number"
+              min="1"
+              value={customHeight}
+              onChange={(event) => setCustomHeight(event.target.value)}
+              aria-label="Custom artboard height"
+            />
             <button
-              key={item.id}
               type="button"
-              className="menu-item"
-              onClick={() => activate(item.id)}
+              onClick={() => {
+                const width = Number(customWidth);
+                const height = Number(customHeight);
+                if (width > 0 && height > 0) {
+                  addArtboard(width, height);
+                }
+              }}
+              aria-label="Add custom artboard"
             >
-              <span className="menu-check">
-                {item.id === document.activeArtboardId && <Check size={13} />}
-              </span>
-              <span className="menu-label">{item.name}</span>
-              <small>{item.purpose}</small>
+              <Plus size={12} /> Add
             </button>
-          ))}
+          </div>
+
           <div className="menu-divider" />
           <div className="menu-heading">New variant</div>
           {VARIANTS.map((variant) => (

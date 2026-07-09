@@ -15,11 +15,13 @@ import {
   collectLeafNodeIds,
   computeSnap,
   computeSpacingSnap,
+  createBoxShapeNode,
   createEllipse,
   createId,
   createPath,
   createRectangle,
   createText,
+  createVectorShapeNode,
   findSegmentNear,
   getActiveArtboard,
   getAncestorGroupIds,
@@ -117,7 +119,28 @@ type DragState =
       distanceLabels: MeasureSegment[];
     }
   | { kind: "marquee"; startLocal: Vec2; current: Bounds | null }
-  | { kind: "guide"; axis: "v" | "h"; index: number; value: number };
+  | { kind: "guide"; axis: "v" | "h"; index: number; value: number }
+  | {
+      kind: "draw";
+      tool: Tool;
+      /** Stable id so the ghost stays one node across preview frames. */
+      ghostId: string;
+      start: Vec2;
+      current: Vec2;
+      shift: boolean;
+      moved: boolean;
+    };
+
+/** Tools that drag-to-draw; a plain click places the default size. */
+const SHAPE_DRAW_TOOLS = new Set<Tool>([
+  "rectangle",
+  "ellipse",
+  "triangle",
+  "polygon",
+  "star",
+  "line",
+  "arrow",
+]);
 
 /**
  * Snapshot the drawable leaves under the given selection units (groups
@@ -279,6 +302,8 @@ function patchFromLocalGeometry(geometry: PathGeometry): NodePatch | null {
     intrinsicHeight: bounds.height,
     d: pathGeometryToSvg(normalized),
     geometry: normalized,
+    // A bezier edit detaches a shape-library node from its params.
+    shape: undefined,
   };
 }
 
@@ -381,6 +406,20 @@ function makeNodeForTool(tool: Tool, point: Vec2): LogoNode | null {
       return createRectangle(centered(120, 80));
     case "ellipse":
       return createEllipse(centered(96, 96));
+    case "triangle":
+    case "polygon":
+    case "star":
+      return createBoxShapeNode(
+        { kind: tool },
+        { ...centered(96, 96), width: 96, height: 96 },
+      );
+    case "line":
+    case "arrow":
+      return createVectorShapeNode(
+        { kind: tool },
+        { x: Math.round(point.x - 60), y: Math.round(point.y) },
+        { x: Math.round(point.x + 60), y: Math.round(point.y) },
+      );
     case "path":
       return createPath(centered(96, 96));
     case "text": {
@@ -390,6 +429,79 @@ function makeNodeForTool(tool: Tool, point: Vec2): LogoNode | null {
     default:
       return null;
   }
+}
+
+/** Drag rect for box shapes; Shift constrains to a square. */
+function drawBoxFrom(start: Vec2, current: Vec2, shift: boolean): Bounds {
+  let dx = current.x - start.x;
+  let dy = current.y - start.y;
+  if (shift) {
+    const side = Math.max(Math.abs(dx), Math.abs(dy));
+    dx = (dx < 0 ? -1 : 1) * side;
+    dy = (dy < 0 ? -1 : 1) * side;
+  }
+  return {
+    x: Math.min(start.x, start.x + dx),
+    y: Math.min(start.y, start.y + dy),
+    width: Math.max(1, Math.abs(dx)),
+    height: Math.max(1, Math.abs(dy)),
+  };
+}
+
+/** Drag end point for vector shapes; Shift snaps the angle to 45°. */
+function drawEndFrom(start: Vec2, current: Vec2, shift: boolean): Vec2 {
+  if (!shift) {
+    return current;
+  }
+  const dx = current.x - start.x;
+  const dy = current.y - start.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 1e-6) {
+    return current;
+  }
+  const snapped = (Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * Math.PI) / 4;
+  return {
+    x: start.x + Math.cos(snapped) * length,
+    y: start.y + Math.sin(snapped) * length,
+  };
+}
+
+/** The node a draw gesture would commit right now (also the ghost). */
+function buildDraftShape(drag: Extract<DragState, { kind: "draw" }>): LogoNode | null {
+  const { tool, start, current, shift } = drag;
+
+  if (tool === "line" || tool === "arrow") {
+    const node = createVectorShapeNode(
+      { kind: tool },
+      start,
+      drawEndFrom(start, current, shift),
+    );
+    return node ? { ...node, id: drag.ghostId } : null;
+  }
+
+  const box = drawBoxFrom(start, current, shift);
+  if (tool === "rectangle") {
+    return {
+      ...createRectangle({ x: box.x, y: box.y }),
+      id: drag.ghostId,
+      width: box.width,
+      height: box.height,
+      cornerRadius: 0,
+    };
+  }
+  if (tool === "ellipse") {
+    return {
+      ...createEllipse({ x: box.x, y: box.y }),
+      id: drag.ghostId,
+      width: box.width,
+      height: box.height,
+    };
+  }
+  if (tool === "triangle" || tool === "polygon" || tool === "star") {
+    const node = createBoxShapeNode({ kind: tool }, box);
+    return node ? { ...node, id: drag.ghostId } : null;
+  }
+  return null;
 }
 
 export function CanvasStage() {
@@ -451,6 +563,24 @@ export function CanvasStage() {
           item.id === artboard.id ? { ...item, guides } : item,
         ),
       };
+    }
+
+    // Drag-to-draw ghost: the pending shape rides in the scene document
+    // only — nothing is committed (or undoable) until pointer-up.
+    if (drag?.kind === "draw" && drag.moved) {
+      const ghost = buildDraftShape(drag);
+      if (ghost) {
+        const artboard = getActiveArtboard(sceneDocument);
+        sceneDocument = {
+          ...sceneDocument,
+          nodes: { ...sceneDocument.nodes, [ghost.id]: ghost },
+          artboards: sceneDocument.artboards.map((item) =>
+            item.id === artboard.id
+              ? { ...item, nodeIds: [...item.nodeIds, ghost.id] }
+              : item,
+          ),
+        };
+      }
     }
 
     const sb = sbRef.current;
@@ -757,7 +887,15 @@ export function CanvasStage() {
           finalizePen(false);
         } else if (event.key === "Escape") {
           consume();
-          cancelPen();
+          // Illustrator behavior: Esc KEEPS the anchors placed so far —
+          // the open path commits as it stands and the editor exits to
+          // the select tool. Only a path with <2 anchors is discarded.
+          if (penRef.current.points.length >= 2) {
+            finalizePen(false);
+          } else {
+            cancelPen();
+            setTool("select");
+          }
         }
         return;
       }
@@ -1248,6 +1386,22 @@ export function CanvasStage() {
       return;
     }
 
+    // Shape tools drag-to-draw; a plain click (no movement) falls back to
+    // placing the default size on pointer-up.
+    if (SHAPE_DRAW_TOOLS.has(state.tool)) {
+      const local = toArtboardLocal(screen);
+      dragRef.current = {
+        kind: "draw",
+        tool: state.tool,
+        ghostId: createId("node"),
+        start: local,
+        current: local,
+        shift: event.shiftKey,
+        moved: false,
+      };
+      return;
+    }
+
     if (state.tool !== "select") {
       const local = toArtboardLocal(screen);
       const node = makeNodeForTool(state.tool, local);
@@ -1585,6 +1739,19 @@ export function CanvasStage() {
 
     const local = toArtboardLocal(screen);
 
+    if (drag.kind === "draw") {
+      drag.current = local;
+      drag.shift = event.shiftKey;
+      if (!drag.moved) {
+        const zoom = useEditorStore.getState().camera.zoom;
+        drag.moved =
+          Math.hypot(local.x - drag.start.x, local.y - drag.start.y) >
+          3 / zoom;
+      }
+      syncScene();
+      return;
+    }
+
     if (drag.kind === "marquee") {
       drag.current = {
         x: Math.min(drag.startLocal.x, local.x),
@@ -1831,6 +1998,24 @@ export function CanvasStage() {
       return;
     }
 
+    if (drag.kind === "draw") {
+      // Drag commits the drawn size; a plain click places the default.
+      const node = drag.moved
+        ? buildDraftShape(drag)
+        : makeNodeForTool(drag.tool, drag.start);
+      if (node) {
+        documentStore.apply({
+          type: "insert-nodes",
+          artboardId: documentStore.document.activeArtboardId,
+          nodes: [node],
+        });
+        setSelection([node.id]);
+      }
+      setTool("select");
+      syncScene();
+      return;
+    }
+
     if (drag.kind === "marquee") {
       if (drag.current && (drag.current.width > 2 || drag.current.height > 2)) {
         const document = documentStore.document;
@@ -1973,9 +2158,9 @@ export function CanvasStage() {
     <div ref={containerRef} className="canvas-host">
       <canvas
         ref={canvasRef}
-        className={`gpu-canvas ${tool === "pen" ? "is-pen" : ""} ${
-          spaceHeld ? "is-pan" : ""
-        }`}
+        className={`gpu-canvas ${
+          tool === "pen" || SHAPE_DRAW_TOOLS.has(tool) ? "is-pen" : ""
+        } ${spaceHeld ? "is-pan" : ""}`}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}

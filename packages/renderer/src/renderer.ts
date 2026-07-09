@@ -227,7 +227,23 @@ export class SceneRenderer {
         ((local.x - node.x) / node.width) * node.intrinsicWidth;
       const intrinsicY =
         ((local.y - node.y) / node.height) * node.intrinsicHeight;
-      return path.contains(intrinsicX, intrinsicY);
+      if (path.contains(intrinsicX, intrinsicY)) {
+        return true;
+      }
+      // Stroked open paths (line shapes) have no fill area — hit against
+      // the stroke outline with a small tolerance instead.
+      if (node.stroke && node.stroke.width > 0) {
+        const stroked = path.copy();
+        const ok = stroked.stroke({
+          width: Math.max(node.stroke.width, 6),
+          cap: this.canvasKit.StrokeCap.Round,
+          join: this.canvasKit.StrokeJoin.Round,
+        });
+        const hit = ok ? stroked.contains(intrinsicX, intrinsicY) : false;
+        stroked.delete();
+        return hit;
+      }
+      return false;
     }
 
     // Rectangles and text: box test is enough.
@@ -261,8 +277,13 @@ export class SceneRenderer {
     canvas.scale(this.dpr * camera.zoom, this.dpr * camera.zoom);
     canvas.translate(-camera.offset.x, -camera.offset.y);
 
-    for (const artboard of document.artboards) {
-      this.drawArtboard(canvas, document, artboard, camera);
+    // Only the active artboard draws: keeps frame cost flat however many
+    // artboards the document holds (the switcher is the way between them).
+    const active = document.artboards.find(
+      (item) => item.id === document.activeArtboardId,
+    );
+    if (active) {
+      this.drawArtboard(canvas, document, active, camera);
     }
 
     this.drawRulerGuides(canvas, scene);
