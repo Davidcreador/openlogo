@@ -47,12 +47,9 @@ import {
   shapeParamsPatch,
   unitBounds,
 } from "@openlogo/core";
-import {
-  FONT_CATALOG,
-  catalogEntry,
-  fontStore,
-  nearestWeight,
-} from "../lib/font-store";
+import { catalogEntry, nearestWeight } from "../lib/font-catalog";
+import { fontStore } from "../lib/font-store";
+import { FontPicker } from "./FontPicker";
 import {
   moveUnitToContainer,
   rotateUnitBy,
@@ -692,28 +689,14 @@ function DesignSection({
           </label>
 
           <div className={FIELD_ROW}>
-            <select
-              className={`${SELECT} min-w-0 flex-1`}
-              value={catalogEntry(node.fontFamily)?.name ?? "Inter"}
-              onChange={(event) => {
-                const family = FONT_CATALOG.find(
-                  (item) => item.name === event.target.value,
-                );
-                if (!family) {
-                  return;
-                }
+            <FontPicker
+              value={node.fontFamily}
+              onApply={(family) => {
                 const weight = nearestWeight(family, node.fontWeight);
                 void fontStore.ensure(family.name, weight);
                 patchSelection({ fontFamily: family.name, fontWeight: weight });
               }}
-              aria-label="Font family"
-            >
-              {FONT_CATALOG.map((family) => (
-                <option key={family.id} value={family.name}>
-                  {family.name}
-                </option>
-              ))}
-            </select>
+            />
             <select
               className={`${SELECT} w-104`}
               value={node.fontWeight}

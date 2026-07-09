@@ -25,6 +25,7 @@ import {
   groupSelection,
   ungroupSelection,
 } from "./lib/group-ops";
+import { fontCatalog } from "./lib/font-catalog";
 import { createAutosave, loadDocument } from "./lib/persistence";
 import { ensureDocumentFonts } from "./lib/text-to-path";
 import { documentStore } from "./state/document";
@@ -61,6 +62,13 @@ export default function App() {
         documentStore.reset(stored);
       }
       ensureDocumentFonts();
+      // Documents can reference catalog-only families; once the full
+      // index is in, resolve any that the built-in list couldn't.
+      void Effect.runPromise(fontCatalog.init()).then(() => {
+        if (!disposed) {
+          ensureDocumentFonts();
+        }
+      });
     });
 
     const autosave = createAutosave(() => documentStore.document);

@@ -14,7 +14,8 @@ import {
   translatePathGeometry,
 } from "@openlogo/core";
 import { documentStore } from "../state/document";
-import { catalogEntry, fontStore } from "./font-store";
+import { catalogEntry } from "./font-catalog";
+import { fontStore } from "./font-store";
 
 /** Outline conversion failure: module load or glyph outlining threw. */
 export class TextOutlineError extends Data.TaggedError("TextOutlineError")<{
