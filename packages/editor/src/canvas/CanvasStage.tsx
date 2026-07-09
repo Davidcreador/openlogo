@@ -41,6 +41,7 @@ import {
   nodeBounds,
   normalizeAngle,
   pathNodeLocalGeometry,
+  pixelSnapPatch,
   removeAnchor,
   rotatePoint,
   selectionFrame,
@@ -130,6 +131,11 @@ type DragState =
       moved: boolean;
       /** The gesture began as an ⌥-drag duplicate (Transform Again copy flag). */
       copied: boolean;
+      /**
+       * Unit under the pointer that was ALREADY selected at press time —
+       * a no-move plain click on it marks/unmarks the align key object.
+       */
+      reclickedUnitId: string | null;
       /** Final applied delta including snapping (Transform Again record). */
       appliedDx: number;
       appliedDy: number;
@@ -604,6 +610,7 @@ export function CanvasStage() {
 
   const document = useDocument();
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
+  const keyObjectId = useEditorStore((state) => state.keyObjectId);
   const camera = useEditorStore((state) => state.camera);
   const tool = useEditorStore((state) => state.tool);
   const setTool = useEditorStore((state) => state.setTool);
@@ -681,6 +688,7 @@ export function CanvasStage() {
       document: sceneDocument,
       camera: state.camera,
       selectedNodeIds: edit || sb ? [] : state.selectedNodeIds,
+      keyObjectId: edit || sb ? null : state.keyObjectId,
       hoveredNodeId: edit || pen || sb ? null : hoverRef.current,
       hiddenNodeId: editingTextRef.current,
       marquee: drag?.kind === "marquee" ? drag.current : null,
@@ -790,7 +798,7 @@ export function CanvasStage() {
   // Push scene whenever document / camera / selection change.
   useEffect(() => {
     syncScene();
-  }, [document, camera, selectedNodeIds, syncScene]);
+  }, [document, camera, selectedNodeIds, keyObjectId, syncScene]);
 
   // Space bar toggles temporary pan mode.
   useEffect(() => {
@@ -2166,6 +2174,8 @@ export function CanvasStage() {
       patches: [],
       moved: false,
       copied,
+      reclickedUnitId:
+        alreadySelected && !event.shiftKey && !event.altKey ? unitId : null,
       appliedDx: 0,
       appliedDy: 0,
       snapTargets: collectSnapTargets(excluded),
@@ -2909,7 +2919,15 @@ export function CanvasStage() {
       drag.moved &&
       drag.patches.length > 0
     ) {
-      documentStore.apply({ type: "update-nodes", updates: drag.patches });
+      // Pixel snap is a commit-time concern: previews stay fluid, the
+      // history entry gets whole-pixel geometry.
+      const updates = useEditorStore.getState().pixelSnap
+        ? drag.patches.map(({ nodeId, patch }) => ({
+            nodeId,
+            patch: pixelSnapPatch(patch),
+          }))
+        : drag.patches;
+      documentStore.apply({ type: "update-nodes", updates });
 
       if (drag.kind === "move") {
         recordTransform({
@@ -2936,6 +2954,19 @@ export function CanvasStage() {
       }
     } else if (drag.kind === "move" || drag.kind === "resize") {
       documentStore.cancelPreview();
+
+      // Plain re-click (no drag) on a member of a multi-selection marks
+      // it as the align key object; re-clicking the key unmarks it.
+      if (drag.kind === "move" && drag.reclickedUnitId) {
+        const state = useEditorStore.getState();
+        if (state.selectedNodeIds.length > 1) {
+          state.setKeyObjectId(
+            state.keyObjectId === drag.reclickedUnitId
+              ? null
+              : drag.reclickedUnitId,
+          );
+        }
+      }
     }
 
     // Drop any lingering smart guides.

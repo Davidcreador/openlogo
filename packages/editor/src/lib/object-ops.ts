@@ -6,6 +6,7 @@ import {
   type PathNode,
   collectLeafNodeIds,
   createId,
+  distributeSpacingOffsets,
   findContainerId,
   getActiveArtboard,
   getContainerChildIds,
@@ -82,22 +83,34 @@ function translateUnit(
 /**
  * Align units. Multi-selection aligns within the selection bounds;
  * single selection aligns to the artboard (Illustrator's "align to
- * artboard" behaviour, which is what logo centring needs).
+ * artboard" behaviour, which is what logo centring needs). With a key
+ * object (`keyId` — a member of the selection marked by clicking it
+ * again) everything aligns to the key's bounds and the key stays put.
  */
-export function alignNodes(nodeIds: readonly string[], edge: AlignEdge): void {
+export function alignNodes(
+  nodeIds: readonly string[],
+  edge: AlignEdge,
+  keyId?: string | null,
+): void {
   const document = documentStore.document;
   const units = selectedUnits(nodeIds);
   if (units.length === 0) {
     return;
   }
 
+  const keyUnit =
+    units.length > 1 ? units.find((unit) => unit.id === keyId) : undefined;
   const artboard = getActiveArtboard(document);
-  const reference =
-    units.length > 1
+  const reference = keyUnit
+    ? keyUnit.bounds
+    : units.length > 1
       ? unionBounds(units)!
       : { x: 0, y: 0, width: artboard.width, height: artboard.height };
 
-  const updates = units.flatMap((unit) => {
+  const movable = keyUnit
+    ? units.filter((unit) => unit.id !== keyUnit.id)
+    : units;
+  const updates = movable.flatMap((unit) => {
     let dx = 0;
     let dy = 0;
     switch (edge) {
@@ -169,6 +182,28 @@ export function distributeNodes(
     return translateUnit(document, unit.id, dx, dy);
   });
 
+  if (updates.length > 0) {
+    documentStore.apply({ type: "update-nodes", updates });
+  }
+}
+
+/**
+ * Distribute with an exact pixel gap between neighbouring units
+ * (Illustrator "distribute spacing" with a value). The key object — or
+ * the first unit along the axis — anchors and the rest chain off it.
+ */
+export function distributeNodesSpacing(
+  nodeIds: readonly string[],
+  axis: "horizontal" | "vertical",
+  spacing: number,
+  keyId?: string | null,
+): void {
+  const document = documentStore.document;
+  const units = selectedUnits(nodeIds);
+  const offsets = distributeSpacingOffsets(units, axis, spacing, keyId);
+  const updates = offsets.flatMap((offset) =>
+    translateUnit(document, offset.id, offset.dx, offset.dy),
+  );
   if (updates.length > 0) {
     documentStore.apply({ type: "update-nodes", updates });
   }

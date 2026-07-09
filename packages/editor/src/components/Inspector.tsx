@@ -64,6 +64,7 @@ import {
 import {
   alignNodes,
   distributeNodes,
+  distributeNodesSpacing,
   expandStrokeOp,
   flipNodes,
   rotateCopies,
@@ -229,6 +230,22 @@ function AlignPanel({ nodeIds }: { nodeIds: readonly string[] }) {
   const setTransformDialogOpen = useEditorStore(
     (state) => state.setTransformDialogOpen,
   );
+  // Key object (clicked again on canvas): align targets it, spacing
+  // anchors on it. Only honoured while it's part of this selection.
+  const keyObjectId = useEditorStore((state) => state.keyObjectId);
+  const keyId =
+    keyObjectId && nodeIds.length > 1 && nodeIds.includes(keyObjectId)
+      ? keyObjectId
+      : null;
+  const [spacingDraft, setSpacingDraft] = useState("20");
+  const canSpace = nodeIds.length >= 2;
+
+  function distributeSpacing(axis: "horizontal" | "vertical") {
+    const spacing = Number(spacingDraft);
+    if (Number.isFinite(spacing)) {
+      distributeNodesSpacing(nodeIds, axis, spacing, keyId);
+    }
+  }
 
   const alignButtons = [
     { edge: "left", icon: AlignStartVertical, label: "Align left" },
@@ -243,8 +260,9 @@ function AlignPanel({ nodeIds }: { nodeIds: readonly string[] }) {
     "grid h-24 place-items-center rounded-[5px] text-ink-dim transition-[background-color,color,box-shadow] duration-120 ease-studio hover:enabled:bg-card hover:enabled:text-ink hover:enabled:shadow-[0_1px_2px_rgb(28_25_33/0.1)] disabled:cursor-default disabled:opacity-35";
 
   return (
+    <>
     <div
-      className="mb-10 grid grid-cols-5 gap-2 rounded-m border border-field-border bg-field p-3"
+      className="mb-6 grid grid-cols-5 gap-2 rounded-m border border-field-border bg-field p-3"
       role="group"
       aria-label="Align and distribute"
     >
@@ -253,9 +271,9 @@ function AlignPanel({ nodeIds }: { nodeIds: readonly string[] }) {
           key={edge}
           type="button"
           className={button}
-          title={label}
+          title={keyId ? `${label} (to key object)` : label}
           aria-label={label}
-          onClick={() => alignNodes(nodeIds, edge)}
+          onClick={() => alignNodes(nodeIds, edge, keyId)}
         >
           <Icon size={14} />
         </button>
@@ -308,6 +326,42 @@ function AlignPanel({ nodeIds }: { nodeIds: readonly string[] }) {
         <RotateCw size={14} />
       </button>
     </div>
+    <div
+      className="mb-10 flex items-center gap-4 rounded-m border border-field-border bg-field p-3"
+      role="group"
+      aria-label="Distribute spacing"
+    >
+      <input
+        type="number"
+        className="h-24 w-52 min-w-0 rounded-[5px] border border-field-border bg-card px-6 text-[11.5px] tabular-nums text-ink outline-none focus:border-accent"
+        value={spacingDraft}
+        onChange={(event) => setSpacingDraft(event.target.value)}
+        aria-label="Distribution spacing"
+        title="Gap between objects, px"
+      />
+      <span className="text-[10px] text-ink-dim">px</span>
+      <button
+        type="button"
+        className={`${button} h-24 flex-1`}
+        title={`Distribute horizontal spacing${keyId ? " (anchor: key object)" : ""}`}
+        aria-label="Distribute horizontal spacing"
+        disabled={!canSpace}
+        onClick={() => distributeSpacing("horizontal")}
+      >
+        <AlignHorizontalSpaceBetween size={13} />
+      </button>
+      <button
+        type="button"
+        className={`${button} h-24 flex-1`}
+        title={`Distribute vertical spacing${keyId ? " (anchor: key object)" : ""}`}
+        aria-label="Distribute vertical spacing"
+        disabled={!canSpace}
+        onClick={() => distributeSpacing("vertical")}
+      >
+        <AlignVerticalSpaceBetween size={13} />
+      </button>
+    </div>
+    </>
   );
 }
 

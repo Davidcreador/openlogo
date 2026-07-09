@@ -44,6 +44,8 @@ export type Scene = {
   document: LogoDocument;
   camera: Camera;
   selectedNodeIds: readonly string[];
+  /** Align key object within a multi-selection; drawn with an accent ring. */
+  keyObjectId?: string | null;
   /** Node under the cursor (select tool, not selected, not dragging). */
   hoveredNodeId?: string | null;
   /** Node temporarily not drawn (e.g. behind an inline text editor). */
@@ -1436,6 +1438,35 @@ export class SceneRenderer {
     );
     dash.delete();
     outline.delete();
+
+    // Align key object: a solid, heavier accent ring around its own
+    // bounds so the align/distribute target reads against the dashed
+    // shared frame. Multi-selections only (frame rotation is 0 there).
+    if (
+      selectedNodeIds.length > 1 &&
+      scene.keyObjectId &&
+      selectedNodeIds.includes(scene.keyObjectId)
+    ) {
+      const keyBounds = unitBounds(document, scene.keyObjectId);
+      if (keyBounds) {
+        const ring = new ck.Paint();
+        ring.setStyle(ck.PaintStyle.Stroke);
+        ring.setStrokeWidth(2.5 / camera.zoom);
+        ring.setColor(ck.parseColorString(SELECTION_COLOR));
+        ring.setAntiAlias(true);
+        const pad = 2 / camera.zoom;
+        canvas.drawRect(
+          ck.XYWHRect(
+            keyBounds.x - pad,
+            keyBounds.y - pad,
+            keyBounds.width + pad * 2,
+            keyBounds.height + pad * 2,
+          ),
+          ring,
+        );
+        ring.delete();
+      }
+    }
 
     // Rotate handle: a lollipop above the frame's top edge.
     const stemTop = {

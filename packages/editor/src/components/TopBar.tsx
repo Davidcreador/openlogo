@@ -6,8 +6,11 @@ import {
   ChevronUp,
   Copy,
   Download,
+  FolderOpen,
+  Magnet,
   Pencil,
   Plus,
+  Save,
   Upload,
   Redo2,
   SquaresExclude,
@@ -28,10 +31,9 @@ import {
 import { type BooleanOp, fitBounds } from "@openlogo/renderer";
 import { applyBooleanOp, combinableNodes } from "../lib/boolean-ops";
 import {
-  documentToSvg,
-  downloadPngFromSvg,
-  downloadTextFile,
-} from "../lib/export";
+  openDocumentFileWithToast,
+  saveDocumentFile,
+} from "../lib/document-file";
 import { exportPack } from "../lib/export-pack";
 import { importSvg } from "../lib/svg-import";
 import { documentStore, useDocument } from "../state/document";
@@ -484,11 +486,11 @@ function ArtboardMenu() {
 }
 
 function ExportMenu() {
-  const document = useDocument();
   const [open, setOpen] = useState(false);
   const ref = useClickOutside(() => setOpen(false));
-  const artboard = getActiveArtboard(document);
-  const baseName = artboard.name.toLowerCase().replaceAll(" ", "-");
+  const setExportDialogOpen = useEditorStore(
+    (state) => state.setExportDialogOpen,
+  );
 
   return (
     <div className="menu-anchor relative" ref={ref}>
@@ -509,32 +511,12 @@ function ExportMenu() {
             type="button"
             className="menu-item"
             onClick={() => {
-              downloadTextFile(
-                documentToSvg(documentStore.document),
-                `${baseName}.svg`,
-                "image/svg+xml",
-              );
+              setExportDialogOpen(true);
               setOpen(false);
             }}
           >
-            <span className="menu-label">SVG (vector)</span>
-          </button>
-          <button
-            type="button"
-            className="menu-item"
-            onClick={() => {
-              void Effect.runPromise(
-                downloadPngFromSvg(
-                  documentToSvg(documentStore.document),
-                  `${baseName}@2x.png`,
-                  artboard.width,
-                  artboard.height,
-                ),
-              );
-              setOpen(false);
-            }}
-          >
-            <span className="menu-label">PNG (2×)</span>
+            <span className="menu-label">Export…</span>
+            <small>boards · svg · png · ico</small>
           </button>
           <div className="menu-divider" />
           <button
@@ -558,6 +540,8 @@ export function TopBar() {
   useDocument(); // re-render on history/name changes
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   const setSelection = useEditorStore((state) => state.setSelection);
+  const pixelSnap = useEditorStore((state) => state.pixelSnap);
+  const setPixelSnap = useEditorStore((state) => state.setPixelSnap);
   const canCombine = combinableNodes(selectedNodeIds).length >= 2;
 
   async function runBoolean(op: BooleanOp) {
@@ -576,6 +560,7 @@ export function TopBar() {
   }
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const openInputRef = useRef<HTMLInputElement | null>(null);
 
   async function handleImportFile(
     event: React.ChangeEvent<HTMLInputElement>,
@@ -588,6 +573,14 @@ export function TopBar() {
     const ids = await Effect.runPromise(importSvg(await file.text()));
     if (ids.length > 0) {
       setSelection(ids);
+    }
+  }
+
+  function handleOpenFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) {
+      openDocumentFileWithToast(file);
     }
   }
 
@@ -669,7 +662,45 @@ export function TopBar() {
         >
           <Trash2 size={16} />
         </button>
+        <button
+          type="button"
+          className={`${ICON_BUTTON}${
+            pixelSnap ? " bg-chrome-raised !text-accent" : ""
+          }`}
+          onClick={() => setPixelSnap(!pixelSnap)}
+          title="Pixel snap: round committed positions and sizes to whole pixels"
+          aria-label="Pixel snap"
+          aria-pressed={pixelSnap}
+        >
+          <Magnet size={16} />
+        </button>
         <div className="mx-4 h-20 w-px bg-chrome-border" />
+        <button
+          type="button"
+          className={ICON_BUTTON}
+          onClick={() => openInputRef.current?.click()}
+          title="Open .openlogo document (⌘O)"
+          aria-label="Open document"
+        >
+          <FolderOpen size={16} />
+        </button>
+        <input
+          ref={openInputRef}
+          type="file"
+          accept=".openlogo,application/json"
+          style={{ display: "none" }}
+          data-testid="open-document-input"
+          onChange={handleOpenFile}
+        />
+        <button
+          type="button"
+          className={ICON_BUTTON}
+          onClick={saveDocumentFile}
+          title="Save as .openlogo (⌘S)"
+          aria-label="Save document"
+        >
+          <Save size={16} />
+        </button>
         <button
           type="button"
           className={ICON_BUTTON}

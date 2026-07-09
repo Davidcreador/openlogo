@@ -12,4 +12,5 @@ export * from "./schema";
 export * from "./gradient";
 export * from "./typography";
 export * from "./snapping";
+export * from "./precision";
 export * from "./review";

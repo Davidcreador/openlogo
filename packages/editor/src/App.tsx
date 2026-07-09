@@ -1,8 +1,10 @@
 import { useEffect } from "react";
 import { Effect } from "effect";
 import { CanvasStage } from "./canvas/CanvasStage";
+import { ExportDialog } from "./components/ExportDialog";
 import { Inspector } from "./components/Inspector";
 import { PreviewStrip } from "./components/PreviewStrip";
+import { Toast } from "./components/Toast";
 import { Toolbar } from "./components/Toolbar";
 import { TopBar } from "./components/TopBar";
 import { ZoomControls } from "./components/ZoomControls";
@@ -12,9 +14,17 @@ import {
   getActiveArtboard,
   getContainerChildIds,
   getParentGroupId,
+  pixelSnapPatch,
 } from "@openlogo/core";
 import { fitBounds, zoomAt } from "@openlogo/renderer";
 import { copyNodes, cutNodes, pasteNodes } from "./lib/clipboard";
+import {
+  OPENLOGO_EXTENSION,
+  copyAsSvg,
+  openDocumentFileWithToast,
+  promptOpenDocument,
+  saveDocumentFile,
+} from "./lib/document-file";
 import { joinSelectedPaths } from "./lib/path-surgery";
 import { recordTransform, transformAgain } from "./lib/transform-again";
 import { TransformDialog } from "./components/TransformDialog";
@@ -107,9 +117,29 @@ export default function App() {
       if (event.metaKey || event.ctrlKey) {
         const selection = state.selectedNodeIds;
 
+        // ⇧⌘C = OS clipboard "Copy as SVG" (selection, else active board).
+        // Checked before plain ⌘C, which stays the internal node copy.
+        if (key === "c" && event.shiftKey) {
+          event.preventDefault();
+          void copyAsSvg();
+          return;
+        }
+
         if (key === "c" && selection.length > 0) {
           event.preventDefault();
           copyNodes(selection);
+          return;
+        }
+
+        // ⌘S = save as .openlogo, ⌘O = open one (browser defaults eaten).
+        if (key === "s") {
+          event.preventDefault();
+          saveDocumentFile();
+          return;
+        }
+        if (key === "o") {
+          event.preventDefault();
+          promptOpenDocument();
           return;
         }
 
@@ -294,6 +324,9 @@ export default function App() {
         const step = event.shiftKey ? 10 : 1;
         const dx = key === "arrowleft" ? -step : key === "arrowright" ? step : 0;
         const dy = key === "arrowup" ? -step : key === "arrowdown" ? step : 0;
+        const snap = state.pixelSnap
+          ? pixelSnapPatch
+          : (patch: { x: number; y: number }) => patch;
         documentStore.apply({
           type: "update-nodes",
           updates: collectLeafNodeIds(
@@ -303,7 +336,7 @@ export default function App() {
             .map((nodeId) => {
               const node = documentStore.document.nodes[nodeId];
               return node && !node.locked
-                ? { nodeId, patch: { x: node.x + dx, y: node.y + dy } }
+                ? { nodeId, patch: snap({ x: node.x + dx, y: node.y + dy }) }
                 : null;
             })
             .filter(
@@ -335,6 +368,29 @@ export default function App() {
         <section
           className="canvas-area relative min-h-0 min-w-0"
           aria-label="Logo canvas workspace"
+          onDragOver={(event) => {
+            // Claim file drags so the browser doesn't navigate away.
+            if (event.dataTransfer.types.includes("Files")) {
+              event.preventDefault();
+            }
+          }}
+          onDrop={(event) => {
+            const files = Array.from(event.dataTransfer.files);
+            if (files.length === 0) {
+              return;
+            }
+            event.preventDefault();
+            const doc = files.find((file) =>
+              file.name.toLowerCase().endsWith(OPENLOGO_EXTENSION),
+            );
+            if (doc) {
+              openDocumentFileWithToast(doc);
+            } else {
+              useEditorStore
+                .getState()
+                .setToast("Drop a .openlogo file to open it.");
+            }
+          }}
         >
           <CanvasStage />
           <ZoomControls />
@@ -343,6 +399,8 @@ export default function App() {
         <Inspector />
       </div>
       <TransformDialog />
+      <ExportDialog />
+      <Toast />
     </main>
   );
 }

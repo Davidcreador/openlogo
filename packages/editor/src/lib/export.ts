@@ -377,9 +377,15 @@ function renderTree(
   return renderNode(document, node, defs);
 }
 
+export type SvgExportOptions = {
+  /** Skip the artboard background rect (transparent PNG/SVG exports). */
+  transparentBackground?: boolean;
+};
+
 export function documentToSvg(
   document: LogoDocument,
   artboard: Artboard = getActiveArtboard(document),
+  options: SvgExportOptions = {},
 ): string {
   const defs: string[] = [];
   const body = artboard.nodeIds
@@ -387,13 +393,75 @@ export function documentToSvg(
     .filter(Boolean)
     .join("\n  ");
   const defsBlock = defs.length > 0 ? `\n  <defs>${defs.join("")}</defs>` : "";
+  const background = options.transparentBackground
+    ? ""
+    : `\n  <rect width="100%" height="100%" fill="${artboard.background}" />`;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${artboard.width}" height="${artboard.height}" viewBox="0 0 ${artboard.width} ${artboard.height}" role="img" aria-label="${escapeXml(
     artboard.name,
-  )}">${defsBlock}
-  <rect width="100%" height="100%" fill="${artboard.background}" />
+  )}">${defsBlock}${background}
   ${body}
 </svg>`;
+}
+
+/**
+ * Standalone SVG of just the given selection units (no artboard
+ * background): viewBox hugs the union of their bounds. Used by the
+ * export dialog's "selection" scope and OS copy-as-SVG.
+ */
+export function nodesToSvg(
+  document: LogoDocument,
+  nodeIds: readonly string[],
+): string | null {
+  const boxes = nodeIds
+    .map((id) => unitBounds(document, id))
+    .filter((bounds): bounds is NonNullable<typeof bounds> => bounds !== null);
+  if (boxes.length === 0) {
+    return null;
+  }
+  const minX = Math.min(...boxes.map((b) => b.x));
+  const minY = Math.min(...boxes.map((b) => b.y));
+  const width = Math.max(...boxes.map((b) => b.x + b.width)) - minX;
+  const height = Math.max(...boxes.map((b) => b.y + b.height)) - minY;
+  if (width <= 0 || height <= 0) {
+    return null;
+  }
+
+  const defs: string[] = [];
+  const body = nodeIds
+    .map((nodeId) => renderTree(document, nodeId, defs))
+    .filter(Boolean)
+    .join("\n  ");
+  if (!body) {
+    return null;
+  }
+  const defsBlock = defs.length > 0 ? `\n  <defs>${defs.join("")}</defs>` : "";
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${minX} ${minY} ${width} ${height}" role="img">${defsBlock}
+  ${body}
+</svg>`;
+}
+
+/**
+ * Cap decimal precision of numeric tokens in an SVG string. Only tokens
+ * inside quoted attribute values are touched — text content (a wordmark
+ * saying "v2.50") passes through verbatim. Integers (including
+ * gradient/filter ids) carry no decimal point and are untouched either
+ * way, so references can never corrupt.
+ */
+export function roundSvgNumbers(svg: string, digits: number): string {
+  const factor = 10 ** Math.max(0, Math.min(6, Math.round(digits)));
+  return svg.replace(/"[^"]*"/g, (attr) =>
+    attr.replace(/-?\d*\.\d+(?:e[-+]?\d+)?/gi, (token) => {
+      const rounded = Math.round(Number(token) * factor) / factor;
+      return Object.is(rounded, -0) ? "0" : String(rounded);
+    }),
+  );
+}
+
+/** Collapse inter-tag whitespace; markup and text content are untouched. */
+export function minifySvg(svg: string): string {
+  return svg.replace(/>\s+</g, "><").trim();
 }
 
 /**
@@ -455,23 +523,36 @@ export function downloadTextFile(
   URL.revokeObjectURL(url);
 }
 
+export function downloadBinaryFile(
+  bytes: Uint8Array,
+  filename: string,
+  mimeType: string,
+): void {
+  const blob = new Blob([bytes.buffer as ArrayBuffer], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = window.document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 /** PNG rasterization failure (SVG didn't render, or no 2D canvas). */
 export class ExportError extends Data.TaggedError("ExportError")<{
   readonly reason: string;
 }> {}
 
 /**
- * Rasterize an SVG string to a PNG download. The object URL is an acquired
- * resource: it is revoked on every exit path, including the image failing
- * to load (which previously leaked it).
+ * Rasterize an SVG string to a 2D canvas of width×height×scale device
+ * pixels. The object URL is an acquired resource: it is revoked on every
+ * exit path, including the image failing to load.
  */
-export const downloadPngFromSvg = (
+export const rasterizeSvg = (
   svg: string,
-  filename: string,
   width: number,
   height: number,
-  scale = 2,
-): Effect.Effect<void, ExportError> =>
+  scale: number,
+): Effect.Effect<HTMLCanvasElement, ExportError> =>
   Effect.acquireUseRelease(
     Effect.sync(() =>
       URL.createObjectURL(
@@ -493,8 +574,8 @@ export const downloadPngFromSvg = (
         });
 
         const canvas = window.document.createElement("canvas");
-        canvas.width = width * scale;
-        canvas.height = height * scale;
+        canvas.width = Math.max(1, Math.round(width * scale));
+        canvas.height = Math.max(1, Math.round(height * scale));
         const context = canvas.getContext("2d");
 
         if (!context) {
@@ -504,11 +585,109 @@ export const downloadPngFromSvg = (
         }
 
         context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        return canvas;
+      }),
+    (url) => Effect.sync(() => URL.revokeObjectURL(url)),
+  );
 
-        const anchor = window.document.createElement("a");
-        anchor.href = canvas.toDataURL("image/png");
-        anchor.download = filename;
-        anchor.click();
+/** Rasterize an SVG string to a PNG download. */
+export const downloadPngFromSvg = (
+  svg: string,
+  filename: string,
+  width: number,
+  height: number,
+  scale = 2,
+): Effect.Effect<void, ExportError> =>
+  rasterizeSvg(svg, width, height, scale).pipe(
+    Effect.map((canvas) => {
+      const anchor = window.document.createElement("a");
+      anchor.href = canvas.toDataURL("image/png");
+      anchor.download = filename;
+      anchor.click();
+    }),
+  );
+
+/** Encode a canvas to PNG bytes. */
+const canvasToPngBytes = (
+  canvas: HTMLCanvasElement,
+): Effect.Effect<Uint8Array, ExportError> =>
+  Effect.async<Uint8Array, ExportError>((resume) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        resume(
+          Effect.fail(new ExportError({ reason: "PNG encoding failed." })),
+        );
+        return;
+      }
+      void blob.arrayBuffer().then((buffer) => {
+        resume(Effect.succeed(new Uint8Array(buffer)));
+      });
+    }, "image/png");
+  });
+
+/** Rasterize an SVG string to encoded PNG bytes. */
+export const svgToPngBytes = (
+  svg: string,
+  width: number,
+  height: number,
+  scale: number,
+): Effect.Effect<Uint8Array, ExportError> =>
+  rasterizeSvg(svg, width, height, scale).pipe(
+    Effect.flatMap(canvasToPngBytes),
+  );
+
+/**
+ * Rasterize an SVG onto a transparent SQUARE size×size canvas,
+ * contain-fit and centred — the shape .ico entries need regardless of
+ * the artboard's aspect ratio.
+ */
+export const svgToSquarePngBytes = (
+  svg: string,
+  width: number,
+  height: number,
+  size: number,
+): Effect.Effect<Uint8Array, ExportError> =>
+  Effect.acquireUseRelease(
+    Effect.sync(() =>
+      URL.createObjectURL(
+        new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
+      ),
+    ),
+    (url) =>
+      Effect.gen(function* () {
+        const image = new Image();
+        yield* Effect.async<void, ExportError>((resume) => {
+          image.onload = () => resume(Effect.void);
+          image.onerror = () =>
+            resume(
+              Effect.fail(
+                new ExportError({ reason: "Unable to render SVG for export." }),
+              ),
+            );
+          image.src = url;
+        });
+
+        const canvas = window.document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const context = canvas.getContext("2d");
+        if (!context) {
+          return yield* Effect.fail(
+            new ExportError({ reason: "Canvas is unavailable in this browser." }),
+          );
+        }
+
+        const fit = size / Math.max(width, height);
+        const drawWidth = width * fit;
+        const drawHeight = height * fit;
+        context.drawImage(
+          image,
+          (size - drawWidth) / 2,
+          (size - drawHeight) / 2,
+          drawWidth,
+          drawHeight,
+        );
+        return yield* canvasToPngBytes(canvas);
       }),
     (url) => Effect.sync(() => URL.revokeObjectURL(url)),
   );
