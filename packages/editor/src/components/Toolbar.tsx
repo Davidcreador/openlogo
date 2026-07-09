@@ -1,5 +1,6 @@
 import {
   Circle,
+  Combine,
   MousePointer2,
   PenTool,
   Pipette,
@@ -21,6 +22,12 @@ const tools: Array<{
   { id: "pen", label: "Pen", shortcut: "P", icon: PenTool },
   { id: "path", label: "Starter mark", shortcut: "M", icon: Shapes },
   { id: "text", label: "Text", shortcut: "T", icon: Type },
+  {
+    id: "shapeBuilder",
+    label: "Shape builder (select 2+ shapes)",
+    shortcut: "S",
+    icon: Combine,
+  },
   { id: "eyedropper", label: "Eyedropper", shortcut: "I", icon: Pipette },
 ];
 

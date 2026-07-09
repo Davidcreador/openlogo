@@ -50,6 +50,14 @@ export type Scene = {
     geometry: PathGeometry;
     selected?: { subpath: number; index: number } | null;
   } | null;
+  /** Shape Builder overlay regions, artboard-local coordinates. */
+  shapeBuilder?: {
+    regions: ReadonlyArray<{
+      d: string;
+      state: "pending" | "merged" | "deleted";
+      hovered: boolean;
+    }>;
+  } | null;
 };
 
 const EDITOR_BACKGROUND = "#e8eaef";
@@ -236,6 +244,7 @@ export class SceneRenderer {
 
     this.drawRulerGuides(canvas, scene);
     this.drawHover(canvas, scene);
+    this.drawShapeBuilder(canvas, scene);
     this.drawSelection(canvas, scene);
     this.drawGuides(canvas, scene);
     this.drawPenPreview(canvas, scene);
@@ -287,15 +296,61 @@ export class SceneRenderer {
     canvas.clipRect(rect, ck.ClipOp.Intersect, true);
     canvas.translate(artboard.x, artboard.y);
 
-    // Flattened leaves in paint order; group opacity/visibility cascade
-    // is baked in by the query.
-    for (const node of getRenderNodesForArtboard(document, artboard.id)) {
-      if (node.visible && node.id !== this.scene?.hiddenNodeId) {
-        this.drawNode(canvas, node);
-      }
+    // Tree walk instead of the flattened render list: a group with a
+    // blend mode must composite its subtree as ONE layer against the
+    // backdrop (saveLayer), which per-leaf flattening cannot express.
+    // Opacity still cascades per-leaf, matching getRenderNodesForArtboard.
+    for (const nodeId of artboard.nodeIds) {
+      this.drawSubtree(canvas, document, nodeId, 1);
     }
 
     canvas.restore();
+  }
+
+  private drawSubtree(
+    canvas: Canvas,
+    document: LogoDocument,
+    nodeId: string,
+    opacity: number,
+  ): void {
+    const node = document.nodes[nodeId];
+    if (!node || !node.visible || node.id === this.scene?.hiddenNodeId) {
+      return;
+    }
+
+    if (node.type === "group") {
+      const layerPaint = node.blendMode ? new this.canvasKit.Paint() : null;
+      if (layerPaint && node.blendMode) {
+        layerPaint.setBlendMode(this.skBlendMode(node.blendMode));
+        canvas.saveLayer(layerPaint);
+      }
+      for (const childId of node.children) {
+        this.drawSubtree(canvas, document, childId, opacity * node.opacity);
+      }
+      if (layerPaint) {
+        canvas.restore();
+        layerPaint.delete();
+      }
+      return;
+    }
+
+    this.drawNode(
+      canvas,
+      opacity === 1
+        ? node
+        : ({ ...node, opacity: node.opacity * opacity } as LogoNode),
+    );
+  }
+
+  private skBlendMode(mode: NonNullable<LogoNode["blendMode"]>) {
+    const ck = this.canvasKit;
+    return {
+      multiply: ck.BlendMode.Multiply,
+      screen: ck.BlendMode.Screen,
+      overlay: ck.BlendMode.Overlay,
+      darken: ck.BlendMode.Darken,
+      lighten: ck.BlendMode.Lighten,
+    }[mode];
   }
 
   private drawNode(canvas: Canvas, node: LogoNode): void {
@@ -316,14 +371,7 @@ export class SceneRenderer {
 
     const fill = this.makePaint(node.fill, node, node.opacity);
     if (node.blendMode) {
-      const modes = {
-        multiply: ck.BlendMode.Multiply,
-        screen: ck.BlendMode.Screen,
-        overlay: ck.BlendMode.Overlay,
-        darken: ck.BlendMode.Darken,
-        lighten: ck.BlendMode.Lighten,
-      } as const;
-      fill.setBlendMode(modes[node.blendMode]);
+      fill.setBlendMode(this.skBlendMode(node.blendMode));
     }
 
     if (node.type === "rectangle") {
@@ -696,6 +744,55 @@ export class SceneRenderer {
     handleFill.delete();
     handleStroke.delete();
     canvas.restore();
+  }
+
+  private drawShapeBuilder(canvas: Canvas, scene: Scene): void {
+    const sb = scene.shapeBuilder;
+    if (!sb || sb.regions.length === 0) {
+      return;
+    }
+
+    const ck = this.canvasKit;
+    const zoom = scene.camera.zoom;
+
+    this.withActiveArtboard(canvas, scene, () => {
+      for (const region of sb.regions) {
+        const path = this.getPath(region.d);
+        if (!path) {
+          continue;
+        }
+
+        // Merged regions read blue, doomed ones red; hover adds weight.
+        const baseAlpha =
+          region.state === "merged"
+            ? 0.32
+            : region.state === "deleted"
+              ? 0.18
+              : 0;
+        const fillAlpha = region.hovered ? baseAlpha + 0.14 : baseAlpha;
+        if (fillAlpha > 0) {
+          const fill = new ck.Paint();
+          fill.setAntiAlias(true);
+          const color = ck.parseColorString(
+            region.state === "deleted" ? "#ef4444" : SELECTION_COLOR,
+          );
+          color[3] = fillAlpha;
+          fill.setColor(color);
+          canvas.drawPath(path, fill);
+          fill.delete();
+        }
+
+        const stroke = new ck.Paint();
+        stroke.setStyle(ck.PaintStyle.Stroke);
+        stroke.setAntiAlias(true);
+        stroke.setStrokeWidth((region.hovered ? 2 : 1) / zoom);
+        const strokeColor = ck.parseColorString(SELECTION_COLOR);
+        strokeColor[3] = region.hovered ? 1 : 0.55;
+        stroke.setColor(strokeColor);
+        canvas.drawPath(path, stroke);
+        stroke.delete();
+      }
+    });
   }
 
   private drawGuides(canvas: Canvas, scene: Scene): void {

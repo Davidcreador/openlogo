@@ -222,6 +222,149 @@ describe("group-aware delete/restore/insert/reorder", () => {
   });
 });
 
+describe("move-node", () => {
+  it("moves a top-level node into a group at the given index", () => {
+    const { grouped, group } = docWithGroup();
+    const loose = getActiveArtboard(grouped).nodeIds.find(
+      (id) => id !== group.id,
+    )!;
+
+    const { document: next, inverse } = applyCommand(grouped, {
+      type: "move-node",
+      nodeId: loose,
+      toContainerId: group.id,
+      toIndex: 1,
+    });
+
+    expect(getActiveArtboard(next).nodeIds).toEqual([group.id]);
+    expect((next.nodes[group.id] as GroupNode).children).toEqual([
+      group.children[0],
+      loose,
+      group.children[1],
+    ]);
+    expect(findContainerId(next, loose)).toBe(group.id);
+
+    const { document: reverted } = applyCommand(next, inverse);
+    expect(getActiveArtboard(reverted).nodeIds).toEqual(
+      getActiveArtboard(grouped).nodeIds,
+    );
+    expect((reverted.nodes[group.id] as GroupNode).children).toEqual(
+      group.children,
+    );
+  });
+
+  it("moves a group child out to the artboard and inverse restores it", () => {
+    const { grouped, group } = docWithGroup();
+    const child = group.children[0]!;
+
+    const { document: next, inverse } = applyCommand(grouped, {
+      type: "move-node",
+      nodeId: child,
+      toContainerId: grouped.activeArtboardId,
+      toIndex: 0,
+    });
+
+    expect(getActiveArtboard(next).nodeIds[0]).toBe(child);
+    expect((next.nodes[group.id] as GroupNode).children).toEqual([
+      group.children[1],
+    ]);
+    expect(findContainerId(next, child)).toBe(grouped.activeArtboardId);
+
+    const { document: reverted } = applyCommand(next, inverse);
+    expect(getActiveArtboard(reverted).nodeIds).toEqual(
+      getActiveArtboard(grouped).nodeIds,
+    );
+    expect((reverted.nodes[group.id] as GroupNode).children).toEqual(
+      group.children,
+    );
+  });
+
+  it("moves a whole group subtree between containers intact", () => {
+    const { grouped, group } = docWithGroup();
+    const artboard = getActiveArtboard(grouped);
+    const other = createGroup([artboard.nodeIds.find((id) => id !== group.id)!]);
+    const { document: nested } = applyCommand(grouped, {
+      type: "group-nodes",
+      containerId: artboard.id,
+      group: other,
+      index: 0,
+    });
+
+    const { document: next, inverse } = applyCommand(nested, {
+      type: "move-node",
+      nodeId: group.id,
+      toContainerId: other.id,
+      toIndex: 0,
+    });
+
+    expect(getActiveArtboard(next).nodeIds).toEqual([other.id]);
+    expect((next.nodes[other.id] as GroupNode).children[0]).toBe(group.id);
+    // Subtree untouched.
+    expect((next.nodes[group.id] as GroupNode).children).toEqual(
+      group.children,
+    );
+    expect(collectLeafNodeIds(next, [other.id])).toHaveLength(3);
+
+    const { document: reverted } = applyCommand(next, inverse);
+    expect(getActiveArtboard(reverted).nodeIds).toEqual(
+      getActiveArtboard(nested).nodeIds,
+    );
+  });
+
+  it("same-container move acts as a reorder with an exact inverse", () => {
+    const doc = createInitialDocument();
+    const before = getActiveArtboard(doc).nodeIds;
+
+    const { document: next, inverse } = applyCommand(doc, {
+      type: "move-node",
+      nodeId: before[0]!,
+      toContainerId: doc.activeArtboardId,
+      toIndex: 2,
+    });
+
+    expect(getActiveArtboard(next).nodeIds).toEqual([
+      before[1],
+      before[2],
+      before[0],
+    ]);
+
+    const { document: reverted } = applyCommand(next, inverse);
+    expect(getActiveArtboard(reverted).nodeIds).toEqual(before);
+  });
+
+  it("refuses to move a group into its own subtree", () => {
+    const { grouped, group } = docWithGroup();
+    const artboard = getActiveArtboard(grouped);
+    const outer = createGroup([...artboard.nodeIds]);
+    const { document: nested } = applyCommand(grouped, {
+      type: "group-nodes",
+      containerId: artboard.id,
+      group: outer,
+      index: 0,
+    });
+
+    const { document: next } = applyCommand(nested, {
+      type: "move-node",
+      nodeId: outer.id,
+      toContainerId: group.id,
+      toIndex: 0,
+    });
+
+    expect(next).toBe(nested);
+  });
+
+  it("is a no-op for a missing target container", () => {
+    const doc = createInitialDocument();
+    const { document: next } = applyCommand(doc, {
+      type: "move-node",
+      nodeId: getActiveArtboard(doc).nodeIds[0]!,
+      toContainerId: "nope",
+      toIndex: 0,
+    });
+    expect(next).toBe(doc);
+  });
+});
+
 describe("group queries", () => {
   it("unitBounds derives group bounds from children", () => {
     const { grouped, group } = docWithGroup();

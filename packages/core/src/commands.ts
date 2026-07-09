@@ -1,4 +1,5 @@
 import type { PathGeometry } from "./path-data";
+import { collectSubtreeIds, findContainerId } from "./queries";
 import type { Artboard, GroupNode, LogoDocument, LogoNode } from "./types";
 
 /**
@@ -89,6 +90,17 @@ export type Command =
       toIndex: number;
     }
   | {
+      type: "move-node";
+      /**
+       * Reparent a node (subtree rides along) to another container —
+       * artboard id or group id — at `toIndex` in its ordering. No-op
+       * when the target is missing or inside the node's own subtree.
+       */
+      nodeId: string;
+      toContainerId: string;
+      toIndex: number;
+    }
+  | {
       type: "group-nodes";
       /** Artboard id (top level) or parent group id holding the children. */
       containerId: string;
@@ -167,14 +179,14 @@ function patchNode(node: LogoNode, patch: NodePatch): LogoNode {
  * list to use.
  */
 function withContainerList(
-  document: LogoDocument,
+  artboards: Artboard[],
   nodes: Record<string, LogoNode>,
   containerId: string,
   list: string[],
 ): Artboard[] {
-  const artboard = document.artboards.find((item) => item.id === containerId);
+  const artboard = artboards.find((item) => item.id === containerId);
   if (artboard) {
-    return document.artboards.map((item) =>
+    return artboards.map((item) =>
       item.id === containerId ? { ...item, nodeIds: list } : item,
     );
   }
@@ -182,7 +194,7 @@ function withContainerList(
   if (container?.type === "group") {
     nodes[containerId] = { ...container, children: list };
   }
-  return document.artboards;
+  return artboards;
 }
 
 /** Ordered child list of a container, or null when it doesn't exist. */
@@ -229,7 +241,7 @@ export function applyCommand(
           : command.artboardId;
       const list = [...(containerListOf(document, containerId) ?? [])];
       list.splice(command.index ?? list.length, 0, ...rootIds);
-      const artboards = withContainerList(document, nodes, containerId, list);
+      const artboards = withContainerList(document.artboards, nodes, containerId, list);
 
       return {
         document: { ...document, nodes, artboards },
@@ -393,7 +405,7 @@ export function applyCommand(
 
       const nodes = { ...document.nodes };
       const artboards = withContainerList(
-        document,
+        document.artboards,
         nodes,
         command.containerId,
         next,
@@ -402,6 +414,66 @@ export function applyCommand(
       return {
         document: { ...document, nodes, artboards },
         inverse: { ...command, toIndex: fromIndex },
+      };
+    }
+
+    case "move-node": {
+      const node = document.nodes[command.nodeId];
+      const fromContainerId = findContainerId(document, command.nodeId);
+      const targetList = containerListOf(document, command.toContainerId);
+      if (
+        !node ||
+        !fromContainerId ||
+        !targetList ||
+        // A node cannot move into its own subtree.
+        collectSubtreeIds(document, command.nodeId).includes(
+          command.toContainerId,
+        )
+      ) {
+        return { document, inverse: command };
+      }
+
+      const fromList = containerListOf(document, fromContainerId)!;
+      const fromIndex = fromList.indexOf(command.nodeId);
+
+      const nodes = { ...document.nodes };
+      let artboards = document.artboards;
+
+      if (fromContainerId === command.toContainerId) {
+        // Same container: remove-then-splice, like reorder-node.
+        const next = fromList.filter((id) => id !== command.nodeId);
+        next.splice(Math.min(command.toIndex, next.length), 0, command.nodeId);
+        artboards = withContainerList(artboards, nodes, fromContainerId, next);
+      } else {
+        const sourceNext = fromList.filter((id) => id !== command.nodeId);
+        artboards = withContainerList(
+          artboards,
+          nodes,
+          fromContainerId,
+          sourceNext,
+        );
+        const targetNext = [...targetList];
+        targetNext.splice(
+          Math.min(command.toIndex, targetNext.length),
+          0,
+          command.nodeId,
+        );
+        artboards = withContainerList(
+          artboards,
+          nodes,
+          command.toContainerId,
+          targetNext,
+        );
+      }
+
+      return {
+        document: { ...document, nodes, artboards },
+        inverse: {
+          type: "move-node",
+          nodeId: command.nodeId,
+          toContainerId: fromContainerId,
+          toIndex: fromIndex,
+        },
       };
     }
 
@@ -424,7 +496,7 @@ export function applyCommand(
 
       const nodes = { ...document.nodes, [group.id]: group };
       const artboards = withContainerList(
-        document,
+        document.artboards,
         nodes,
         command.containerId,
         next,
@@ -482,7 +554,7 @@ export function applyCommand(
 
       const nodes = { ...document.nodes };
       delete nodes[group.id];
-      const artboards = withContainerList(document, nodes, containerId, next);
+      const artboards = withContainerList(document.artboards, nodes, containerId, next);
 
       return {
         document: { ...document, nodes, artboards },

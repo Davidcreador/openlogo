@@ -108,6 +108,151 @@ export function expandStroke(
   return { d, x: left, y: top, width, height };
 }
 
+export type RegionResult = {
+  /** Path data in the same (artboard-local) space as the input nodes. */
+  d: string;
+  bounds: { x: number; y: number; width: number; height: number };
+  /** Indices into the input nodes that cover this region, back-to-front. */
+  sources: number[];
+};
+
+const REGION_MIN_SIZE = 0.05;
+
+/**
+ * Planar decomposition of the nodes' filled areas into atomic regions
+ * (Illustrator Shape Builder): for every non-empty subset S of nodes,
+ * the region is (∩ S) − (∪ others). Exponential in operand count —
+ * callers cap it (see the editor's SHAPE_BUILDER_MAX_NODES).
+ */
+export function computeRegions(
+  ck: CanvasKit,
+  nodes: LogoNode[],
+): RegionResult[] {
+  const entries = nodes
+    .map((node, index) => ({ index, path: nodeToSkPath(ck, node) }))
+    .filter(
+      (entry): entry is { index: number; path: Path } => entry.path !== null,
+    );
+
+  const regions: RegionResult[] = [];
+
+  for (let mask = 1; mask < 1 << entries.length; mask += 1) {
+    let region: Path | null = null;
+    let failed = false;
+
+    // Intersect the included operands…
+    for (const [i, entry] of entries.entries()) {
+      if ((mask & (1 << i)) === 0) {
+        continue;
+      }
+      if (!region) {
+        region = entry.path.copy();
+        continue;
+      }
+      const next = ck.Path.MakeFromOp(region, entry.path, ck.PathOp.Intersect);
+      region.delete();
+      if (!next) {
+        failed = true;
+        break;
+      }
+      region = next;
+    }
+    if (failed || !region) {
+      continue;
+    }
+    if (region.isEmpty()) {
+      region.delete();
+      continue;
+    }
+
+    // …then subtract the excluded ones.
+    for (const [i, entry] of entries.entries()) {
+      if ((mask & (1 << i)) !== 0) {
+        continue;
+      }
+      const next = ck.Path.MakeFromOp(region, entry.path, ck.PathOp.Difference);
+      region.delete();
+      if (!next) {
+        failed = true;
+        break;
+      }
+      region = next;
+    }
+    if (failed) {
+      continue;
+    }
+    if (region.isEmpty()) {
+      region.delete();
+      continue;
+    }
+
+    const [left = 0, top = 0, right = 0, bottom = 0] =
+      region.computeTightBounds();
+    const width = right - left;
+    const height = bottom - top;
+    if (width < REGION_MIN_SIZE || height < REGION_MIN_SIZE) {
+      region.delete();
+      continue;
+    }
+
+    regions.push({
+      d: region.toSVGString(),
+      bounds: { x: left, y: top, width, height },
+      sources: entries
+        .filter((_, i) => (mask & (1 << i)) !== 0)
+        .map((entry) => entry.index),
+    });
+    region.delete();
+  }
+
+  for (const entry of entries) {
+    entry.path.delete();
+  }
+  return regions;
+}
+
+/**
+ * Union artboard-local path data strings into one node-ready path,
+ * normalised to start at (0,0) — same contract as combineNodes.
+ */
+export function unionPathData(
+  ck: CanvasKit,
+  ds: readonly string[],
+): CombineResult | null {
+  let result: Path | null = null;
+  for (const d of ds) {
+    const path = ck.Path.MakeFromSVGString(d);
+    if (!path) {
+      continue;
+    }
+    if (!result) {
+      result = path;
+      continue;
+    }
+    const combined = ck.Path.MakeFromOp(result, path, ck.PathOp.Union);
+    result.delete();
+    path.delete();
+    if (!combined) {
+      return null;
+    }
+    result = combined;
+  }
+  if (!result || result.isEmpty()) {
+    result?.delete();
+    return null;
+  }
+
+  const [left = 0, top = 0, right = 0, bottom = 0] =
+    result.computeTightBounds();
+  const width = Math.max(0.01, right - left);
+  const height = Math.max(0.01, bottom - top);
+  result.transform([1, 0, -left, 0, 1, -top, 0, 0, 1]);
+  const d = result.toSVGString();
+  result.delete();
+
+  return { d, x: left, y: top, width, height };
+}
+
 /**
  * Combine nodes with a Skia PathOp. Nodes must be in z-order
  * (back to front); `subtract` removes every later node from the first

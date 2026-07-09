@@ -9,7 +9,8 @@ export type Tool =
   | "path"
   | "pen"
   | "text"
-  | "eyedropper";
+  | "eyedropper"
+  | "shapeBuilder";
 
 type EditorState = {
   tool: Tool;

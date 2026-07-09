@@ -312,6 +312,22 @@ button {
   cursor: grab;
 }
 
+.canvas-hint {
+  position: absolute;
+  z-index: 20;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgb(15 23 42 / 0.82);
+  color: #e2e8f0;
+  font-size: 11.5px;
+  letter-spacing: 0.01em;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
 .text-edit-overlay {
   position: absolute;
   z-index: 20;

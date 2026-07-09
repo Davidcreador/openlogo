@@ -37,6 +37,8 @@ const TOOL_SHORTCUTS: Record<string, Tool> = {
   m: "path",
   t: "text",
   i: "eyedropper",
+  // Needs 2+ shapes selected; CanvasStage bounces back to select if not.
+  s: "shapeBuilder",
 };
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -81,6 +83,9 @@ export default function App() {
 
       if ((event.metaKey || event.ctrlKey) && key === "z") {
         event.preventDefault();
+        if (state.tool === "shapeBuilder") {
+          state.setTool("select"); // regions would go stale — cancel first
+        }
         if (event.shiftKey) {
           documentStore.redo();
         } else {
@@ -234,6 +239,10 @@ export default function App() {
       }
 
       if (key === "escape") {
+        // Shape Builder owns Escape (CanvasStage cancels the session).
+        if (state.tool === "shapeBuilder") {
+          return;
+        }
         // Step out of the active group scope one level, selecting it.
         if (state.activeGroupId) {
           const parent = getParentGroupId(

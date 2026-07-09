@@ -41,6 +41,13 @@ import {
   zoomAt,
 } from "@openlogo/renderer";
 import { cloneUnits, resolveUnit } from "../lib/group-ops";
+import {
+  type ShapeBuilderSession,
+  commitShapeBuilder,
+  createShapeBuilderSession,
+  disposeShapeBuilderSession,
+  hitShapeBuilderRegion,
+} from "../lib/shape-builder";
 import { documentStore, useDocument } from "../state/document";
 import { type Tool, useEditorStore } from "../state/editor-store";
 
@@ -355,12 +362,15 @@ export function CanvasStage() {
   const dragRef = useRef<DragState | null>(null);
   const penRef = useRef<PenSession | null>(null);
   const editRef = useRef<PathEditSession | null>(null);
+  const sbRef = useRef<ShapeBuilderSession | null>(null);
   const hoverRef = useRef<string | null>(null);
   const spaceRef = useRef(false);
   const editingTextRef = useRef<string | null>(null);
   const cameraFittedRef = useRef(false);
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  /** Transient status line (handle symmetry mode, shape builder help). */
+  const [handleHint, setHandleHint] = useState<string | null>(null);
 
   const document = useDocument();
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
@@ -404,11 +414,12 @@ export function CanvasStage() {
       };
     }
 
+    const sb = sbRef.current;
     renderer.setScene({
       document: sceneDocument,
       camera: state.camera,
-      selectedNodeIds: edit ? [] : state.selectedNodeIds,
-      hoveredNodeId: edit || pen ? null : hoverRef.current,
+      selectedNodeIds: edit || sb ? [] : state.selectedNodeIds,
+      hoveredNodeId: edit || pen || sb ? null : hoverRef.current,
       hiddenNodeId: editingTextRef.current,
       marquee: drag?.kind === "marquee" ? drag.current : null,
       guides:
@@ -416,6 +427,15 @@ export function CanvasStage() {
       penPreview: pen ? { points: pen.points, cursor: pen.cursor } : null,
       pathEdit: edit
         ? { geometry: edit.geometry, selected: edit.selected }
+        : null,
+      shapeBuilder: sb
+        ? {
+            regions: sb.regions.map((region) => ({
+              d: region.d,
+              state: region.state,
+              hovered: region.id === sb.hoveredId,
+            })),
+          }
         : null,
     });
   }, []);
@@ -528,6 +548,46 @@ export function CanvasStage() {
     }
   }, [tool, syncScene]);
 
+  // Shape Builder session: entering the tool decomposes the selection
+  // into regions; leaving (commit or cancel) disposes them.
+  useEffect(() => {
+    if (tool !== "shapeBuilder") {
+      return;
+    }
+
+    let cancelled = false;
+    const selection = useEditorStore.getState().selectedNodeIds;
+    void createShapeBuilderSession(selection).then((session) => {
+      if (cancelled) {
+        if (session) {
+          disposeShapeBuilderSession(session);
+        }
+        return;
+      }
+      if (!session) {
+        // Needs 2–8 overlapping fill shapes selected; bounce back.
+        useEditorStore.getState().setTool("select");
+        return;
+      }
+      sbRef.current = session;
+      hoverRef.current = null;
+      setHandleHint(
+        "Shape Builder: click = merge · ⌥ click = delete · Enter = apply · Esc = cancel",
+      );
+      syncScene();
+    });
+
+    return () => {
+      cancelled = true;
+      setHandleHint(null);
+      if (sbRef.current) {
+        disposeShapeBuilderSession(sbRef.current);
+        sbRef.current = null;
+        syncScene();
+      }
+    };
+  }, [tool, syncScene]);
+
   // Enter/Escape finish pen drawing and bezier editing.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -536,6 +596,26 @@ export function CanvasStage() {
         event.target instanceof HTMLTextAreaElement ||
         event.target instanceof HTMLSelectElement
       ) {
+        return;
+      }
+
+      if (sbRef.current) {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          const session = sbRef.current;
+          sbRef.current = null; // guards against a second Enter mid-commit
+          void commitShapeBuilder(session).then((newIds) => {
+            disposeShapeBuilderSession(session);
+            const state = useEditorStore.getState();
+            if (newIds) {
+              state.setSelection(newIds);
+            }
+            state.setTool("select");
+          });
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          useEditorStore.getState().setTool("select"); // cleanup disposes
+        }
         return;
       }
 
@@ -911,6 +991,26 @@ export function CanvasStage() {
       return;
     }
 
+    // Shape Builder captures clicks: merge or delete the hit region.
+    if (state.tool === "shapeBuilder") {
+      const sb = sbRef.current;
+      if (sb) {
+        const region = hitShapeBuilderRegion(sb, toArtboardLocal(screen));
+        if (region) {
+          if (event.altKey) {
+            region.state = "deleted";
+            region.mergeOrder = -1;
+          } else {
+            region.state = "merged";
+            region.mergeOrder = sb.nextMergeOrder;
+            sb.nextMergeOrder += 1;
+          }
+          syncScene();
+        }
+      }
+      return;
+    }
+
     if (state.tool === "pen") {
       let local = toArtboardLocal(screen);
 
@@ -1147,8 +1247,29 @@ export function CanvasStage() {
         }
       } else if (edit.drag.part === "in") {
         point.handleIn = { x: local.x, y: local.y };
+        // Mirrored (symmetric) by default; Alt breaks the pair apart.
+        if (!event.altKey && point.handleOut) {
+          point.handleOut = {
+            x: point.x * 2 - local.x,
+            y: point.y * 2 - local.y,
+          };
+        }
       } else {
         point.handleOut = { x: local.x, y: local.y };
+        if (!event.altKey && point.handleIn) {
+          point.handleIn = {
+            x: point.x * 2 - local.x,
+            y: point.y * 2 - local.y,
+          };
+        }
+      }
+
+      if (edit.drag.part !== "anchor") {
+        setHandleHint(
+          event.altKey
+            ? "Handles: broken (⌥)"
+            : "Handles: mirrored — hold ⌥ to break",
+        );
       }
 
       edit.changed = true;
@@ -1170,17 +1291,40 @@ export function CanvasStage() {
       const local = toArtboardLocal(screen);
 
       if (pen.dragging && event.buttons > 0) {
-        // Drag out symmetric handles for the last anchor.
+        // Drag out symmetric handles for the last anchor; Alt breaks the
+        // mirror and moves handleOut alone (same modifier as edit mode).
         const anchor = pen.points[pen.points.length - 1]!;
         anchor.handleOut = { x: local.x, y: local.y };
-        anchor.handleIn = {
-          x: anchor.x * 2 - local.x,
-          y: anchor.y * 2 - local.y,
-        };
+        if (!event.altKey) {
+          anchor.handleIn = {
+            x: anchor.x * 2 - local.x,
+            y: anchor.y * 2 - local.y,
+          };
+        }
+        setHandleHint(
+          event.altKey
+            ? "Handles: broken (⌥)"
+            : "Handles: mirrored — hold ⌥ to break",
+        );
       } else {
         pen.cursor = local;
       }
       syncScene();
+      return;
+    }
+
+    // Shape Builder hover: track the region under the cursor (pan via
+    // space/middle-drag falls through to the drag handling below).
+    if (state.tool === "shapeBuilder" && !dragRef.current) {
+      const sb = sbRef.current;
+      if (sb) {
+        const region = hitShapeBuilderRegion(sb, toArtboardLocal(screen));
+        const nextId = region ? region.id : null;
+        if (sb.hoveredId !== nextId) {
+          sb.hoveredId = nextId;
+          syncScene();
+        }
+      }
       return;
     }
 
@@ -1409,12 +1553,14 @@ export function CanvasStage() {
     const edit = editRef.current;
     if (edit) {
       edit.drag = null;
+      setHandleHint(null);
       return;
     }
 
     const pen = penRef.current;
     if (pen) {
       pen.dragging = false;
+      setHandleHint(null);
       return;
     }
 
@@ -1585,6 +1731,7 @@ export function CanvasStage() {
       {editingTextId && (
         <TextEditOverlay nodeId={editingTextId} onDone={finishTextEdit} />
       )}
+      {handleHint && <div className="canvas-hint">{handleHint}</div>}
       <div
         className="ruler ruler-top"
         style={{

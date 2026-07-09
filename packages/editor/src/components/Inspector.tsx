@@ -34,6 +34,7 @@ import {
   type NodePatch,
   analyzeLogoDocument,
   collectLeafNodeIds,
+  getContainerChildIds,
   unitBounds,
 } from "@openlogo/core";
 import {
@@ -43,6 +44,7 @@ import {
   nearestWeight,
 } from "../lib/font-store";
 import {
+  moveUnitToContainer,
   rotateUnitBy,
   setUnitBounds,
   ungroupSelection,
@@ -696,6 +698,39 @@ function GroupSection({ group }: { group: GroupNode }) {
         </div>
       </div>
 
+      {/* Blend mode lives on the group itself: the renderer composites
+          the whole subtree as one layer, not per child. */}
+      <div className="field-row" style={{ marginBottom: 10 }}>
+        <select
+          className="font-select"
+          value={group.blendMode ?? "normal"}
+          aria-label="Blend mode"
+          onChange={(event) =>
+            documentStore.apply({
+              type: "update-nodes",
+              updates: [
+                {
+                  nodeId: group.id,
+                  patch: {
+                    blendMode:
+                      event.target.value === "normal"
+                        ? undefined
+                        : (event.target.value as LogoNode["blendMode"]),
+                  },
+                },
+              ],
+            })
+          }
+        >
+          <option value="normal">Normal</option>
+          <option value="multiply">Multiply</option>
+          <option value="screen">Screen</option>
+          <option value="overlay">Overlay</option>
+          <option value="darken">Darken</option>
+          <option value="lighten">Lighten</option>
+        </select>
+      </div>
+
       <button
         type="button"
         className="outline-button"
@@ -816,9 +851,31 @@ function LayersSection() {
     const dragged = dragRef.current;
     dragRef.current = null;
     setDropRow(null);
-    // Reorder within one container only; cross-group moves go through
-    // group/ungroup for now.
-    if (!dragged || dragged.containerId !== target.containerId) {
+    if (!dragged || dragged.node.id === target.node.id) {
+      return;
+    }
+
+    // Dropping onto a group row nests into it, topmost in its stack;
+    // onto the group that already holds it, reorders to the top instead.
+    if (target.node.type === "group") {
+      const childIds = getContainerChildIds(document, target.node.id);
+      if (target.node.id === dragged.containerId) {
+        documentStore.apply({
+          type: "reorder-node",
+          containerId: dragged.containerId,
+          nodeId: dragged.node.id,
+          toIndex: childIds.length - 1,
+        });
+      } else {
+        moveUnitToContainer(dragged.node.id, target.node.id, childIds.length);
+      }
+      return;
+    }
+
+    // Dropping onto a row in another container moves it there (into or
+    // out of groups); within one container it stays a reorder.
+    if (dragged.containerId !== target.containerId) {
+      moveUnitToContainer(dragged.node.id, target.containerId, target.zIndex);
       return;
     }
     documentStore.apply({

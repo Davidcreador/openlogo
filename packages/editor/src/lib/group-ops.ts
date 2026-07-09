@@ -5,6 +5,7 @@ import {
   type LogoNode,
   type NodePatch,
   collectLeafNodeIds,
+  collectSubtreeIds,
   createGroup,
   createId,
   expandDeletionSet,
@@ -117,6 +118,65 @@ export function ungroupSelection(
   });
 
   return groups.flatMap((group) => group.children);
+}
+
+/**
+ * Layers-panel move: reparent a unit into another container (artboard
+ * top level or group), pruning any group chain the move leaves empty.
+ * One undoable entry. Returns false when the move is not possible.
+ */
+export function moveUnitToContainer(
+  nodeId: string,
+  toContainerId: string,
+  toIndex: number,
+): boolean {
+  const document = documentStore.document;
+  const node = documentStore.document.nodes[nodeId];
+  const fromContainerId = findContainerId(document, nodeId);
+  if (
+    !node ||
+    !fromContainerId ||
+    nodeId === toContainerId ||
+    collectSubtreeIds(document, nodeId).includes(toContainerId)
+  ) {
+    return false;
+  }
+
+  const move = {
+    type: "move-node" as const,
+    nodeId,
+    toContainerId,
+    toIndex,
+  };
+
+  // Groups emptied by the move (walking up from the source container,
+  // stopping at the destination — it gains the node and stays alive).
+  const doomed: string[] = [];
+  let current: string | null = fromContainerId;
+  let removedChildId = nodeId;
+  while (current && current !== toContainerId) {
+    const container = document.nodes[current];
+    if (
+      container?.type !== "group" ||
+      container.children.some((id) => id !== removedChildId)
+    ) {
+      break;
+    }
+    doomed.push(current);
+    removedChildId = current;
+    current = findContainerId(document, current);
+  }
+
+  documentStore.apply(
+    doomed.length > 0
+      ? {
+          type: "batch",
+          label: "Move layer",
+          commands: [move, { type: "delete-nodes", nodeIds: doomed }],
+        }
+      : move,
+  );
+  return true;
 }
 
 /** Delete units plus any groups the deletion empties, as one entry. */

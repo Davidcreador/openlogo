@@ -127,7 +127,12 @@ function renderTree(
       return "";
     }
     const opacity = node.opacity !== 1 ? ` opacity="${node.opacity}"` : "";
-    return `<g${opacity} data-name="${escapeXml(node.name)}">\n  ${inner}\n  </g>`;
+    // mix-blend-mode on a <g> blends the group as one unit against the
+    // backdrop — same semantics as the renderer's saveLayer.
+    const blend = node.blendMode
+      ? ` style="mix-blend-mode:${node.blendMode}"`
+      : "";
+    return `<g${opacity}${blend} data-name="${escapeXml(node.name)}">\n  ${inner}\n  </g>`;
   }
 
   return renderNode(node, defs);
