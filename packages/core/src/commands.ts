@@ -124,10 +124,19 @@ export type Command =
       type: "add-artboard";
       artboard: Artboard;
       nodes: LogoNode[];
+      /** Position in the artboard list; appends when omitted. */
+      index?: number;
+      /** Set false to keep the current active artboard (undo of remove). */
+      activate?: boolean;
     }
   | {
       type: "remove-artboard";
       artboardId: string;
+      /**
+       * Active artboard to fall back to when the removed one was active
+       * (set by add-artboard's inverse so undo restores it exactly).
+       */
+      restoreActiveArtboardId?: string;
     }
   | {
       type: "update-artboard";
@@ -568,47 +577,75 @@ export function applyCommand(
         nodes[node.id] = node;
       }
 
+      const artboards = [...document.artboards];
+      artboards.splice(
+        Math.min(command.index ?? artboards.length, artboards.length),
+        0,
+        command.artboard,
+      );
+
       return {
         document: {
           ...document,
           nodes,
-          artboards: [...document.artboards, command.artboard],
-          activeArtboardId: command.artboard.id,
+          artboards,
+          activeArtboardId:
+            command.activate === false
+              ? document.activeArtboardId
+              : command.artboard.id,
         },
-        inverse: { type: "remove-artboard", artboardId: command.artboard.id },
+        inverse: {
+          type: "remove-artboard",
+          artboardId: command.artboard.id,
+          restoreActiveArtboardId: document.activeArtboardId,
+        },
       };
     }
 
     case "remove-artboard": {
-      const artboard = document.artboards.find(
+      const index = document.artboards.findIndex(
         (item) => item.id === command.artboardId,
       );
+      const artboard = document.artboards[index];
 
       if (!artboard || document.artboards.length <= 1) {
         return { document, inverse: command };
       }
 
+      // Removing an artboard takes every node on it, whole subtrees
+      // included — otherwise grouped children linger as orphans.
       const nodes = { ...document.nodes };
       const removedNodes: LogoNode[] = [];
-      for (const nodeId of artboard.nodeIds) {
-        const node = nodes[nodeId];
-        if (node) {
-          removedNodes.push(node);
-          delete nodes[nodeId];
+      for (const rootId of artboard.nodeIds) {
+        for (const nodeId of collectSubtreeIds(document, rootId)) {
+          const node = nodes[nodeId];
+          if (node) {
+            removedNodes.push(node);
+            delete nodes[nodeId];
+          }
         }
       }
 
       const artboards = document.artboards.filter(
         (item) => item.id !== command.artboardId,
       );
-      const activeArtboardId =
-        document.activeArtboardId === command.artboardId
-          ? (artboards[0]?.id ?? document.activeArtboardId)
-          : document.activeArtboardId;
+      const wasActive = document.activeArtboardId === command.artboardId;
+      const restore = command.restoreActiveArtboardId;
+      const activeArtboardId = wasActive
+        ? restore && artboards.some((item) => item.id === restore)
+          ? restore
+          : (artboards[0]?.id ?? document.activeArtboardId)
+        : document.activeArtboardId;
 
       return {
         document: { ...document, nodes, artboards, activeArtboardId },
-        inverse: { type: "add-artboard", artboard, nodes: removedNodes },
+        inverse: {
+          type: "add-artboard",
+          artboard,
+          nodes: removedNodes,
+          index,
+          activate: wasActive,
+        },
       };
     }
 

@@ -122,11 +122,15 @@ export default function App() {
           return;
         }
 
-        if (key === "d" && selection.length > 0) {
+        if (key === "d") {
+          // Always consumed — otherwise an empty selection lets the
+          // browser open its bookmark dialog.
           event.preventDefault();
-          const cloned = duplicateNodes(selection);
-          if (cloned.length > 0) {
-            state.setSelection(cloned);
+          if (selection.length > 0) {
+            const cloned = duplicateNodes(selection);
+            if (cloned.length > 0) {
+              state.setSelection(cloned);
+            }
           }
           return;
         }

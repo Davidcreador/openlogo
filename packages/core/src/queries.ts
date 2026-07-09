@@ -69,8 +69,10 @@ export function getAncestorGroupIds(
 ): string[] {
   const map = getParentMap(document);
   const chain: string[] = [];
+  const seen = new Set<string>([nodeId]);
   let current = map.get(nodeId);
-  while (current) {
+  while (current && !seen.has(current)) {
+    seen.add(current);
     chain.unshift(current);
     current = map.get(current);
   }
@@ -116,11 +118,13 @@ export function collectSubtreeIds(
   nodeId: string,
 ): string[] {
   const out: string[] = [];
+  const seen = new Set<string>();
   const visit = (id: string) => {
     const node = document.nodes[id];
-    if (!node) {
+    if (!node || seen.has(id)) {
       return;
     }
+    seen.add(id);
     out.push(id);
     if (node.type === "group") {
       node.children.forEach(visit);
@@ -205,8 +209,16 @@ export function unitBounds(
   document: LogoDocument,
   nodeId: string,
 ): Bounds | null {
+  return unitBoundsGuarded(document, nodeId, new Set());
+}
+
+function unitBoundsGuarded(
+  document: LogoDocument,
+  nodeId: string,
+  visiting: Set<string>,
+): Bounds | null {
   const node = document.nodes[nodeId];
-  if (!node) {
+  if (!node || visiting.has(nodeId)) {
     return null;
   }
   if (node.type !== "group") {
@@ -223,11 +235,13 @@ export function unitBounds(
     return cached;
   }
 
+  visiting.add(nodeId);
   const bounds = boundsUnion(
     node.children
-      .map((childId) => unitBounds(document, childId))
+      .map((childId) => unitBoundsGuarded(document, childId, visiting))
       .filter((item): item is Bounds => item !== null),
   );
+  visiting.delete(nodeId);
   cache.set(nodeId, bounds);
   return bounds;
 }
@@ -266,12 +280,14 @@ export function getRenderNodesForArtboard(
 
   const artboard = document.artboards.find((item) => item.id === artboardId);
   const out: LogoNode[] = [];
+  const seen = new Set<string>();
 
   const visit = (id: string, opacity: number, locked: boolean) => {
     const node = document.nodes[id];
-    if (!node) {
+    if (!node || seen.has(id)) {
       return;
     }
+    seen.add(id);
     if (node.type === "group") {
       if (!node.visible) {
         return;

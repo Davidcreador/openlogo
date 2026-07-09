@@ -40,4 +40,10 @@ export class FontRegistry {
   get isEmpty(): boolean {
     return this.families.size === 0;
   }
+
+  /** Free the wasm-side provider and every typeface registered on it. */
+  dispose(): void {
+    this.provider.delete();
+    this.families.clear();
+  }
 }

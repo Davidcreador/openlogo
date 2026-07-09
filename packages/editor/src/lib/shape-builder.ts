@@ -1,6 +1,7 @@
 import type { Path } from "canvaskit-wasm";
 import {
   type Bounds,
+  type LogoDocument,
   type PathNode,
   type Vec2,
   collectLeafNodeIds,
@@ -37,6 +38,12 @@ export type ShapeBuilderRegion = {
 export type ShapeBuilderSession = {
   /** Operand leaf node ids, scene z-order (back to front). */
   nodeIds: string[];
+  /**
+   * Document snapshot the regions were computed from. Regions freeze the
+   * operands' geometry, so any commit against a different document would
+   * apply stale shapes — callers cancel the session when this drifts.
+   */
+  document: LogoDocument;
   regions: ShapeBuilderRegion[];
   hoveredId: number | null;
   nextMergeOrder: number;
@@ -49,6 +56,7 @@ export type ShapeBuilderSession = {
 export async function createShapeBuilderSession(
   selectedNodeIds: readonly string[],
 ): Promise<ShapeBuilderSession | null> {
+  const document = documentStore.document;
   const nodes = combinableNodes(selectedNodeIds);
   if (nodes.length < 2 || nodes.length > SHAPE_BUILDER_MAX_NODES) {
     return null;
@@ -81,6 +89,7 @@ export async function createShapeBuilderSession(
 
   return {
     nodeIds: nodes.map((node) => node.id),
+    document,
     regions: built,
     hoveredId: null,
     nextMergeOrder: 0,
@@ -119,8 +128,12 @@ export async function commitShapeBuilder(
   session: ShapeBuilderSession,
 ): Promise<string[] | null> {
   const document = documentStore.document;
-  // Stale session (e.g. document changed underneath): bail out safely.
-  if (session.nodeIds.some((id) => !document.nodes[id])) {
+  // Stale session (document changed underneath — regions no longer match
+  // the operands' geometry): bail out safely, treated as a cancel.
+  if (
+    document !== session.document ||
+    session.nodeIds.some((id) => !document.nodes[id])
+  ) {
     return null;
   }
 

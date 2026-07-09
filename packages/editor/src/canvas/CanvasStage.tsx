@@ -493,6 +493,9 @@ export function CanvasStage() {
       return;
     }
 
+    let observer: ResizeObserver | null = null;
+    let fontsForCleanup: FontRegistry | null = null;
+
     void (async () => {
       const canvasKit = await getCanvasKit();
       if (cancelled) {
@@ -500,6 +503,7 @@ export function CanvasStage() {
       }
 
       const fonts = new FontRegistry(canvasKit);
+      fontsForCleanup = fonts;
       try {
         const fontData = await (await fetch(FONT_URL)).arrayBuffer();
         fonts.register("Inter", fontData);
@@ -533,19 +537,19 @@ export function CanvasStage() {
         syncScene();
       };
 
-      const observer = new ResizeObserver(applySize);
+      observer = new ResizeObserver(applySize);
       observer.observe(container);
       applySize();
       setRendererReady(true);
-
-      return () => observer.disconnect();
     })();
 
     return () => {
       cancelled = true;
+      observer?.disconnect();
       fontStore.detach();
       rendererRef.current?.dispose();
       rendererRef.current = null;
+      fontsForCleanup?.dispose();
     };
   }, [syncScene, setRendererReady]);
 
@@ -581,11 +585,24 @@ export function CanvasStage() {
         syncScene();
       }
     }
+    function onBlur() {
+      // Keyups delivered to another app never reach us: drop every
+      // modifier-conditioned state so nothing sticks across ⌘-Tab.
+      spaceRef.current = false;
+      setSpaceHeld(false);
+      if (measureRef.current || hoverRef.current) {
+        measureRef.current = null;
+        hoverRef.current = null;
+        syncScene();
+      }
+    }
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
     };
   }, [syncScene]);
 
@@ -596,6 +613,15 @@ export function CanvasStage() {
       syncScene();
     }
   }, [tool, syncScene]);
+
+  // Switching tools commits an open bezier edit session — otherwise the
+  // stale session captures the new tool's first click.
+  useEffect(() => {
+    if (tool !== "select" && editRef.current) {
+      commitPathEdit();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tool]);
 
   // Shape Builder session: entering the tool decomposes the selection
   // into regions; leaving (commit or cancel) disposes them.
@@ -613,8 +639,12 @@ export function CanvasStage() {
         }
         return;
       }
-      if (!session) {
-        // Needs 2–8 overlapping fill shapes selected; bounce back.
+      // Needs 2–8 overlapping fill shapes, and the document must not have
+      // changed while the session was being built; bounce back otherwise.
+      if (!session || session.document !== documentStore.document) {
+        if (session) {
+          disposeShapeBuilderSession(session);
+        }
         useEditorStore.getState().setTool("select");
         return;
       }
@@ -626,8 +656,19 @@ export function CanvasStage() {
       syncScene();
     });
 
+    // Regions freeze the operands' geometry at session start. Any document
+    // change underneath (nudge, ⌘D, ⌘Z, a drag committing…) makes them
+    // stale, so it cancels the session instead of committing wrong shapes.
+    const unsubscribe = documentStore.subscribe(() => {
+      const session = sbRef.current;
+      if (session && documentStore.document !== session.document) {
+        useEditorStore.getState().setTool("select"); // cleanup disposes
+      }
+    });
+
     return () => {
       cancelled = true;
+      unsubscribe();
       setHandleHint(null);
       if (sbRef.current) {
         disposeShapeBuilderSession(sbRef.current);
@@ -637,7 +678,10 @@ export function CanvasStage() {
     };
   }, [tool, syncScene]);
 
-  // Enter/Escape finish pen drawing and bezier editing.
+  // Enter/Escape finish pen drawing and bezier editing. This handler is
+  // registered before App's window handler (child effects mount first) and
+  // marks consumed keys with stopImmediatePropagation so a key handled by
+  // a modal session never ALSO clears selection / pops group scope in App.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (
@@ -648,9 +692,47 @@ export function CanvasStage() {
         return;
       }
 
+      const consume = () => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      };
+
+      // Undo/redo while a gesture or edit session is in flight: abort the
+      // gesture first so the undo applies to a clean document and the
+      // still-held pointer can't re-commit pre-undo state (or wipe redo).
+      // Not consumed — App's handler performs the actual undo/redo.
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
+        if (editRef.current) {
+          cancelPathEdit();
+        }
+        cancelActiveDrag();
+        return;
+      }
+
+      if (dragRef.current) {
+        // Esc reverts the in-flight gesture instead of clearing selection.
+        if (event.key === "Escape") {
+          consume();
+          cancelActiveDrag();
+          return;
+        }
+        // Tool shortcuts (and delete) mid-gesture would strand the drag
+        // state and commit half-applied patches; swallow them.
+        if (
+          !event.metaKey &&
+          !event.ctrlKey &&
+          (/^[a-z]$/i.test(event.key) ||
+            event.key === "Backspace" ||
+            event.key === "Delete")
+        ) {
+          event.stopImmediatePropagation();
+          return;
+        }
+      }
+
       if (sbRef.current) {
         if (event.key === "Enter") {
-          event.preventDefault();
+          consume();
           const session = sbRef.current;
           sbRef.current = null; // guards against a second Enter mid-commit
           void commitShapeBuilder(session).then((newIds) => {
@@ -662,7 +744,7 @@ export function CanvasStage() {
             state.setTool("select");
           });
         } else if (event.key === "Escape") {
-          event.preventDefault();
+          consume();
           useEditorStore.getState().setTool("select"); // cleanup disposes
         }
         return;
@@ -670,9 +752,10 @@ export function CanvasStage() {
 
       if (penRef.current) {
         if (event.key === "Enter") {
-          event.preventDefault();
+          consume();
           finalizePen(false);
         } else if (event.key === "Escape") {
+          consume();
           cancelPen();
         }
         return;
@@ -681,9 +764,14 @@ export function CanvasStage() {
       if (editRef.current) {
         const edit = editRef.current;
 
-        if (event.key === "Enter" || event.key === "Escape") {
-          event.preventDefault();
+        if (event.key === "Enter") {
+          consume();
           commitPathEdit();
+          return;
+        }
+        if (event.key === "Escape") {
+          consume();
+          cancelPathEdit();
           return;
         }
 
@@ -845,7 +933,13 @@ export function CanvasStage() {
     editRef.current = null;
     setEditingPathId(null);
 
-    if (edit && edit.changed) {
+    // The node may be gone (undo popped its insert mid-edit): committing
+    // would push a no-op history entry and wipe the redo stack.
+    const nodeExists = edit
+      ? Boolean(documentStore.document.nodes[edit.nodeId])
+      : false;
+
+    if (edit && edit.changed && nodeExists) {
       const patch = patchFromLocalGeometry(edit.geometry);
       if (patch) {
         documentStore.apply({
@@ -857,10 +951,37 @@ export function CanvasStage() {
       documentStore.cancelPreview();
     }
 
-    if (edit) {
-      setSelection([edit.nodeId]);
-    }
+    setSelection(edit && nodeExists ? [edit.nodeId] : []);
     syncScene();
+  }
+
+  /** Esc during bezier editing: discard the changes, keep the node. */
+  function cancelPathEdit() {
+    const edit = editRef.current;
+    editRef.current = null;
+    setEditingPathId(null);
+    documentStore.cancelPreview();
+    setSelection(
+      edit && documentStore.document.nodes[edit.nodeId] ? [edit.nodeId] : [],
+    );
+    syncScene();
+  }
+
+  /**
+   * Abort an in-flight pointer gesture (move/resize/marquee/guide/pan)
+   * without committing anything — Esc mid-drag, or undo arriving while
+   * a gesture is live.
+   */
+  function cancelActiveDrag() {
+    const drag = dragRef.current;
+    if (!drag) {
+      return;
+    }
+    dragRef.current = null;
+    if (drag.kind === "move" || drag.kind === "resize") {
+      documentStore.cancelPreview();
+    }
+    syncScene(); // drops marquee/guide previews and snap/spacing overlays
   }
 
   function hitEditTarget(
@@ -1267,6 +1388,22 @@ export function CanvasStage() {
   function handlePointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
     const screen = getScreenPoint(event);
 
+    // Panning wins over every mode — space/middle-drag must work during
+    // pen and bezier-edit sessions too, and processing it first keeps the
+    // drag from being orphaned by those branches' early returns.
+    const panDrag = dragRef.current;
+    if (panDrag?.kind === "pan") {
+      const camera = useEditorStore.getState().camera;
+      setCamera(
+        panBy(camera, {
+          x: screen.x - panDrag.last.x,
+          y: screen.y - panDrag.last.y,
+        }),
+      );
+      panDrag.last = screen;
+      return;
+    }
+
     // Bezier edit mode.
     const edit = editRef.current;
     if (edit) {
@@ -1435,15 +1572,7 @@ export function CanvasStage() {
     }
 
     if (drag.kind === "pan") {
-      const camera = useEditorStore.getState().camera;
-      setCamera(
-        panBy(camera, {
-          x: screen.x - drag.last.x,
-          y: screen.y - drag.last.y,
-        }),
-      );
-      drag.last = screen;
-      return;
+      return; // handled at the top of this handler
     }
 
     if (drag.kind === "guide") {
@@ -1668,6 +1797,13 @@ export function CanvasStage() {
   }
 
   function handlePointerUp() {
+    // Pan first: the edit/pen early-returns below must never orphan a
+    // pan drag (a stale one would pan the camera on buttonless hover).
+    if (dragRef.current?.kind === "pan") {
+      dragRef.current = null;
+      return;
+    }
+
     if (dragRef.current?.kind === "guide") {
       commitGuideDrag();
       return;

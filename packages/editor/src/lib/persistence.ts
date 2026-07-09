@@ -37,17 +37,35 @@ export async function loadDocument(): Promise<LogoDocument | null> {
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
-  db.close();
 
   if (!data) {
+    db.close();
     return null;
   }
 
   try {
     return parseDocument(data);
   } catch (error) {
-    console.warn("Stored document failed validation; starting fresh.", error);
+    // Never destroy the user's data: the very next autosave overwrites
+    // CURRENT_KEY, so park the rejected payload under a backup key first.
+    const backupKey = `backup-${new Date().toISOString()}`;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        tx.objectStore(STORE_NAME).put(data, backupKey);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      console.warn(
+        `Stored document failed validation; it was preserved in IndexedDB ("${DB_NAME}" › "${STORE_NAME}" › "${backupKey}") and a fresh document was started.`,
+        error,
+      );
+    } catch (backupError) {
+      console.warn("Stored document failed validation AND could not be backed up.", error, backupError);
+    }
     return null;
+  } finally {
+    db.close();
   }
 }
 

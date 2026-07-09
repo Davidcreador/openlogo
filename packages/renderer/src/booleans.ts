@@ -287,6 +287,9 @@ export function combineNodes(
     result.delete();
     paths[i]!.delete();
     if (!combined) {
+      for (let j = i + 1; j < paths.length; j += 1) {
+        paths[j]!.delete();
+      }
       return null;
     }
     result = combined;

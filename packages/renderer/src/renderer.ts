@@ -111,7 +111,18 @@ export class SceneRenderer {
   }
 
   setScene(scene: Scene): void {
+    const documentChanged = this.scene?.document !== scene.document;
     this.scene = scene;
+    if (documentChanged) {
+      // Evict paragraphs whose text node no longer exists — the cache is
+      // keyed by node id and would otherwise grow for the whole session.
+      for (const [nodeId, entry] of this.paragraphCache) {
+        if (!scene.document.nodes[nodeId]) {
+          entry.paragraph.delete();
+          this.paragraphCache.delete(nodeId);
+        }
+      }
+    }
     this.invalidate();
   }
 
@@ -121,6 +132,9 @@ export class SceneRenderer {
 
   /** Resize backing store to CSS size * devicePixelRatio. */
   resize(cssWidth: number, cssHeight: number, dpr: number): void {
+    if (this.disposed) {
+      return;
+    }
     this.dpr = dpr;
     this.canvas.width = Math.max(1, Math.round(cssWidth * dpr));
     this.canvas.height = Math.max(1, Math.round(cssHeight * dpr));

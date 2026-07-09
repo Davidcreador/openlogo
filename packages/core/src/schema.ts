@@ -194,6 +194,62 @@ function migrateGroupIdTags(document: LogoDocument): LogoDocument {
   return { ...document, nodes, artboards };
 }
 
+/**
+ * Referential repair for structurally valid but inconsistent documents
+ * (hand-edited or corrupted storage, or bugs in older builds). Zod can't
+ * express these constraints, and the tree queries assume them:
+ *
+ * - activeArtboardId must name an existing artboard (else: first one)
+ * - container references to missing nodes are dropped
+ * - a node belongs to at most one container; later duplicate references
+ *   (including group cycles — a child pointing at an ancestor) are cut
+ * - nodes unreachable from any artboard are pruned from the table
+ */
+function sanitizeDocument(document: LogoDocument): LogoDocument {
+  const nodes: Record<string, LogoNode> = { ...document.nodes };
+  const claimed = new Set<string>();
+
+  const sanitizeChildren = (ids: readonly string[]): string[] => {
+    const kept: string[] = [];
+    for (const id of ids) {
+      if (!nodes[id] || claimed.has(id)) {
+        continue;
+      }
+      claimed.add(id);
+      kept.push(id);
+      const node = nodes[id]!;
+      if (node.type === "group") {
+        const children = sanitizeChildren(node.children);
+        if (children.length !== node.children.length) {
+          nodes[id] = { ...node, children };
+        }
+      }
+    }
+    return kept;
+  };
+
+  const artboards = document.artboards.map((artboard) => {
+    const nodeIds = sanitizeChildren(artboard.nodeIds);
+    return nodeIds.length === artboard.nodeIds.length
+      ? artboard
+      : { ...artboard, nodeIds };
+  });
+
+  for (const id of Object.keys(nodes)) {
+    if (!claimed.has(id)) {
+      delete nodes[id];
+    }
+  }
+
+  const activeArtboardId = artboards.some(
+    (item) => item.id === document.activeArtboardId,
+  )
+    ? document.activeArtboardId
+    : artboards[0]!.id;
+
+  return { ...document, nodes, artboards, activeArtboardId };
+}
+
 export function parseDocument(data: unknown): LogoDocument {
   const parsed = documentSchema.parse(data);
 
@@ -208,5 +264,5 @@ export function parseDocument(data: unknown): LogoDocument {
     document = migrateGroupIdTags(document);
   }
 
-  return { ...document, schemaVersion: DOCUMENT_SCHEMA_VERSION };
+  return sanitizeDocument({ ...document, schemaVersion: DOCUMENT_SCHEMA_VERSION });
 }

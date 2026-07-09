@@ -326,7 +326,8 @@ export function computeSpacingSnap(
     const l = left;
     const l2 = left2;
     const gap = l.lo - l2.hi;
-    if (gap > 0) {
+    // >= 0: rows of touching boxes extend too (gap 0 repeats as gap 0).
+    if (gap >= 0) {
       candidates.push({
         lo: l.hi + gap,
         gaps: (lo) => [
@@ -341,7 +342,7 @@ export function computeSpacingSnap(
     const r = right;
     const r2 = right2;
     const gap = r2.lo - r.hi;
-    if (gap > 0) {
+    if (gap >= 0) {
       candidates.push({
         lo: r.lo - gap - size,
         gaps: (lo) => [

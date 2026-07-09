@@ -199,15 +199,31 @@ export function cloneArtboardForVariant(
   const nodes: LogoNode[] = [];
   const nodeIds: string[] = [];
 
-  for (const nodeId of source.nodeIds) {
+  // Clone whole subtrees with fresh ids — a cloned group must reference
+  // cloned children, never the source artboard's nodes.
+  const cloneSubtree = (nodeId: string, seen: Set<string>): string | null => {
     const node = document.nodes[nodeId];
-    if (!node) {
-      continue;
+    if (!node || seen.has(nodeId)) {
+      return null;
     }
+    seen.add(nodeId);
     const clone: LogoNode = structuredClone(node);
-    clone.id = createId("node");
+    clone.id = createId(node.type === "group" ? "group" : "node");
+    if (clone.type === "group") {
+      clone.children = clone.children
+        .map((childId) => cloneSubtree(childId, seen))
+        .filter((id): id is string => id !== null);
+    }
     nodes.push(clone);
-    nodeIds.push(clone.id);
+    return clone.id;
+  };
+
+  const seen = new Set<string>();
+  for (const nodeId of source.nodeIds) {
+    const cloneId = cloneSubtree(nodeId, seen);
+    if (cloneId) {
+      nodeIds.push(cloneId);
+    }
   }
 
   const artboard = createArtboard(purpose, {
