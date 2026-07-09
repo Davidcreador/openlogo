@@ -40,10 +40,13 @@ import {
   type LogoDocument,
   type LogoNode,
   type NodePatch,
+  type Paint,
+  type Stroke,
   type TextNode,
   analyzeLogoDocument,
   collectLeafNodeIds,
   getContainerChildIds,
+  kernedPairCount,
   shapeDisplayName,
   shapeParamsPatch,
   unitBounds,
@@ -51,6 +54,7 @@ import {
 import { catalogEntry, nearestWeight } from "../lib/font-catalog";
 import { fontStore } from "../lib/font-store";
 import { FontPicker } from "./FontPicker";
+import { PaintEditor } from "./PaintEditor";
 import {
   moveUnitToContainer,
   rotateUnitBy,
@@ -64,6 +68,7 @@ import {
   flipNodes,
   rotateCopies,
 } from "../lib/object-ops";
+import { colorInfo } from "../lib/color-info";
 import { nodeToPreviewSvg } from "../lib/export";
 import { offsetPathOp } from "../lib/offset-path";
 import { editSwatch } from "../lib/swatches";
@@ -309,147 +314,35 @@ function AlignPanel({ nodeIds }: { nodeIds: readonly string[] }) {
 function FillEditor({
   node,
   patchSelection,
+  previewSelection,
 }: {
   node: LogoNode;
   patchSelection: (patch: NodePatch) => void;
+  previewSelection: (patch: NodePatch) => void;
 }) {
-  const isGradient = node.fill.type === "linear-gradient";
-  const solidColor = node.fill.type === "solid" ? node.fill.color : "#000000";
-
-  const toggleButton =
-    "flex-1 rounded-[6px] py-4 text-[11.5px] transition-[background-color,color,box-shadow] duration-120 ease-studio";
-  const toggleActive = "bg-card font-semibold text-ink shadow-[0_1px_2px_rgb(28_25_33/0.1)]";
-
   return (
     <>
-      <div
-        className="mb-8 flex gap-2 rounded-m border border-field-border bg-field p-2"
-        role="group"
-        aria-label="Fill type"
-      >
-        <button
-          type="button"
-          className={`${toggleButton} ${isGradient ? "text-ink-dim" : `active ${toggleActive}`}`}
-          onClick={() => {
-            if (isGradient) {
-              patchSelection({
-                fill: {
-                  type: "solid",
-                  color:
-                    node.fill.type === "linear-gradient"
-                      ? (node.fill.stops[0]?.color ?? "#111827")
-                      : "#111827",
-                },
-              });
-            }
-          }}
-        >
-          Solid
-        </button>
-        <button
-          type="button"
-          className={`${toggleButton} ${isGradient ? `active ${toggleActive}` : "text-ink-dim"}`}
-          onClick={() => {
-            if (!isGradient) {
-              patchSelection({
-                fill: {
-                  type: "linear-gradient",
-                  angle: 90,
-                  stops: [
-                    { offset: 0, color: solidColor },
-                    { offset: 1, color: "#4f6bf6" },
-                  ],
-                },
-              });
-            }
-          }}
-        >
-          Gradient
-        </button>
+      <PaintEditor
+        paint={node.fill}
+        label="Fill"
+        onCommit={(fill) => patchSelection({ fill })}
+        onPreview={(fill) => previewSelection({ fill })}
+      />
+      <div className={`${OPACITY_FIELD} mb-10`}>
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          className="min-w-0 flex-1 accent-accent"
+          value={node.opacity}
+          onChange={(event) =>
+            patchSelection({ opacity: Number(event.target.value) })
+          }
+          aria-label="Opacity"
+        />
+        <span className={OPACITY_PCT}>{Math.round(node.opacity * 100)}%</span>
       </div>
-
-      {node.fill.type === "linear-gradient" ? (
-        <div className="mb-10">
-          <div
-            className="mb-6 h-14 rounded-[7px] border border-field-border"
-            style={{
-              background: `linear-gradient(90deg, ${node.fill.stops
-                .map((stop) => `${stop.color} ${stop.offset * 100}%`)
-                .join(", ")})`,
-            }}
-          />
-          <div className={FILL_ROW}>
-            {node.fill.stops.map((stop, index) => (
-              <input
-                key={index}
-                type="color"
-                className={FILL_SWATCH}
-                value={stop.color}
-                aria-label={`Gradient stop ${index + 1}`}
-                onChange={(event) => {
-                  if (node.fill.type !== "linear-gradient") {
-                    return;
-                  }
-                  const stops = node.fill.stops.map((item, i) =>
-                    i === index ? { ...item, color: event.target.value } : item,
-                  );
-                  patchSelection({ fill: { ...node.fill, stops } });
-                }}
-              />
-            ))}
-            <NumberField
-              label="∠"
-              unit="°"
-              value={node.fill.angle}
-              onCommit={(angle) => {
-                if (node.fill.type === "linear-gradient") {
-                  patchSelection({ fill: { ...node.fill, angle } });
-                }
-              }}
-            />
-          </div>
-        </div>
-      ) : (
-        <div className={FILL_ROW}>
-          <input
-            type="color"
-            className={FILL_SWATCH}
-            value={solidColor}
-            onChange={(event) =>
-              patchSelection({
-                fill: { type: "solid", color: event.target.value },
-              })
-            }
-            aria-label="Fill color"
-          />
-          <input
-            className="fill-hex h-28 w-72 flex-none rounded-field border border-field-border bg-field px-8 text-[12px] uppercase tabular-nums outline-none transition-[border-color,box-shadow] duration-140 ease-studio focus:border-accent focus:bg-card focus:shadow-ring"
-            value={solidColor.toUpperCase()}
-            onChange={(event) => {
-              const value = event.target.value.trim();
-              if (/^#[0-9a-fA-F]{6}$/.test(value)) {
-                patchSelection({ fill: { type: "solid", color: value } });
-              }
-            }}
-            aria-label="Fill hex"
-          />
-          <div className={OPACITY_FIELD}>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.01"
-              className="min-w-0 flex-1 accent-accent"
-              value={node.opacity}
-              onChange={(event) =>
-                patchSelection({ opacity: Number(event.target.value) })
-              }
-              aria-label="Opacity"
-            />
-            <span className={OPACITY_PCT}>{Math.round(node.opacity * 100)}%</span>
-          </div>
-        </div>
-      )}
     </>
   );
 }
@@ -457,11 +350,30 @@ function FillEditor({
 function StrokeEditor({
   node,
   patchSelection,
+  previewSelection,
 }: {
   node: LogoNode;
   patchSelection: (patch: NodePatch) => void;
+  previewSelection: (patch: NodePatch) => void;
 }) {
   const stroke = node.stroke;
+  const [showPaint, setShowPaint] = useState(false);
+  const strokeIsGradient = Boolean(stroke?.paint && stroke.paint.type !== "solid");
+
+  // A gradient stroke edits through the shared PaintEditor; `color`
+  // stays in sync with the first stop as the legacy/solid fallback.
+  const strokeWithPaint = (paint: Paint): Stroke => {
+    const { paint: _previous, ...rest } = stroke!;
+    return paint.type === "solid"
+      ? { ...rest, color: paint.color }
+      : { ...rest, color: paint.stops[0]?.color ?? rest.color, paint };
+  };
+
+  const commitStrokePaint = (paint: Paint) => {
+    if (stroke) {
+      patchSelection({ stroke: strokeWithPaint(paint) });
+    }
+  };
 
   return (
     <div className="mb-10">
@@ -482,38 +394,54 @@ function StrokeEditor({
         </button>
       </div>
       {stroke && (
-        <div className={FILL_ROW}>
-          <input
-            type="color"
-            className={FILL_SWATCH}
-            value={stroke.color}
-            aria-label="Stroke color"
-            onChange={(event) =>
-              patchSelection({
-                stroke: { ...stroke, color: event.target.value },
-              })
-            }
-          />
-          <NumberField
-            label="W"
-            unit="px"
-            value={stroke.width}
-            step={0.5}
-            onCommit={(width) =>
-              patchSelection({ stroke: { ...stroke, width: Math.max(0, width) } })
-            }
-          />
-          {node.type !== "text" && (
+        <>
+          <div className={FILL_ROW}>
             <button
               type="button"
-              className={STROKE_TOGGLE}
-              title="Outline stroke into a filled path"
-              onClick={() => void expandStrokeOp(node.id)}
-            >
-              Expand
-            </button>
+              className="h-28 w-28 flex-none cursor-pointer rounded-field border border-field-border p-0"
+              style={{
+                background: strokeIsGradient
+                  ? "linear-gradient(135deg, #f59e0b, #4f6bf6)"
+                  : stroke.color,
+              }}
+              title="Stroke paint"
+              aria-label="Stroke paint"
+              aria-expanded={showPaint}
+              onClick={() => setShowPaint((value) => !value)}
+            />
+            <NumberField
+              label="W"
+              unit="px"
+              value={stroke.width}
+              step={0.5}
+              onCommit={(width) =>
+                patchSelection({ stroke: { ...stroke, width: Math.max(0, width) } })
+              }
+            />
+            {node.type !== "text" && (
+              <button
+                type="button"
+                className={STROKE_TOGGLE}
+                title="Outline stroke into a filled path"
+                onClick={() => void expandStrokeOp(node.id)}
+              >
+                Expand
+              </button>
+            )}
+          </div>
+          {(showPaint || strokeIsGradient) && (
+            <div className="stroke-paint mt-8">
+              <PaintEditor
+                paint={stroke.paint ?? { type: "solid", color: stroke.color }}
+                label="Stroke"
+                onCommit={commitStrokePaint}
+                onPreview={(paint) =>
+                  previewSelection({ stroke: strokeWithPaint(paint) })
+                }
+              />
+            </div>
           )}
-        </div>
+        </>
       )}
     </div>
   );
@@ -522,9 +450,11 @@ function StrokeEditor({
 function DesignSection({
   node,
   patchSelection,
+  previewSelection,
 }: {
   node: LogoNode;
   patchSelection: (patch: NodePatch) => void;
+  previewSelection: (patch: NodePatch) => void;
 }) {
   const document = useDocument();
   const setSelection = useEditorStore((state) => state.setSelection);
@@ -622,8 +552,16 @@ function DesignSection({
         )}
       </div>
 
-      <FillEditor node={node} patchSelection={patchSelection} />
-      <StrokeEditor node={node} patchSelection={patchSelection} />
+      <FillEditor
+        node={node}
+        patchSelection={patchSelection}
+        previewSelection={previewSelection}
+      />
+      <StrokeEditor
+        node={node}
+        patchSelection={patchSelection}
+        previewSelection={previewSelection}
+      />
 
       <div className={STROKE_HEAD}>
         <span>Blend</span>
@@ -736,16 +674,24 @@ function DesignSection({
               value={node.fontFamily}
               onApply={(family) => {
                 const weight = nearestWeight(family, node.fontWeight);
-                void fontStore.ensure(family.name, weight);
+                void fontStore.ensure(
+                  family.name,
+                  weight,
+                  node.fontStyle ?? "normal",
+                );
                 patchSelection({ fontFamily: family.name, fontWeight: weight });
               }}
             />
             <select
-              className={`${SELECT} w-104`}
+              className={`${SELECT} w-88`}
               value={node.fontWeight}
               onChange={(event) => {
                 const weight = Number(event.target.value);
-                void fontStore.ensure(node.fontFamily, weight);
+                void fontStore.ensure(
+                  node.fontFamily,
+                  weight,
+                  node.fontStyle ?? "normal",
+                );
                 patchSelection({ fontWeight: weight });
               }}
               aria-label="Font weight"
@@ -758,7 +704,34 @@ function DesignSection({
                 ),
               )}
             </select>
+            <button
+              type="button"
+              className={`h-28 w-28 flex-none rounded-field border text-[13px] italic transition-[border-color,color,background-color] duration-140 ease-studio ${
+                node.fontStyle === "italic"
+                  ? "active border-accent bg-accent/10 text-accent"
+                  : "border-field-border bg-field text-ink-dim hover:enabled:border-accent hover:enabled:text-accent"
+              } disabled:cursor-not-allowed disabled:opacity-40`}
+              disabled={!catalogEntry(node.fontFamily)?.styles.includes("italic")}
+              title={
+                catalogEntry(node.fontFamily)?.styles.includes("italic")
+                  ? "Italic"
+                  : "This family has no italic cut"
+              }
+              aria-label="Italic"
+              aria-pressed={node.fontStyle === "italic"}
+              onClick={() => {
+                const italic = node.fontStyle !== "italic";
+                if (italic) {
+                  void fontStore.ensure(node.fontFamily, node.fontWeight, "italic");
+                }
+                patchSelection({ fontStyle: italic ? "italic" : undefined });
+              }}
+            >
+              I
+            </button>
           </div>
+
+          <TypeCraftControls node={node} patchSelection={patchSelection} />
 
           <div className={FIELD_GRID}>
             <NumberField
@@ -837,6 +810,93 @@ function DesignSection({
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * OpenType feature toggles (what Skia Paragraph honours; ligatures at
+ * minimum) and the manual-kerning summary row. Kerning itself is edited
+ * on canvas: text edit mode, caret between two glyphs, ⌥←/⌥→ (⇧ for
+ * coarse steps) — this row shows the count and clears the map.
+ */
+function TypeCraftControls({
+  node,
+  patchSelection,
+}: {
+  node: TextNode;
+  patchSelection: (patch: NodePatch) => void;
+}) {
+  const features = node.otFeatures ?? {};
+  const kernCount = kernedPairCount(node);
+
+  const setFeatures = (patch: Record<string, boolean | undefined>) => {
+    const next: Record<string, boolean> = { ...features };
+    for (const [tag, value] of Object.entries(patch)) {
+      if (value === undefined) {
+        delete next[tag];
+      } else {
+        next[tag] = value;
+      }
+    }
+    patchSelection({
+      otFeatures: Object.keys(next).length > 0 ? next : undefined,
+    });
+  };
+
+  const featureToggle = (
+    label: string,
+    tags: string[],
+    defaultOn: boolean,
+  ) => {
+    const on = tags.every((tag) => features[tag] ?? defaultOn);
+    return (
+      <label
+        key={label}
+        className="inline-flex cursor-pointer items-center gap-5 text-[11.5px] text-ink-dim"
+      >
+        <input
+          type="checkbox"
+          checked={on}
+          aria-label={label}
+          onChange={(event) => {
+            const value = event.target.checked;
+            setFeatures(
+              Object.fromEntries(
+                tags.map((tag) => [tag, value === defaultOn ? undefined : value]),
+              ),
+            );
+          }}
+        />
+        {label}
+      </label>
+    );
+  };
+
+  return (
+    <div className="type-craft grid gap-6">
+      <div className="flex flex-wrap items-center gap-10">
+        {featureToggle("Ligatures", ["liga", "clig"], true)}
+        {featureToggle("Discretionary", ["dlig"], false)}
+        {featureToggle("Small caps", ["smcp"], false)}
+      </div>
+      <div className="flex items-center justify-between gap-6 text-[11px] text-ink-dim">
+        <span data-testid="kerned-pairs">
+          {kernCount > 0
+            ? `${kernCount} kerned pair${kernCount === 1 ? "" : "s"}`
+            : "Kern: caret in text edit, ⌥← / ⌥→"}
+        </span>
+        {kernCount > 0 && (
+          <button
+            type="button"
+            className={STROKE_TOGGLE}
+            aria-label="Reset kerning"
+            onClick={() => patchSelection({ kerning: undefined })}
+          >
+            Reset kerning
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -1341,9 +1401,13 @@ function GroupSection({ group }: { group: GroupNode }) {
 function SwatchesSection() {
   const document = useDocument();
   const palette = document.palettes[0];
+  // Print readout for the swatch under the pointer (display only).
+  const [inspected, setInspected] = useState<string | null>(null);
   if (!palette) {
     return null;
   }
+
+  const info = inspected ? colorInfo(inspected) : null;
 
   return (
     <section className={SECTION}>
@@ -1360,6 +1424,8 @@ function SwatchesSection() {
             defaultValue={color}
             aria-label={`Edit brand color ${index + 1}`}
             title="Edit — recolors every use"
+            onPointerEnter={() => setInspected(color)}
+            onFocus={() => setInspected(color)}
             onBlur={(event) => {
               if (event.target.value !== color) {
                 editSwatch(palette.id, index, event.target.value);
@@ -1368,9 +1434,20 @@ function SwatchesSection() {
           />
         ))}
       </div>
-      <p className={`${MUTED} mt-8`}>
-        Editing a swatch recolors every object using it.
-      </p>
+      {info && inspected ? (
+        <p
+          className={`${MUTED} mt-8 tabular-nums`}
+          data-testid="swatch-print-info"
+        >
+          {inspected.toUpperCase()} · {info.cmykLabel}
+          {info.spot ? ` · ≈ ${info.spot.name}` : ""}
+          {info.gamutHint ? " · ⚠ vivid for print" : ""}
+        </p>
+      ) : (
+        <p className={`${MUTED} mt-8`}>
+          Editing a swatch recolors every use. Hover for print values.
+        </p>
+      )}
     </section>
   );
 }
@@ -1927,6 +2004,16 @@ export function Inspector() {
     });
   }
 
+  // Transient variant for in-flight drags (gradient stop chips): rides on
+  // documentStore.preview, committed once by the matching patchSelection.
+  function previewSelection(patch: NodePatch) {
+    const leafIds = collectLeafNodeIds(document, selectedNodeIds);
+    if (leafIds.length === 0) {
+      return;
+    }
+    documentStore.preview(leafIds.map((nodeId) => ({ nodeId, patch })));
+  }
+
   // Two floating cards: design/swatches on top, layers bottom-anchored so
   // selection-driven layout changes above never shift the layer rows
   // (double-click rename needs rows that hold still between clicks).
@@ -1951,6 +2038,7 @@ export function Inspector() {
           <DesignSection
             node={selectedNodes[0]!}
             patchSelection={patchSelection}
+            previewSelection={previewSelection}
           />
           <EffectsSection node={selectedNodes[0]!} />
         </>

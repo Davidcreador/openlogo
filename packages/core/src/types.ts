@@ -26,6 +26,8 @@ export type SolidPaint = {
 export type GradientStop = {
   offset: number;
   color: string;
+  /** Per-stop opacity 0–1; treated as 1 when absent. */
+  alpha?: number;
 };
 
 export type LinearGradientPaint = {
@@ -33,15 +35,44 @@ export type LinearGradientPaint = {
   /** Direction in degrees; 0 = left→right. */
   angle: number;
   stops: GradientStop[];
+  /**
+   * Explicit endpoints, normalized to the node's box (0–1 like SVG
+   * objectBoundingBox). Set by the on-canvas annotator; when absent the
+   * line is derived from `angle` through the box centre (legacy docs).
+   */
+  start?: { x: number; y: number };
+  end?: { x: number; y: number };
 };
 
-export type Paint = SolidPaint | LinearGradientPaint;
+export type RadialGradientPaint = {
+  type: "radial-gradient";
+  /** Centre, normalized to the node's box (0–1). */
+  cx: number;
+  cy: number;
+  /**
+   * Radius as a fraction of the box (SVG objectBoundingBox semantics:
+   * the unit circle is stretched by the box, so non-square nodes get an
+   * elliptical falloff — matching the SVG export exactly).
+   */
+  r: number;
+  /** Optional focal point, normalized; makes the falloff off-centre. */
+  fx?: number;
+  fy?: number;
+  stops: GradientStop[];
+};
+
+export type Paint = SolidPaint | LinearGradientPaint | RadialGradientPaint;
 
 export type Stroke = {
   color: string;
   width: number;
   /** Stroke alignment relative to path. */
   align: "center" | "inside" | "outside";
+  /**
+   * Optional gradient paint; when present it overrides `color` (which is
+   * kept as the solid fallback so legacy readers stay correct).
+   */
+  paint?: Paint;
 };
 
 export type DropShadowEffect = {
@@ -185,15 +216,30 @@ export type TextPathAttachment = {
   flip: boolean;
 };
 
+export type FontStyle = "normal" | "italic";
+
 export type TextNode = BaseNode & {
   type: "text";
   content: string;
   fontFamily: string;
   fontSize: number;
   fontWeight: number;
+  /** Italic when set; upright when absent. */
+  fontStyle?: FontStyle;
   letterSpacing: number;
   lineHeight: number;
   align: "left" | "center" | "right";
+  /**
+   * Manual per-pair kerning, Illustrator units (1/1000 em). Key `i`
+   * adjusts the gap between content[i] and content[i+1]. Sparse: zero
+   * entries are pruned; absent map = metrics kerning only.
+   */
+  kerning?: Record<number, number>;
+  /**
+   * OpenType feature toggles by tag ("liga", "dlig", "smcp", …).
+   * Absent tags use the font's defaults.
+   */
+  otFeatures?: Record<string, boolean>;
   /** Present while the text is attached to a path. */
   onPath?: TextPathAttachment;
 };

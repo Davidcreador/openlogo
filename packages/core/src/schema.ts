@@ -17,21 +17,44 @@ const solidPaintSchema = z.object({
   color: z.string(),
 });
 
+const gradientStopSchema = z.object({
+  offset: z.number(),
+  color: z.string(),
+  alpha: z.number().min(0).max(1).optional(),
+});
+
+const normalizedPointSchema = z.object({ x: z.number(), y: z.number() });
+
 const gradientPaintSchema = z.object({
   type: z.literal("linear-gradient"),
   angle: z.number(),
-  stops: z.array(z.object({ offset: z.number(), color: z.string() })),
+  stops: z.array(gradientStopSchema),
+  // Annotator endpoints; legacy angle-only gradients simply lack them.
+  start: normalizedPointSchema.optional(),
+  end: normalizedPointSchema.optional(),
+});
+
+const radialPaintSchema = z.object({
+  type: z.literal("radial-gradient"),
+  cx: z.number(),
+  cy: z.number(),
+  r: z.number().nonnegative(),
+  fx: z.number().optional(),
+  fy: z.number().optional(),
+  stops: z.array(gradientStopSchema),
 });
 
 const paintSchema = z.discriminatedUnion("type", [
   solidPaintSchema,
   gradientPaintSchema,
+  radialPaintSchema,
 ]);
 
 const strokeSchema = z.object({
   color: z.string(),
   width: z.number().nonnegative(),
   align: z.enum(["center", "inside", "outside"]),
+  paint: paintSchema.optional(),
 });
 
 const effectSchema = z.discriminatedUnion("type", [
@@ -140,9 +163,13 @@ const nodeSchema = z.discriminatedUnion("type", [
     fontFamily: z.string(),
     fontSize: z.number().positive(),
     fontWeight: z.number(),
+    fontStyle: z.enum(["normal", "italic"]).optional(),
     letterSpacing: z.number(),
     lineHeight: z.number().positive(),
     align: z.enum(["left", "center", "right"]),
+    // JSON object keys are strings; the runtime type indexes by number.
+    kerning: z.record(z.string(), z.number()).optional(),
+    otFeatures: z.record(z.string(), z.boolean()).optional(),
     onPath: z
       .object({
         pathId: z.string(),

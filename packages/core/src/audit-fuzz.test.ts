@@ -135,8 +135,57 @@ function randomPatch(rng: Rng): NodePatch {
     { locked: rng() > 0.7 },
     { name: `n${int(rng, 1000)}` },
     { fill: { type: "solid", color: "#123456" } },
+    {
+      fill: {
+        type: "linear-gradient",
+        angle: Math.round(rng() * 360),
+        stops: [
+          { offset: 0, color: "#123456" },
+          { offset: rng(), color: "#abcdef", alpha: Math.round(rng() * 100) / 100 },
+          { offset: 1, color: "#fedcba" },
+        ],
+        start: { x: rng(), y: rng() },
+        end: { x: rng(), y: rng() },
+      },
+    },
+    {
+      fill: {
+        type: "radial-gradient",
+        cx: rng(),
+        cy: rng(),
+        r: rng(),
+        ...(rng() > 0.5 ? { fx: rng(), fy: rng() } : {}),
+        stops: [
+          { offset: 0, color: "#ff0000" },
+          { offset: 1, color: "#0000ff", alpha: 0.5 },
+        ],
+      },
+    },
     { stroke: { color: "#ff0000", width: rng() * 8, align: "center" } },
+    {
+      stroke: {
+        color: "#ff0000",
+        width: rng() * 8,
+        align: "center",
+        paint: {
+          type: "radial-gradient",
+          cx: 0.5,
+          cy: 0.5,
+          r: rng(),
+          stops: [
+            { offset: 0, color: "#ffffff" },
+            { offset: 1, color: "#000000" },
+          ],
+        },
+      },
+    },
     { stroke: undefined },
+    { kerning: { [int(rng, 6)]: (int(rng, 10) - 5) * 20 } },
+    { kerning: undefined },
+    { fontStyle: rng() > 0.5 ? "italic" : "normal" },
+    { fontStyle: undefined },
+    { otFeatures: { liga: rng() > 0.5, smcp: rng() > 0.5 } },
+    { otFeatures: undefined },
   ];
   return pick(rng, patches);
 }

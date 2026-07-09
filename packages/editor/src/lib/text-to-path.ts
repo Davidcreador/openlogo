@@ -9,6 +9,8 @@ import {
   findContainerId,
   getActiveArtboard,
   getContainerChildIds,
+  kernAt,
+  kernToPx,
   pathGeometryBounds,
   pathGeometryToSvg,
   translatePathGeometry,
@@ -16,27 +18,14 @@ import {
 import { documentStore } from "../state/document";
 import { catalogEntry } from "./font-catalog";
 import { fontStore } from "./font-store";
+import { kerningLookup } from "./opentype-kerning";
+import { opentypeModule } from "./opentype-loader";
 
 /** Outline conversion failure: module load or glyph outlining threw. */
 export class TextOutlineError extends Data.TaggedError("TextOutlineError")<{
   readonly stage: "load-opentype" | "outline";
   readonly cause: unknown;
 }> {}
-
-/**
- * opentype.js is heavy, so it loads lazily on first conversion and the
- * module stays memoized (`Effect.cached`). A module import has no release
- * side, so this is a cache, not an acquireRelease scope.
- */
-const opentypeModule: Effect.Effect<typeof opentype, TextOutlineError> =
-  Effect.runSync(
-    Effect.cached(
-      Effect.tryPromise({
-        try: () => import("opentype.js").then((module) => module.default),
-        catch: (cause) => new TextOutlineError({ stage: "load-opentype", cause }),
-      }),
-    ),
-  );
 
 /**
  * Convert a text node into an editable path node with real glyph
@@ -60,7 +49,19 @@ export const convertTextToPath = (
 
     const family = catalogEntry(node.fontFamily) ?? catalogEntry("Inter")!;
     const [bytes, ot] = yield* Effect.all(
-      [fontStore.ensureEffect(family.name, node.fontWeight), opentypeModule],
+      [
+        fontStore.ensureEffect(
+          family.name,
+          node.fontWeight,
+          node.fontStyle ?? "normal",
+        ),
+        opentypeModule.pipe(
+          Effect.mapError(
+            (error) =>
+              new TextOutlineError({ stage: "load-opentype", cause: error.cause }),
+          ),
+        ),
+      ],
       { concurrency: "unbounded" },
     );
     if (!bytes) {
@@ -73,7 +74,17 @@ export const convertTextToPath = (
     });
   });
 
-/** Pure-ish core: parse, outline, and swap the node in one batch command. */
+/**
+ * Pure-ish core: parse, outline, and swap the node in one batch command.
+ *
+ * Glyphs are placed one by one from cmap + advances, with GPOS/kern
+ * pair kerning and the node's manual kerning map applied per gap. This
+ * deliberately avoids opentype.js's shaping path (font.getPath /
+ * forEachGlyph): its GSUB engine throws on lookup formats many Google
+ * fonts use, and its kerning:true option only reads the legacy kern
+ * table, which Fontsource TTFs don't carry. Trade-off: no ligatures —
+ * unchanged from v1, which never shaped them either.
+ */
 function outlineNode(
   ot: typeof opentype,
   bytes: ArrayBuffer,
@@ -81,14 +92,28 @@ function outlineNode(
 ): string | null {
   const document = documentStore.document;
   const font = ot.parse(bytes);
-  const options: opentype.RenderOptions = {
-    kerning: true,
-    letterSpacing: node.letterSpacing / node.fontSize,
-  };
 
   const scale = node.fontSize / font.unitsPerEm;
   const ascent = font.ascender * scale;
-  const advance = font.getAdvanceWidth(node.content, node.fontSize, options);
+  const kern = kerningLookup(font);
+  const glyphs = Array.from(node.content, (char) => font.charToGlyph(char));
+
+  // Gap after glyph i: tracking + metrics kerning + manual kerning.
+  const gapAfter = (i: number): number => {
+    if (i >= glyphs.length - 1) {
+      return 0;
+    }
+    return (
+      node.letterSpacing +
+      kern(node.content[i]!, node.content[i + 1]!) * node.fontSize +
+      kernToPx(kernAt(node.kerning, i), node.fontSize)
+    );
+  };
+
+  const advances = glyphs.map(
+    (glyph, i) => (glyph.advanceWidth ?? 0) * scale + gapAfter(i),
+  );
+  const advance = advances.reduce((sum, value) => sum + value, 0);
 
   const alignOffset =
     node.align === "center"
@@ -98,15 +123,15 @@ function outlineNode(
         : 0;
 
   // Artboard-local baseline origin, matching the rendered text position.
-  const otPath = font.getPath(
-    node.content,
-    node.x + alignOffset,
-    node.y + ascent,
-    node.fontSize,
-    options,
-  );
-
-  const commands = otPath.commands as PathCommand[];
+  const baseY = node.y + ascent;
+  let penX = node.x + alignOffset;
+  const commands: PathCommand[] = [];
+  glyphs.forEach((glyph, i) => {
+    commands.push(
+      ...(glyph.getPath(penX, baseY, node.fontSize).commands as PathCommand[]),
+    );
+    penX += advances[i]!;
+  });
   const geometry = commandsToGeometry(commands);
   const bounds = pathGeometryBounds(geometry);
   if (!bounds) {
@@ -165,7 +190,11 @@ export function ensureDocumentFonts(): void {
     if (node.type === "text") {
       const family = catalogEntry(node.fontFamily);
       if (family) {
-        void fontStore.ensure(family.name, node.fontWeight);
+        void fontStore.ensure(
+          family.name,
+          node.fontWeight,
+          node.fontStyle ?? "normal",
+        );
       }
     }
   }

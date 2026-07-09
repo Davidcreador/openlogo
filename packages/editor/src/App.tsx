@@ -37,6 +37,7 @@ const TOOL_SHORTCUTS: Record<string, Tool> = {
   m: "path",
   t: "text",
   i: "eyedropper",
+  g: "gradient",
   // Needs 2+ shapes selected; CanvasStage bounces back to select if not.
   s: "shapeBuilder",
 };

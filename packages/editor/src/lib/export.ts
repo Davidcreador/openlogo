@@ -1,12 +1,16 @@
 import { Data, Effect } from "effect";
 import {
   type Artboard,
+  type LinearGradientPaint,
   type LogoDocument,
   type LogoNode,
   type Paint,
   type PathNode,
+  type RadialGradientPaint,
   type TextNode,
   getActiveArtboard,
+  kernAt,
+  kernToPx,
   pathGeometryToSvg,
   reversePathGeometry,
   unitBounds,
@@ -132,6 +136,35 @@ function effectsAttr(node: LogoNode, defs: string[]): string {
  * paths degrade to SVG2's side="right", which some renderers ignore.
  * Fonts are referenced by family name, like every text export here.
  */
+/**
+ * Typography attributes shared by both <text> forms: italic slant,
+ * OpenType feature toggles (CSS font-feature-settings) and manual
+ * per-pair kerning as a per-glyph `dx` list (dx[i] shifts glyph i, i.e.
+ * the gap after glyph i−1 — matching the renderer's pair map).
+ */
+function textTypographyAttrs(node: TextNode): string {
+  const italic = node.fontStyle === "italic" ? ` font-style="italic"` : "";
+  let dx = "";
+  if (node.kerning && Object.keys(node.kerning).length > 0) {
+    const shifts = Array.from(node.content, (_char, i) =>
+      i === 0 ? 0 : kernToPx(kernAt(node.kerning, i - 1), node.fontSize),
+    );
+    dx = ` dx="${shifts.map((v) => Math.round(v * 1000) / 1000).join(" ")}"`;
+  }
+  return `${italic}${dx}`;
+}
+
+/** OpenType toggles as a CSS declaration (joined into the style attr). */
+function fontFeatureDecl(node: TextNode): string | null {
+  if (!node.otFeatures) {
+    return null;
+  }
+  const settings = Object.entries(node.otFeatures)
+    .map(([tag, on]) => `'${tag}' ${on ? 1 : 0}`)
+    .join(", ");
+  return settings ? `font-feature-settings: ${settings}` : null;
+}
+
 function textOnPathMarkup(
   node: TextNode,
   path: PathNode,
@@ -167,11 +200,24 @@ function textOnPathMarkup(
 
   return `<text ${base} font-family="${escapeXml(node.fontFamily)}" font-size="${
     node.fontSize
-  }" font-weight="${node.fontWeight}" letter-spacing="${
+  }" font-weight="${node.fontWeight}"${textTypographyAttrs(node)} letter-spacing="${
     node.letterSpacing
   }"><textPath href="#${id}"${side} startOffset="${
     attachment.startOffset
   }">${escapeXml(node.content)}</textPath></text>`;
+}
+
+function gradientStops(paint: LinearGradientPaint | RadialGradientPaint): string {
+  return paint.stops
+    .map(
+      (stop) =>
+        `<stop offset="${stop.offset}" stop-color="${stop.color}"${
+          stop.alpha !== undefined && stop.alpha < 1
+            ? ` stop-opacity="${stop.alpha}"`
+            : ""
+        } />`,
+    )
+    .join("");
 }
 
 function paintAttr(paint: Paint, defs: string[]): string {
@@ -181,15 +227,31 @@ function paintAttr(paint: Paint, defs: string[]): string {
 
   gradientCounter += 1;
   const id = `grad-${gradientCounter}`;
+  const stops = gradientStops(paint);
+
+  if (paint.type === "radial-gradient") {
+    // Normalized document coordinates ARE objectBoundingBox units, so
+    // this def matches the renderer's box-matrix shader exactly.
+    const focal =
+      paint.fx !== undefined && paint.fy !== undefined
+        ? ` fx="${paint.fx}" fy="${paint.fy}"`
+        : "";
+    defs.push(
+      `<radialGradient id="${id}" cx="${paint.cx}" cy="${paint.cy}" r="${paint.r}"${focal}>${stops}</radialGradient>`,
+    );
+    return `url(#${id})`;
+  }
+
+  if (paint.start && paint.end) {
+    defs.push(
+      `<linearGradient id="${id}" x1="${paint.start.x}" y1="${paint.start.y}" x2="${paint.end.x}" y2="${paint.end.y}">${stops}</linearGradient>`,
+    );
+    return `url(#${id})`;
+  }
+
   const radians = (paint.angle * Math.PI) / 180;
   const x2 = 50 + Math.cos(radians) * 50;
   const y2 = 50 + Math.sin(radians) * 50;
-  const stops = paint.stops
-    .map(
-      (stop) =>
-        `<stop offset="${stop.offset}" stop-color="${stop.color}" />`,
-    )
-    .join("");
   defs.push(
     `<linearGradient id="${id}" x1="${100 - x2}%" y1="${100 - y2}%" x2="${x2}%" y2="${y2}%">${stops}</linearGradient>`,
   );
@@ -213,11 +275,17 @@ function renderNode(
         })"`;
   const fill = paintAttr(node.fill, defs);
   const stroke = node.stroke
-    ? ` stroke="${node.stroke.color}" stroke-width="${node.stroke.width}"`
+    ? ` stroke="${
+        node.stroke.paint
+          ? paintAttr(node.stroke.paint, defs)
+          : node.stroke.color
+      }" stroke-width="${node.stroke.width}"`
     : "";
-  const blend = node.blendMode
-    ? ` style="mix-blend-mode:${node.blendMode}"`
-    : "";
+  const styleDecls = [
+    node.blendMode ? `mix-blend-mode:${node.blendMode}` : null,
+    node.type === "text" ? fontFeatureDecl(node) : null,
+  ].filter(Boolean);
+  const blend = styleDecls.length > 0 ? ` style="${styleDecls.join(";")}"` : "";
   const filter = effectsAttr(node, defs);
   const base = `opacity="${node.opacity}" fill="${fill}"${stroke}${blend}${filter}${rotate}`;
 
@@ -256,7 +324,7 @@ function renderNode(
       node.y + node.fontSize
     }" font-family="${escapeXml(node.fontFamily)}" font-size="${
       node.fontSize
-    }" font-weight="${node.fontWeight}" letter-spacing="${
+    }" font-weight="${node.fontWeight}"${textTypographyAttrs(node)} letter-spacing="${
       node.letterSpacing
     }">${escapeXml(node.content)}</text>`;
   }

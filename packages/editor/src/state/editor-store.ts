@@ -15,6 +15,7 @@ export type Tool =
   | "pen"
   | "text"
   | "eyedropper"
+  | "gradient"
   | "shapeBuilder";
 
 type EditorState = {

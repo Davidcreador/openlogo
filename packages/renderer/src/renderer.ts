@@ -26,6 +26,10 @@ import type {
 import {
   type SelectionFrame,
   getRenderNodesForArtboard,
+  isGradient,
+  kernAt,
+  kernToPx,
+  linearGradientPoints,
   pathGeometryToSvg,
   rotatePoint,
   selectionFrame,
@@ -743,6 +747,17 @@ export class SceneRenderer {
     canvas.restore();
   }
 
+  /**
+   * Bounds gradients anchor to, in the coordinate space the node's
+   * geometry is DRAWN in: intrinsic space for paths (drawLeaf scales the
+   * canvas before drawPath), the artboard-space box for everything else.
+   */
+  private paintBox(node: LogoNode): Bounds {
+    return node.type === "path"
+      ? { x: 0, y: 0, width: node.intrinsicWidth, height: node.intrinsicHeight }
+      : { x: node.x, y: node.y, width: node.width, height: node.height };
+  }
+
   private drawLeaf(canvas: Canvas, node: LogoNode): void {
     if (node.type === "group") {
       return;
@@ -759,7 +774,7 @@ export class SceneRenderer {
       );
     }
 
-    const fill = this.makePaint(node.fill, node, node.opacity);
+    const fill = this.makePaint(node.fill, this.paintBox(node), node.opacity);
     if (node.blendMode) {
       fill.setBlendMode(this.skBlendMode(node.blendMode));
     }
@@ -807,12 +822,22 @@ export class SceneRenderer {
     }
 
     const ck = this.canvasKit;
-    const paint = new ck.Paint();
+    // Gradient strokes ride the same shader path as fills.
+    const paint =
+      node.stroke.paint && isGradient(node.stroke.paint)
+        ? this.makePaint(node.stroke.paint, this.paintBox(node), node.opacity)
+        : new ck.Paint();
     paint.setStyle(ck.PaintStyle.Stroke);
     paint.setStrokeWidth(node.stroke.width);
-    const color = ck.parseColorString(node.stroke.color);
-    color[3] = (color[3] ?? 1) * node.opacity;
-    paint.setColor(color);
+    if (!node.stroke.paint || !isGradient(node.stroke.paint)) {
+      const color = ck.parseColorString(
+        node.stroke.paint?.type === "solid"
+          ? node.stroke.paint.color
+          : node.stroke.color,
+      );
+      color[3] = (color[3] ?? 1) * node.opacity;
+      paint.setColor(color);
+    }
     paint.setAntiAlias(true);
     drawShape(paint);
     paint.delete();
@@ -829,6 +854,40 @@ export class SceneRenderer {
 
     const paragraph = this.getParagraph(node);
     if (paragraph) {
+      if (isGradient(node.fill)) {
+        // Skia's TextStyle has no shader slot, so gradient text renders
+        // the glyphs opaque into a layer and stamps the gradient over
+        // them with SrcIn — glyph alpha × gradient. Anti-aliasing and
+        // per-stop alpha both survive.
+        const ck = this.canvasKit;
+        const layerPaint = new ck.Paint();
+        if (node.blendMode) {
+          layerPaint.setBlendMode(this.skBlendMode(node.blendMode));
+        }
+        canvas.saveLayer(layerPaint);
+        canvas.drawParagraph(paragraph, node.x, node.y);
+        const gradient = this.makePaint(
+          node.fill,
+          this.paintBox(node),
+          node.opacity,
+        );
+        gradient.setBlendMode(ck.BlendMode.SrcIn);
+        // Cover every glyph the paragraph may paint, overhangs included.
+        const bleed = node.fontSize * 2;
+        canvas.drawRect(
+          ck.XYWHRect(
+            node.x - bleed,
+            node.y - bleed,
+            Math.max(node.width, paragraph.getLongestLine()) + bleed * 2,
+            Math.max(node.height, paragraph.getHeight()) + bleed * 2,
+          ),
+          gradient,
+        );
+        gradient.delete();
+        canvas.restore();
+        layerPaint.delete();
+        return;
+      }
       canvas.drawParagraph(paragraph, node.x, node.y);
       return;
     }
@@ -874,7 +933,11 @@ export class SceneRenderer {
       return false;
     }
 
-    const typeface = this.fonts.getTypeface(node.fontFamily, node.fontWeight);
+    const typeface = this.fonts.getTypeface(
+      node.fontFamily,
+      node.fontWeight,
+      node.fontStyle ?? "normal",
+    );
     if (!typeface) {
       return false;
     }
@@ -929,6 +992,23 @@ export class SceneRenderer {
     const glyphs = font.getGlyphIDs(node.content);
     const widths = font.getGlyphWidths(glyphs);
 
+    // Metrics kerning (font kern/GPOS pairs, extracted editor-side) plus
+    // the node's manual per-pair map. Both adjust the gap AFTER glyph i.
+    const metricsKern = this.fonts.getKerning(
+      node.fontFamily,
+      node.fontWeight,
+      node.fontStyle ?? "normal",
+    );
+    const gapAfter = (i: number): number => {
+      let gap = node.letterSpacing;
+      if (metricsKern && i + 1 < node.content.length) {
+        gap +=
+          metricsKern(node.content[i]!, node.content[i + 1]!) * node.fontSize;
+      }
+      gap += kernToPx(kernAt(node.kerning, i), node.fontSize);
+      return gap;
+    };
+
     const placedGlyphs: number[] = [];
     const xforms: number[] = [];
     const layout: TextPathGlyph[] = [];
@@ -937,7 +1017,7 @@ export class SceneRenderer {
     for (let i = 0; i < glyphs.length; i += 1) {
       const width = widths[i] ?? 0;
       const mid = pen + width / 2;
-      pen += width + node.letterSpacing;
+      pen += width + gapAfter(i);
       if (mid < 0) {
         continue;
       }
@@ -974,7 +1054,7 @@ export class SceneRenderer {
         font,
       );
       if (blob) {
-        const paint = this.makePaint(node.fill, node, node.opacity);
+        const paint = this.makePaint(node.fill, this.paintBox(node), node.opacity);
         if (node.blendMode) {
           paint.setBlendMode(this.skBlendMode(node.blendMode));
         }
@@ -1004,7 +1084,8 @@ export class SceneRenderer {
       return null;
     }
 
-    const family = this.fonts.resolveFamily(node.fontFamily);
+    const slant = node.fontStyle ?? "normal";
+    const family = this.fonts.resolveProviderFamily(node.fontFamily, slant);
     if (!family) {
       return null;
     }
@@ -1014,12 +1095,15 @@ export class SceneRenderer {
       family,
       node.fontSize,
       node.fontWeight,
+      slant,
       node.letterSpacing,
       node.lineHeight,
       node.align,
       node.width,
       this.paintKey(node.fill),
       node.opacity,
+      node.kerning ? JSON.stringify(node.kerning) : "",
+      node.otFeatures ? JSON.stringify(node.otFeatures) : "",
     ].join("|");
 
     const cached = this.paragraphCache.get(node.id);
@@ -1029,12 +1113,14 @@ export class SceneRenderer {
     cached?.paragraph.delete();
 
     const ck = this.canvasKit;
-    const color = ck.parseColorString(
-      node.fill.type === "solid"
-        ? node.fill.color
-        : (node.fill.stops[0]?.color ?? "#000000"),
-    );
-    color[3] = (color[3] ?? 1) * node.opacity;
+    // Gradient fills paint the glyphs opaque; drawText overlays the
+    // gradient with SrcIn, which multiplies alphas.
+    const color = isGradient(node.fill)
+      ? ck.parseColorString("#000000")
+      : ck.parseColorString(node.fill.color);
+    if (!isGradient(node.fill)) {
+      color[3] = (color[3] ?? 1) * node.opacity;
+    }
 
     const alignMap = {
       left: ck.TextAlign.Left,
@@ -1042,26 +1128,70 @@ export class SceneRenderer {
       right: ck.TextAlign.Right,
     } as const;
 
+    const fontFeatures = node.otFeatures
+      ? Object.entries(node.otFeatures).map(([name, on]) => ({
+          name,
+          value: on ? 1 : 0,
+        }))
+      : undefined;
+
+    const baseTextStyle = {
+      color,
+      fontFamilies: [family],
+      fontSize: node.fontSize,
+      letterSpacing: node.letterSpacing,
+      heightMultiplier: node.lineHeight,
+      fontStyle: {
+        weight: { value: node.fontWeight },
+        ...(slant === "italic" ? { slant: ck.FontSlant.Italic } : {}),
+      },
+      fontVariations: [{ axis: "wght", value: node.fontWeight }],
+      ...(fontFeatures ? { fontFeatures } : {}),
+    };
+
     const style = new ck.ParagraphStyle({
       textAlign: alignMap[node.align],
-      textStyle: {
-        color,
-        fontFamilies: [family],
-        fontSize: node.fontSize,
-        letterSpacing: node.letterSpacing,
-        heightMultiplier: node.lineHeight,
-        fontStyle: {
-          weight: { value: node.fontWeight },
-        },
-        fontVariations: [{ axis: "wght", value: node.fontWeight }],
-      },
+      textStyle: baseTextStyle,
     });
 
     const builder = ck.ParagraphBuilder.MakeFromFontProvider(
       style,
       this.fonts.provider,
     );
-    builder.addText(node.content);
+
+    const kerning = node.kerning;
+    if (kerning && Object.keys(kerning).length > 0) {
+      // Per-pair kerning through the paragraph API: letterSpacing is
+      // added after each glyph, so a single-character run with adjusted
+      // spacing widens/tightens exactly one pair gap. Consecutive
+      // characters with equal spacing share a run.
+      let runStart = 0;
+      let runSpacing =
+        node.letterSpacing + kernToPx(kernAt(kerning, 0), node.fontSize);
+      const flush = (end: number) => {
+        if (end <= runStart) {
+          return;
+        }
+        builder.pushStyle(
+          new ck.TextStyle({ ...baseTextStyle, letterSpacing: runSpacing }),
+        );
+        builder.addText(node.content.slice(runStart, end));
+        builder.pop();
+      };
+      for (let i = 1; i < node.content.length; i += 1) {
+        const spacing =
+          node.letterSpacing + kernToPx(kernAt(kerning, i), node.fontSize);
+        if (spacing !== runSpacing) {
+          flush(i);
+          runStart = i;
+          runSpacing = spacing;
+        }
+      }
+      flush(node.content.length);
+    } else {
+      builder.addText(node.content);
+    }
+
     const paragraph = builder.build();
     paragraph.layout(Math.max(node.width, 1));
     builder.delete();
@@ -1070,13 +1200,36 @@ export class SceneRenderer {
     return paragraph;
   }
 
-  private paintKey(paint: Paint): string {
-    return paint.type === "solid"
-      ? paint.color
-      : `${paint.angle}:${paint.stops.map((s) => `${s.offset}${s.color}`).join(",")}`;
+  /**
+   * Paragraph metrics of a text node's last built paragraph (automation
+   * probe: kerning/feature changes move `width`). Null until the node
+   * has rendered as a paragraph.
+   */
+  getTextMetrics(nodeId: string): { width: number; height: number } | null {
+    const entry = this.paragraphCache.get(nodeId);
+    return entry
+      ? {
+          width: entry.paragraph.getLongestLine(),
+          height: entry.paragraph.getHeight(),
+        }
+      : null;
   }
 
-  private makePaint(paint: Paint, node: LogoNode, opacity: number): SkPaint {
+  private paintKey(paint: Paint): string {
+    if (paint.type === "solid") {
+      return paint.color;
+    }
+    const stops = paint.stops
+      .map((s) => `${s.offset}${s.color}${s.alpha ?? 1}`)
+      .join(",");
+    return paint.type === "linear-gradient"
+      ? `l${paint.angle}:${paint.start ? `${paint.start.x},${paint.start.y}` : ""}:${
+          paint.end ? `${paint.end.x},${paint.end.y}` : ""
+        }:${stops}`
+      : `r${paint.cx},${paint.cy},${paint.r},${paint.fx ?? ""},${paint.fy ?? ""}:${stops}`;
+  }
+
+  private makePaint(paint: Paint, box: Bounds, opacity: number): SkPaint {
     const ck = this.canvasKit;
     const skPaint = new ck.Paint();
     skPaint.setAntiAlias(true);
@@ -1088,24 +1241,50 @@ export class SceneRenderer {
       return skPaint;
     }
 
-    const radians = (paint.angle * Math.PI) / 180;
-    const cx = node.x + node.width / 2;
-    const cy = node.y + node.height / 2;
-    const half = Math.max(node.width, node.height) / 2;
-    const dx = Math.cos(radians) * half;
-    const dy = Math.sin(radians) * half;
+    const colors = paint.stops.map((stop) => {
+      const color = ck.parseColorString(stop.color);
+      color[3] = (color[3] ?? 1) * (stop.alpha ?? 1) * opacity;
+      return color;
+    });
+    const positions = paint.stops.map((stop) => stop.offset);
 
-    const shader = ck.Shader.MakeLinearGradient(
-      [cx - dx, cy - dy],
-      [cx + dx, cy + dy],
-      paint.stops.map((stop) => {
-        const color = ck.parseColorString(stop.color);
-        color[3] = (color[3] ?? 1) * opacity;
-        return color;
-      }),
-      paint.stops.map((stop) => stop.offset),
-      ck.TileMode.Clamp,
-    );
+    let shader;
+    if (paint.type === "linear-gradient") {
+      const { start, end } = linearGradientPoints(paint, box);
+      shader = ck.Shader.MakeLinearGradient(
+        [start.x, start.y],
+        [end.x, end.y],
+        colors,
+        positions,
+        ck.TileMode.Clamp,
+      );
+    } else {
+      // Radial coordinates are normalized to the box (SVG
+      // objectBoundingBox): build the shader in unit space and let the
+      // local matrix stretch it — non-square nodes get the same
+      // elliptical falloff the exported SVG shows.
+      const boxMatrix = [box.width, 0, box.x, 0, box.height, box.y, 0, 0, 1];
+      shader =
+        paint.fx !== undefined && paint.fy !== undefined
+          ? ck.Shader.MakeTwoPointConicalGradient(
+              [paint.fx, paint.fy],
+              0,
+              [paint.cx, paint.cy],
+              paint.r,
+              colors,
+              positions,
+              ck.TileMode.Clamp,
+              boxMatrix,
+            )
+          : ck.Shader.MakeRadialGradient(
+              [paint.cx, paint.cy],
+              paint.r,
+              colors,
+              positions,
+              ck.TileMode.Clamp,
+              boxMatrix,
+            );
+    }
     skPaint.setShader(shader);
     shader.delete();
     return skPaint;

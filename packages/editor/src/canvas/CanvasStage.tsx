@@ -2,12 +2,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getCanvasKit } from "../lib/canvaskit";
 import { fontStore } from "../lib/font-store";
 import {
+  KERN_STEP,
+  KERN_STEP_LARGE,
+  pruneKerning,
+  withKernAdjusted,
   type AnchorRef,
   type Bounds,
   type LogoDocument,
   type LogoNode,
   type MeasureSegment,
   type NodePatch,
+  type Paint,
   type PathGeometry,
   type PathNode,
   type PathPoint,
@@ -58,6 +63,14 @@ import {
   zoomAt,
 } from "@openlogo/renderer";
 import { cloneUnits, resolveUnit } from "../lib/group-ops";
+import {
+  type GradientHandlePart,
+  gradientDefinePaint,
+  gradientDragPaint,
+  gradientHandlePoints,
+  localToFraction,
+} from "./gradient-annotator";
+import { GradientAnnotator } from "./GradientAnnotator";
 import { patchFromLocalGeometry } from "../lib/path-node-geometry";
 import { recordTransform } from "../lib/transform-again";
 import {
@@ -183,6 +196,17 @@ type DragState =
       start: Vec2;
       current: Vec2;
       shift: boolean;
+      moved: boolean;
+    }
+  | {
+      /** Gradient annotator (G tool): drag a handle or define a new line. */
+      kind: "gradient";
+      nodeId: string;
+      part: GradientHandlePart | "define";
+      /** Paint being edited, updated per move (previewed, committed on up). */
+      paint: Paint;
+      /** Press point as a fraction of the node box (unrotated). */
+      startFrac: Vec2;
       moved: boolean;
     };
 
@@ -356,9 +380,17 @@ function pointerAngle(local: Vec2, pivot: Vec2): number {
 function TextEditOverlay({
   nodeId,
   onDone,
+  onKern,
 }: {
   nodeId: string;
   onDone: (nodeId: string, content: string, commit: boolean) => void;
+  /** ⌥←/⌥→ with the caret between two glyphs: adjust that pair's kerning. */
+  onKern: (
+    nodeId: string,
+    pairIndex: number,
+    delta: number,
+    draft: string,
+  ) => void;
 }) {
   const document = useDocument();
   const camera = useEditorStore((state) => state.camera);
@@ -397,6 +429,28 @@ function TextEditOverlay({
         } else if (event.key === "Escape") {
           event.stopPropagation();
           onDone(nodeId, draft, false);
+        } else if (
+          event.altKey &&
+          (event.key === "ArrowLeft" || event.key === "ArrowRight")
+        ) {
+          // Illustrator kerning: caret between two glyphs, ⌥←/⌥→
+          // tightens/loosens that pair (⇧ for the coarse step).
+          const target = event.target as HTMLTextAreaElement;
+          const caret = target.selectionStart ?? 0;
+          if (
+            target.selectionEnd === caret &&
+            caret > 0 &&
+            caret < draft.length
+          ) {
+            event.preventDefault();
+            const step = event.shiftKey ? KERN_STEP_LARGE : KERN_STEP;
+            onKern(
+              nodeId,
+              caret - 1,
+              event.key === "ArrowRight" ? step : -step,
+              draft,
+            );
+          }
         }
       }}
       style={{
@@ -406,6 +460,7 @@ function TextEditOverlay({
         height: Math.max(24, node.height * camera.zoom),
         fontFamily: node.fontFamily,
         fontWeight: node.fontWeight,
+        fontStyle: node.fontStyle ?? "normal",
         fontSize: node.fontSize * camera.zoom,
         letterSpacing: node.letterSpacing * camera.zoom,
         lineHeight: node.lineHeight,
@@ -1329,7 +1384,12 @@ export function CanvasStage() {
       return;
     }
     dragRef.current = null;
-    if (drag.kind === "move" || drag.kind === "resize" || drag.kind === "rotate") {
+    if (
+      drag.kind === "move" ||
+      drag.kind === "resize" ||
+      drag.kind === "rotate" ||
+      drag.kind === "gradient"
+    ) {
       documentStore.cancelPreview();
       setHandleHint(null);
     }
@@ -1836,6 +1896,54 @@ export function CanvasStage() {
       return;
     }
 
+    // Gradient annotator (G): grab a handle of the selected node's
+    // gradient, or press anywhere to define a new line/spread by drag.
+    if (state.tool === "gradient") {
+      const doc = documentStore.document;
+      let node =
+        state.selectedNodeIds.length === 1
+          ? doc.nodes[state.selectedNodeIds[0]!]
+          : undefined;
+      if (!node || node.type === "group") {
+        const hit = renderer.hitTest(screen);
+        if (!hit) {
+          return;
+        }
+        setSelection([hit.id]);
+        node = hit;
+      }
+      const artboard = getActiveArtboard(doc);
+      for (const handle of gradientHandlePoints(node)) {
+        const handleScreen = worldToScreen(state.camera, {
+          x: handle.x + artboard.x,
+          y: handle.y + artboard.y,
+        });
+        if (
+          Math.abs(handleScreen.x - screen.x) <= HANDLE_HIT_RADIUS &&
+          Math.abs(handleScreen.y - screen.y) <= HANDLE_HIT_RADIUS
+        ) {
+          dragRef.current = {
+            kind: "gradient",
+            nodeId: node.id,
+            part: handle.part,
+            paint: node.fill,
+            startFrac: localToFraction(node, toArtboardLocal(screen)),
+            moved: false,
+          };
+          return;
+        }
+      }
+      dragRef.current = {
+        kind: "gradient",
+        nodeId: node.id,
+        part: "define",
+        paint: node.fill,
+        startFrac: localToFraction(node, toArtboardLocal(screen)),
+        moved: false,
+      };
+      return;
+    }
+
     // Shape tools drag-to-draw; a plain click (no movement) falls back to
     // placing the default size on pointer-up.
     if (SHAPE_DRAW_TOOLS.has(state.tool)) {
@@ -2333,6 +2441,25 @@ export function CanvasStage() {
       return;
     }
 
+    if (drag.kind === "gradient") {
+      const node = documentStore.document.nodes[drag.nodeId];
+      if (!node || node.type === "group") {
+        dragRef.current = null;
+        return;
+      }
+      const frac = localToFraction(node, local);
+      drag.paint =
+        drag.part === "define"
+          ? gradientDefinePaint(node, drag.paint, drag.startFrac, frac)
+          : gradientDragPaint(node, drag.paint, drag.part, frac);
+      drag.moved = true;
+      documentStore.preview([
+        { nodeId: node.id, patch: { fill: drag.paint } },
+      ]);
+      syncScene();
+      return;
+    }
+
     if (drag.kind === "marquee") {
       drag.current = {
         x: Math.min(drag.startLocal.x, local.x),
@@ -2687,6 +2814,21 @@ export function CanvasStage() {
       return;
     }
 
+    if (drag.kind === "gradient") {
+      if (drag.moved) {
+        // One history entry per annotator gesture; the fill patch's
+        // inverse restores the previous paint exactly.
+        documentStore.apply({
+          type: "update-nodes",
+          updates: [{ nodeId: drag.nodeId, patch: { fill: drag.paint } }],
+        });
+      } else {
+        documentStore.cancelPreview();
+      }
+      syncScene();
+      return;
+    }
+
     if (drag.kind === "draw") {
       // Drag commits the drawn size; a plain click places the default.
       const node = drag.moved
@@ -2859,6 +3001,40 @@ export function CanvasStage() {
     }
   }
 
+  /**
+   * ⌥←/⌥→ in the text-edit overlay: adjust one pair's kerning. Any
+   * pending content edit commits in the same command so the pair index
+   * refers to what the user actually sees; stale entries are pruned.
+   */
+  function kernTextPair(
+    nodeId: string,
+    pairIndex: number,
+    delta: number,
+    draft: string,
+  ) {
+    const node = documentStore.document.nodes[nodeId];
+    if (!node || node.type !== "text") {
+      return;
+    }
+    const kerning = withKernAdjusted(
+      pruneKerning(node.kerning, draft),
+      pairIndex,
+      delta,
+    );
+    documentStore.apply({
+      type: "update-nodes",
+      updates: [
+        {
+          nodeId,
+          patch: {
+            kerning,
+            ...(node.content !== draft ? { content: draft } : {}),
+          },
+        },
+      ],
+    });
+  }
+
   function finishTextEdit(nodeId: string, content: string, commit: boolean) {
     editingTextRef.current = null;
     setEditingTextId(null);
@@ -2883,7 +3059,7 @@ export function CanvasStage() {
         className={`gpu-canvas block h-full w-full touch-none bg-transparent ${
           spaceHeld
             ? "cursor-grab"
-            : tool === "pen" || SHAPE_DRAW_TOOLS.has(tool)
+            : tool === "pen" || tool === "gradient" || SHAPE_DRAW_TOOLS.has(tool)
               ? "cursor-crosshair"
               : "cursor-default"
         }`}
@@ -2894,8 +3070,13 @@ export function CanvasStage() {
         onDoubleClick={handleDoubleClick}
         aria-label="OpenLogo canvas"
       />
+      <GradientAnnotator />
       {editingTextId && (
-        <TextEditOverlay nodeId={editingTextId} onDone={finishTextEdit} />
+        <TextEditOverlay
+          nodeId={editingTextId}
+          onDone={finishTextEdit}
+          onKern={kernTextPair}
+        />
       )}
       {handleHint && (
         <div className="canvas-hint pointer-events-none absolute bottom-20 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full border border-[rgb(255_255_255/0.07)] bg-[rgb(23_21_27/0.88)] px-13 py-6 text-[11.5px] tracking-[0.01em] text-[#e8e6ee] shadow-[0_4px_16px_rgb(20_17_26/0.25)]">

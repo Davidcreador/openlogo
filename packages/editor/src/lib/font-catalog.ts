@@ -12,30 +12,45 @@ import { Data, Effect, Schedule } from "effect";
 
 export type FontCategory = "sans" | "serif" | "display" | "handwriting" | "mono";
 
+export type FontStyleName = "normal" | "italic";
+
 export type FontFamily = {
   /** Display + registration name, matches node.fontFamily. */
   name: string;
   /** Fontsource package id. */
   id: string;
   weights: number[];
+  /** Available cuts; every listed weight exists per style on the CDN. */
+  styles: FontStyleName[];
   category: FontCategory;
 };
 
+const BOTH: FontStyleName[] = ["normal", "italic"];
+const UPRIGHT: FontStyleName[] = ["normal"];
+
 export const BUILTIN_FONTS: FontFamily[] = [
-  { name: "Inter", id: "inter", weights: [400, 500, 600, 700, 800, 900], category: "sans" },
-  { name: "Montserrat", id: "montserrat", weights: [400, 500, 600, 700, 800, 900], category: "sans" },
-  { name: "Poppins", id: "poppins", weights: [400, 500, 600, 700, 800, 900], category: "sans" },
-  { name: "Work Sans", id: "work-sans", weights: [400, 500, 600, 700, 800, 900], category: "sans" },
-  { name: "Raleway", id: "raleway", weights: [400, 500, 600, 700, 800, 900], category: "sans" },
-  { name: "Archivo", id: "archivo", weights: [400, 500, 600, 700, 800, 900], category: "sans" },
-  { name: "Space Grotesk", id: "space-grotesk", weights: [400, 500, 600, 700], category: "sans" },
-  { name: "Oswald", id: "oswald", weights: [400, 500, 600, 700], category: "display" },
-  { name: "Bebas Neue", id: "bebas-neue", weights: [400], category: "display" },
-  { name: "Playfair Display", id: "playfair-display", weights: [400, 500, 600, 700, 800, 900], category: "serif" },
-  { name: "Lora", id: "lora", weights: [400, 500, 600, 700], category: "serif" },
-  { name: "DM Serif Display", id: "dm-serif-display", weights: [400], category: "serif" },
-  { name: "Space Mono", id: "space-mono", weights: [400, 700], category: "mono" },
+  { name: "Inter", id: "inter", weights: [400, 500, 600, 700, 800, 900], styles: BOTH, category: "sans" },
+  { name: "Montserrat", id: "montserrat", weights: [400, 500, 600, 700, 800, 900], styles: BOTH, category: "sans" },
+  { name: "Poppins", id: "poppins", weights: [400, 500, 600, 700, 800, 900], styles: BOTH, category: "sans" },
+  { name: "Work Sans", id: "work-sans", weights: [400, 500, 600, 700, 800, 900], styles: BOTH, category: "sans" },
+  { name: "Raleway", id: "raleway", weights: [400, 500, 600, 700, 800, 900], styles: BOTH, category: "sans" },
+  { name: "Archivo", id: "archivo", weights: [400, 500, 600, 700, 800, 900], styles: BOTH, category: "sans" },
+  { name: "Space Grotesk", id: "space-grotesk", weights: [400, 500, 600, 700], styles: UPRIGHT, category: "sans" },
+  { name: "Oswald", id: "oswald", weights: [400, 500, 600, 700], styles: UPRIGHT, category: "display" },
+  { name: "Bebas Neue", id: "bebas-neue", weights: [400], styles: UPRIGHT, category: "display" },
+  { name: "Playfair Display", id: "playfair-display", weights: [400, 500, 600, 700, 800, 900], styles: BOTH, category: "serif" },
+  { name: "Lora", id: "lora", weights: [400, 500, 600, 700], styles: BOTH, category: "serif" },
+  { name: "DM Serif Display", id: "dm-serif-display", weights: [400], styles: BOTH, category: "serif" },
+  { name: "Space Mono", id: "space-mono", weights: [400, 700], styles: BOTH, category: "mono" },
 ];
+
+/** Nearest available style: italic falls back to normal and vice versa. */
+export function nearestStyle(
+  family: FontFamily,
+  style: FontStyleName,
+): FontStyleName {
+  return family.styles.includes(style) ? style : (family.styles[0] ?? "normal");
+}
 
 export function nearestWeight(family: FontFamily, weight: number): number {
   return family.weights.reduce((best, candidate) =>
@@ -52,7 +67,9 @@ export class FontCatalogError extends Data.TaggedError("FontCatalogError")<{
 const API_URL = "https://api.fontsource.org/v1/fonts?type=google";
 const DB_NAME = "openlogo-fonts";
 const STORE_NAME = "catalog";
-const INDEX_KEY = "index";
+// v2: entries carry `styles` (italics readmitted). Old caches lack the
+// field, so a new key forces one refetch instead of shipping a migration.
+const INDEX_KEY = "index-v2";
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 type CachedIndex = {
@@ -71,8 +88,8 @@ const CATEGORY_MAP: Record<string, FontCategory> = {
 /**
  * Slim an API entry down to what the editor needs. Returns null for
  * families the TTF pipeline can't serve: non-Google mirrors, no latin
- * subset (the CDN path is latin-{weight}-normal.ttf), no upright style,
- * icon packs.
+ * subset (the CDN path is latin-{weight}-{style}.ttf), icon packs.
+ * Italic-only families are kept (styles records what exists).
  */
 function toFamily(raw: unknown): FontFamily | null {
   if (typeof raw !== "object" || raw === null) {
@@ -87,9 +104,14 @@ function toFamily(raw: unknown): FontFamily | null {
     !Array.isArray(subsets) ||
     !subsets.includes("latin") ||
     !Array.isArray(styles) ||
-    !styles.includes("normal") ||
     !Array.isArray(weights)
   ) {
+    return null;
+  }
+  const usableStyles = (["normal", "italic"] as const).filter((style) =>
+    styles.includes(style),
+  );
+  if (usableStyles.length === 0) {
     return null;
   }
   const mapped = CATEGORY_MAP[String(category)];
@@ -102,7 +124,13 @@ function toFamily(raw: unknown): FontFamily | null {
   if (usable.length === 0) {
     return null;
   }
-  return { name: family, id, weights: usable, category: mapped };
+  return {
+    name: family,
+    id,
+    weights: usable,
+    styles: usableStyles,
+    category: mapped,
+  };
 }
 
 /** The built-ins must survive whatever the API says (they seed documents). */

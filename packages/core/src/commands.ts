@@ -52,9 +52,15 @@ export type NodePatch = Partial<
       fontFamily: string;
       fontSize: number;
       fontWeight: number;
+      /** undefined resets to upright. */
+      fontStyle: "normal" | "italic" | undefined;
       letterSpacing: number;
       lineHeight: number;
       align: "left" | "center" | "right";
+      /** undefined clears all manual kerning. */
+      kerning: Record<number, number> | undefined;
+      /** undefined resets OpenType features to font defaults. */
+      otFeatures: Record<string, boolean> | undefined;
       /** undefined detaches the text from its path. */
       onPath: TextPathAttachment | undefined;
     },

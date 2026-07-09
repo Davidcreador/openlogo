@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  Blend,
   Circle,
   Combine,
   Hexagon,
@@ -166,6 +167,12 @@ const AFTER_SHAPES: ToolSpec[] = [
     label: "Shape builder (select 2+ shapes)",
     shortcut: "S",
     icon: Combine,
+  },
+  {
+    id: "gradient",
+    label: "Gradient (drag on the selected shape)",
+    shortcut: "G",
+    icon: Blend,
   },
   { id: "eyedropper", label: "Eyedropper", shortcut: "I", icon: Pipette },
 ];
