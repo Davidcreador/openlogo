@@ -300,11 +300,16 @@ export default function App() {
   }, []);
 
   return (
-    <main className="app-shell">
+    <main className="app-shell grid h-screen grid-rows-[52px_1fr]">
       <TopBar />
-      <div className="app-main">
+      {/* The whole workspace shares one textured surface; the GPU canvas
+          clears to transparent so panels genuinely sit on the same material. */}
+      <div className="app-main grid min-h-0 grid-cols-[72px_minmax(0,1fr)_304px] bg-surface bg-[radial-gradient(var(--color-canvas-dot)_1px,transparent_1.15px)] bg-[size:20px_20px]">
         <Toolbar />
-        <section className="canvas-area" aria-label="Logo canvas workspace">
+        <section
+          className="canvas-area relative min-h-0 min-w-0"
+          aria-label="Logo canvas workspace"
+        >
           <CanvasStage />
           <ZoomControls />
           <PreviewStrip />

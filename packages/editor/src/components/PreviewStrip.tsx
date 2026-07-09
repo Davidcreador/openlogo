@@ -21,10 +21,14 @@ export function PreviewStrip() {
   }, [document]);
 
   return (
-    <div className={`preview-dock ${open ? "" : "collapsed"}`}>
+    <div
+      className={`preview-dock absolute bottom-16 left-16 z-10 overflow-hidden rounded-[12px] border border-panel-hairline bg-card shadow-float ${
+        open ? "" : "collapsed"
+      }`}
+    >
       <button
         type="button"
-        className="preview-toggle"
+        className="preview-toggle flex w-full items-center gap-6 px-12 py-8 text-[10.5px] font-[650] uppercase tracking-[0.07em] text-ink-dim transition-colors duration-140 ease-studio hover:text-ink"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
       >
@@ -32,10 +36,14 @@ export function PreviewStrip() {
         {open ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
       </button>
       {open && (
-        <div className="preview-cards" aria-label="Logo production previews">
+        <div
+          className="flex items-end gap-12 px-12 pb-12 pt-2"
+          aria-label="Logo production previews"
+        >
           {SIZES.map((size) => (
-            <div className="preview-card" key={size}>
+            <div className="preview-card grid justify-items-center gap-4" key={size}>
               <img
+                className="rounded-[6px] border border-panel-hairline bg-white shadow-[0_1px_2px_rgb(28_25_33/0.05)]"
                 src={dataUrl}
                 width={size}
                 height={Math.max(
@@ -44,7 +52,7 @@ export function PreviewStrip() {
                 )}
                 alt={`${size}px preview`}
               />
-              <span>{size}</span>
+              <span className="text-[10px] tabular-nums text-ink-dim">{size}</span>
             </div>
           ))}
         </div>

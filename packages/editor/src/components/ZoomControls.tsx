@@ -22,18 +22,46 @@ export function ZoomControls() {
     setCamera(fitBounds(artboard, viewport.width, viewport.height));
   }
 
+  const button =
+    "grid h-28 min-w-28 place-items-center rounded-m text-ink-dim transition-colors duration-140 ease-studio hover:bg-field hover:text-ink";
+
   return (
-    <div className="zoom-controls" role="group" aria-label="Zoom">
-      <button type="button" onClick={() => zoomBy(1 / 1.25)} aria-label="Zoom out">
+    <div
+      className="zoom-controls absolute bottom-16 right-16 z-10 flex items-center gap-1 rounded-[11px] border border-panel-hairline bg-card p-3 shadow-float"
+      role="group"
+      aria-label="Zoom"
+    >
+      <button
+        type="button"
+        className={button}
+        onClick={() => zoomBy(1 / 1.25)}
+        aria-label="Zoom out"
+      >
         <Minus size={14} />
       </button>
-      <button type="button" className="zoom-value" onClick={fit} title="Fit artboard">
+      <button
+        type="button"
+        className={`${button} zoom-value px-8 text-[11.5px] font-semibold tabular-nums`}
+        onClick={fit}
+        title="Fit artboard"
+      >
         {Math.round(camera.zoom * 100)}%
       </button>
-      <button type="button" onClick={() => zoomBy(1.25)} aria-label="Zoom in">
+      <button
+        type="button"
+        className={button}
+        onClick={() => zoomBy(1.25)}
+        aria-label="Zoom in"
+      >
         <Plus size={14} />
       </button>
-      <button type="button" onClick={fit} title="Fit artboard" aria-label="Fit artboard">
+      <button
+        type="button"
+        className={button}
+        onClick={fit}
+        title="Fit artboard"
+        aria-label="Fit artboard"
+      >
         <Maximize size={14} />
       </button>
     </div>

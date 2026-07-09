@@ -93,6 +93,39 @@ const NODE_ICONS = {
   group: Folder,
 } as const;
 
+/* Recurring utility recipes. Each section is its own card on the panel's
+   paper background; fields share the warm sunken look with an accent
+   focus ring. */
+const SECTION =
+  "inspector-section shrink-0 rounded-card border border-panel-hairline bg-card p-12 shadow-[0_1px_2px_rgb(28_25_33/0.04)]";
+const SECTION_HEAD = "section-head mb-10 flex items-baseline justify-between gap-8";
+const SECTION_H2 =
+  "m-0 text-[10.5px] font-[650] uppercase tracking-[0.08em] text-ink-dim";
+const SECTION_META = "section-meta truncate text-[11px] tabular-nums text-ink-dim";
+const MUTED = "m-0 text-[12px] leading-[1.5] text-ink-dim";
+const FIELD_GRID = "mb-10 grid grid-cols-2 gap-6";
+const FIELD_ROW = "flex gap-6";
+const FILL_ROW = "mb-10 flex items-center gap-6";
+const FILL_SWATCH =
+  "fill-swatch h-28 w-28 flex-none cursor-pointer rounded-field border border-field-border bg-transparent p-2";
+const OPACITY_FIELD = "flex min-w-0 flex-1 items-center gap-6";
+const OPACITY_PCT =
+  "w-30 flex-none text-right text-[10.5px] tabular-nums text-ink-dim";
+const SWATCH =
+  "h-24 w-24 cursor-pointer rounded-[7px] border border-[rgb(28_25_33/0.1)] shadow-[inset_0_1px_0_rgb(255_255_255/0.12)] transition-[transform,box-shadow] duration-140 ease-studio hover:-translate-y-1 hover:scale-[1.08] hover:shadow-[0_2px_6px_rgb(28_25_33/0.18)]";
+const STROKE_HEAD =
+  "mb-6 flex items-center justify-between text-[11px] font-[650] uppercase tracking-[0.06em] text-ink-dim";
+const STROKE_TOGGLE_BASE =
+  "inline-flex items-center gap-5 rounded-field border bg-card px-9 py-4 text-[11.5px] transition-[border-color,color] duration-140 ease-studio";
+const STROKE_TOGGLE = `${STROKE_TOGGLE_BASE} border-field-border text-ink-dim hover:border-accent hover:text-accent`;
+const STROKE_TOGGLE_ACTIVE = `${STROKE_TOGGLE_BASE} border-accent text-accent`;
+const SELECT =
+  "h-28 rounded-field border border-field-border bg-field px-6 text-[12px] text-ink outline-none";
+const TEXT_INPUT =
+  "h-28 rounded-field border border-field-border bg-field px-8 text-[12.5px] text-ink outline-none transition-[border-color,box-shadow] duration-140 ease-studio focus:border-accent focus:bg-card focus:shadow-ring";
+const OUTLINE_BUTTON =
+  "w-full rounded-field border border-dashed border-[rgb(28_25_33/0.22)] bg-transparent px-10 py-7 text-[12px] text-ink-dim transition-[border-color,color] duration-140 ease-studio hover:enabled:border-accent hover:enabled:text-accent disabled:cursor-not-allowed disabled:opacity-50";
+
 /**
  * Numeric field that commits on blur/Enter and follows external changes.
  * The label doubles as a scrubber: drag horizontally to adjust, committing
@@ -197,12 +230,20 @@ function AlignPanel({ nodeIds }: { nodeIds: readonly string[] }) {
     { edge: "bottom", icon: AlignEndHorizontal, label: "Align bottom" },
   ] as const;
 
+  const button =
+    "grid h-24 place-items-center rounded-[5px] text-ink-dim transition-[background-color,color,box-shadow] duration-120 ease-studio hover:enabled:bg-card hover:enabled:text-ink hover:enabled:shadow-[0_1px_2px_rgb(28_25_33/0.1)] disabled:cursor-default disabled:opacity-35";
+
   return (
-    <div className="align-panel" role="group" aria-label="Align and distribute">
+    <div
+      className="mb-10 grid grid-cols-5 gap-2 rounded-m border border-field-border bg-field p-3"
+      role="group"
+      aria-label="Align and distribute"
+    >
       {alignButtons.map(({ edge, icon: Icon, label }) => (
         <button
           key={edge}
           type="button"
+          className={button}
           title={label}
           aria-label={label}
           onClick={() => alignNodes(nodeIds, edge)}
@@ -212,6 +253,7 @@ function AlignPanel({ nodeIds }: { nodeIds: readonly string[] }) {
       ))}
       <button
         type="button"
+        className={button}
         title="Distribute horizontally"
         aria-label="Distribute horizontally"
         disabled={!canDistribute}
@@ -221,6 +263,7 @@ function AlignPanel({ nodeIds }: { nodeIds: readonly string[] }) {
       </button>
       <button
         type="button"
+        className={button}
         title="Distribute vertically"
         aria-label="Distribute vertically"
         disabled={!canDistribute}
@@ -230,6 +273,7 @@ function AlignPanel({ nodeIds }: { nodeIds: readonly string[] }) {
       </button>
       <button
         type="button"
+        className={button}
         title="Flip horizontal"
         aria-label="Flip horizontal"
         onClick={() => flipNodes(nodeIds, "horizontal")}
@@ -238,6 +282,7 @@ function AlignPanel({ nodeIds }: { nodeIds: readonly string[] }) {
       </button>
       <button
         type="button"
+        className={button}
         title="Flip vertical"
         aria-label="Flip vertical"
         onClick={() => flipNodes(nodeIds, "vertical")}
@@ -258,12 +303,20 @@ function FillEditor({
   const isGradient = node.fill.type === "linear-gradient";
   const solidColor = node.fill.type === "solid" ? node.fill.color : "#000000";
 
+  const toggleButton =
+    "flex-1 rounded-[6px] py-4 text-[11.5px] transition-[background-color,color,box-shadow] duration-120 ease-studio";
+  const toggleActive = "bg-card font-semibold text-ink shadow-[0_1px_2px_rgb(28_25_33/0.1)]";
+
   return (
     <>
-      <div className="fill-type-toggle" role="group" aria-label="Fill type">
+      <div
+        className="mb-8 flex gap-2 rounded-m border border-field-border bg-field p-2"
+        role="group"
+        aria-label="Fill type"
+      >
         <button
           type="button"
-          className={isGradient ? "" : "active"}
+          className={`${toggleButton} ${isGradient ? "text-ink-dim" : `active ${toggleActive}`}`}
           onClick={() => {
             if (isGradient) {
               patchSelection({
@@ -282,7 +335,7 @@ function FillEditor({
         </button>
         <button
           type="button"
-          className={isGradient ? "active" : ""}
+          className={`${toggleButton} ${isGradient ? `active ${toggleActive}` : "text-ink-dim"}`}
           onClick={() => {
             if (!isGradient) {
               patchSelection({
@@ -303,21 +356,21 @@ function FillEditor({
       </div>
 
       {node.fill.type === "linear-gradient" ? (
-        <div className="gradient-editor">
+        <div className="mb-10">
           <div
-            className="gradient-bar"
+            className="mb-6 h-14 rounded-[7px] border border-field-border"
             style={{
               background: `linear-gradient(90deg, ${node.fill.stops
                 .map((stop) => `${stop.color} ${stop.offset * 100}%`)
                 .join(", ")})`,
             }}
           />
-          <div className="fill-row">
+          <div className={FILL_ROW}>
             {node.fill.stops.map((stop, index) => (
               <input
                 key={index}
                 type="color"
-                className="fill-swatch"
+                className={FILL_SWATCH}
                 value={stop.color}
                 aria-label={`Gradient stop ${index + 1}`}
                 onChange={(event) => {
@@ -344,10 +397,10 @@ function FillEditor({
           </div>
         </div>
       ) : (
-        <div className="fill-row">
+        <div className={FILL_ROW}>
           <input
             type="color"
-            className="fill-swatch"
+            className={FILL_SWATCH}
             value={solidColor}
             onChange={(event) =>
               patchSelection({
@@ -357,7 +410,7 @@ function FillEditor({
             aria-label="Fill color"
           />
           <input
-            className="fill-hex"
+            className="fill-hex h-28 w-72 flex-none rounded-field border border-field-border bg-field px-8 text-[12px] uppercase tabular-nums outline-none transition-[border-color,box-shadow] duration-140 ease-studio focus:border-accent focus:bg-card focus:shadow-ring"
             value={solidColor.toUpperCase()}
             onChange={(event) => {
               const value = event.target.value.trim();
@@ -367,19 +420,20 @@ function FillEditor({
             }}
             aria-label="Fill hex"
           />
-          <div className="opacity-field">
+          <div className={OPACITY_FIELD}>
             <input
               type="range"
               min="0"
               max="1"
               step="0.01"
+              className="min-w-0 flex-1 accent-accent"
               value={node.opacity}
               onChange={(event) =>
                 patchSelection({ opacity: Number(event.target.value) })
               }
               aria-label="Opacity"
             />
-            <span>{Math.round(node.opacity * 100)}%</span>
+            <span className={OPACITY_PCT}>{Math.round(node.opacity * 100)}%</span>
           </div>
         </div>
       )}
@@ -397,12 +451,12 @@ function StrokeEditor({
   const stroke = node.stroke;
 
   return (
-    <div className="stroke-block">
-      <div className="stroke-head">
+    <div className="mb-10">
+      <div className={STROKE_HEAD}>
         <span>Stroke</span>
         <button
           type="button"
-          className="stroke-toggle"
+          className={STROKE_TOGGLE}
           onClick={() =>
             patchSelection({
               stroke: stroke
@@ -415,10 +469,10 @@ function StrokeEditor({
         </button>
       </div>
       {stroke && (
-        <div className="fill-row">
+        <div className={FILL_ROW}>
           <input
             type="color"
-            className="fill-swatch"
+            className={FILL_SWATCH}
             value={stroke.color}
             aria-label="Stroke color"
             onChange={(event) =>
@@ -439,7 +493,7 @@ function StrokeEditor({
           {node.type !== "text" && (
             <button
               type="button"
-              className="stroke-toggle"
+              className={STROKE_TOGGLE}
               title="Outline stroke into a filled path"
               onClick={() => void expandStrokeOp(node.id)}
             >
@@ -464,10 +518,10 @@ function DesignSection({
   const [copiesCount, setCopiesCount] = useState(6);
 
   return (
-    <section className="inspector-section">
-      <header className="section-head">
-        <h2>Design</h2>
-        <span className="section-meta">
+    <section className={SECTION}>
+      <header className={SECTION_HEAD}>
+        <h2 className={SECTION_H2}>Design</h2>
+        <span className={SECTION_META}>
           {node.type === "path"
             ? node.shape
               ? shapeDisplayName(node.shape.kind)
@@ -478,7 +532,7 @@ function DesignSection({
 
       <AlignPanel nodeIds={[node.id]} />
 
-      <div className="field-grid">
+      <div className={FIELD_GRID}>
         <NumberField label="X" unit="px" value={node.x} onCommit={(x) => patchSelection({ x })} />
         <NumberField label="Y" unit="px" value={node.y} onCommit={(y) => patchSelection({ y })} />
         <NumberField
@@ -557,12 +611,12 @@ function DesignSection({
       <FillEditor node={node} patchSelection={patchSelection} />
       <StrokeEditor node={node} patchSelection={patchSelection} />
 
-      <div className="stroke-head">
+      <div className={STROKE_HEAD}>
         <span>Blend</span>
       </div>
-      <div className="field-row" style={{ marginBottom: 10 }}>
+      <div className={`${FIELD_ROW} mb-10`}>
         <select
-          className="font-select"
+          className={`${SELECT} min-w-0 flex-1`}
           value={node.blendMode ?? "normal"}
           aria-label="Blend mode"
           onChange={(event) =>
@@ -583,7 +637,7 @@ function DesignSection({
         </select>
       </div>
 
-      <div className="rotate-copies">
+      <div className="rotate-copies mb-10 flex items-center gap-6">
         <NumberField
           label="×"
           value={copiesCount}
@@ -593,7 +647,7 @@ function DesignSection({
         />
         <button
           type="button"
-          className="stroke-toggle"
+          className={STROKE_TOGGLE}
           title="Repeat rotated copies around the artboard centre"
           onClick={() => {
             const ids = rotateCopies(node.id, copiesCount);
@@ -606,15 +660,15 @@ function DesignSection({
         </button>
       </div>
 
-      <div className="stroke-head">
+      <div className={STROKE_HEAD}>
         <span>Quick fill</span>
       </div>
-      <div className="swatch-row">
+      <div className={FIELD_ROW}>
         {document.palettes[0]?.colors.map((color) => (
           <button
             key={color}
             type="button"
-            className="swatch"
+            className={SWATCH}
             style={{ background: color }}
             aria-label={`Use ${color}`}
             onClick={() => patchSelection({ fill: { type: "solid", color } })}
@@ -623,10 +677,11 @@ function DesignSection({
       </div>
 
       {node.type === "text" && (
-        <div className="type-block">
-          <label className="text-field">
+        <div className="mt-12 grid gap-8">
+          <label className="grid gap-4 text-[11px] text-ink-dim">
             <span>Text</span>
             <input
+              className={TEXT_INPUT}
               value={node.content}
               onChange={(event) =>
                 patchSelection({ content: event.target.value })
@@ -634,9 +689,9 @@ function DesignSection({
             />
           </label>
 
-          <div className="field-row">
+          <div className={FIELD_ROW}>
             <select
-              className="font-select"
+              className={`${SELECT} min-w-0 flex-1`}
               value={catalogEntry(node.fontFamily)?.name ?? "Inter"}
               onChange={(event) => {
                 const family = FONT_CATALOG.find(
@@ -658,7 +713,7 @@ function DesignSection({
               ))}
             </select>
             <select
-              className="weight-select"
+              className={`${SELECT} w-104`}
               value={node.fontWeight}
               onChange={(event) => {
                 const weight = Number(event.target.value);
@@ -677,7 +732,7 @@ function DesignSection({
             </select>
           </div>
 
-          <div className="field-grid">
+          <div className={FIELD_GRID}>
             <NumberField
               label="Size"
               unit="px"
@@ -700,7 +755,11 @@ function DesignSection({
                 patchSelection({ lineHeight: Math.max(0.5, lineHeight) })
               }
             />
-            <div className="align-group" role="group" aria-label="Text align">
+            <div
+              className="flex h-28 gap-2 overflow-hidden rounded-field border border-field-border bg-field p-2"
+              role="group"
+              aria-label="Text align"
+            >
               {(
                 [
                   ["left", AlignLeft],
@@ -711,7 +770,11 @@ function DesignSection({
                 <button
                   key={align}
                   type="button"
-                  className={node.align === align ? "active" : ""}
+                  className={`grid flex-1 place-items-center rounded-[4px] transition-[background-color,color] duration-120 ease-studio ${
+                    node.align === align
+                      ? "active bg-card text-accent shadow-[0_1px_2px_rgb(28_25_33/0.1)]"
+                      : "text-ink-dim hover:text-ink"
+                  }`}
                   onClick={() => patchSelection({ align })}
                   title={`Align ${align}`}
                   aria-label={`Align ${align}`}
@@ -728,7 +791,7 @@ function DesignSection({
 
           <button
             type="button"
-            className="outline-button"
+            className={OUTLINE_BUTTON}
             disabled={node.content.length === 0 || Boolean(node.onPath)}
             title={
               node.onPath ? "Detach from path first" : "Convert to outlines"
@@ -769,24 +832,25 @@ function TextPathControls({
   );
 
   return (
-    <div className="text-path-block">
-      <div className="stroke-head">
+    <div className="text-path-block mt-10">
+      <div className={STROKE_HEAD}>
         <span>On path</span>
         <button
           type="button"
-          className="stroke-toggle"
+          className={STROKE_TOGGLE}
           aria-label="Detach from path"
           onClick={() => detachTextFromPath(node.id)}
         >
           Detach
         </button>
       </div>
-      <div className="fill-row">
+      <div className={FILL_ROW}>
         <input
           type="range"
           min="0"
           max={length}
           step="1"
+          className="flex-1 accent-accent"
           value={Math.min(attachment.startOffset, length)}
           aria-label="Path offset"
           onChange={(event) =>
@@ -808,7 +872,7 @@ function TextPathControls({
       </div>
       <button
         type="button"
-        className={`stroke-toggle${attachment.flip ? " active" : ""}`}
+        className={attachment.flip ? `${STROKE_TOGGLE_ACTIVE} active` : STROKE_TOGGLE}
         aria-label="Flip side"
         aria-pressed={attachment.flip}
         onClick={() =>
@@ -884,11 +948,11 @@ function EffectsSection({ node }: { node: LogoNode }) {
   }
 
   return (
-    <section className="inspector-section">
-      <header className="section-head">
-        <h2>Effects</h2>
+    <section className={SECTION}>
+      <header className={SECTION_HEAD}>
+        <h2 className={SECTION_H2}>Effects</h2>
         <select
-          className="effect-add"
+          className="rounded-field border border-field-border bg-card px-6 py-3 text-[11px] text-ink-dim"
           value=""
           aria-label="Add effect"
           onChange={(event) => {
@@ -907,16 +971,18 @@ function EffectsSection({ node }: { node: LogoNode }) {
       </header>
 
       {effects.length === 0 ? (
-        <p className="muted">No effects. Add a shadow, outline, bevel or glow.</p>
+        <p className={MUTED}>No effects. Add a shadow, outline, bevel or glow.</p>
       ) : (
-        <div className="effect-rows">
+        <div className="flex flex-col gap-8">
           {effects.map((effect, index) => (
             <div
               key={`${effect.type}-${index}`}
-              className={`effect-row${effect.enabled ? "" : " is-off"}`}
+              className={`effect-row rounded-field border border-field-border px-8 pb-5 pt-7${
+                effect.enabled ? "" : " is-off"
+              }`}
             >
-              <div className="effect-head">
-                <label className="effect-toggle">
+              <div className="mb-6 flex items-center justify-between">
+                <label className="inline-flex cursor-pointer items-center gap-6 text-[12px] font-semibold text-ink">
                   <input
                     type="checkbox"
                     checked={effect.enabled}
@@ -929,7 +995,7 @@ function EffectsSection({ node }: { node: LogoNode }) {
                 </label>
                 <button
                   type="button"
-                  className="stroke-toggle"
+                  className={STROKE_TOGGLE}
                   aria-label={`Remove ${EFFECT_LABELS[effect.type]}`}
                   onClick={() =>
                     setEffects(effects.filter((_, i) => i !== index))
@@ -940,7 +1006,11 @@ function EffectsSection({ node }: { node: LogoNode }) {
               </div>
 
               {effect.type === "drop-shadow" && (
-                <div className="fill-row effect-params">
+                <div
+                  className={`${FILL_ROW} effect-params flex-wrap${
+                    effect.enabled ? "" : " opacity-45"
+                  }`}
+                >
                   <NumberField
                     label="X"
                     value={effect.dx}
@@ -960,7 +1030,7 @@ function EffectsSection({ node }: { node: LogoNode }) {
                   />
                   <input
                     type="color"
-                    className="fill-swatch"
+                    className={FILL_SWATCH}
                     value={effect.color}
                     aria-label="Shadow color"
                     onChange={(event) =>
@@ -982,7 +1052,11 @@ function EffectsSection({ node }: { node: LogoNode }) {
               )}
 
               {effect.type === "outline" && (
-                <div className="fill-row effect-params">
+                <div
+                  className={`${FILL_ROW} effect-params flex-wrap${
+                    effect.enabled ? "" : " opacity-45"
+                  }`}
+                >
                   <NumberField
                     label="W"
                     unit="px"
@@ -994,7 +1068,7 @@ function EffectsSection({ node }: { node: LogoNode }) {
                   />
                   <input
                     type="color"
-                    className="fill-swatch"
+                    className={FILL_SWATCH}
                     value={effect.color}
                     aria-label="Outline color"
                     onChange={(event) =>
@@ -1016,7 +1090,11 @@ function EffectsSection({ node }: { node: LogoNode }) {
               )}
 
               {effect.type === "bevel" && (
-                <div className="fill-row effect-params">
+                <div
+                  className={`${FILL_ROW} effect-params flex-wrap${
+                    effect.enabled ? "" : " opacity-45"
+                  }`}
+                >
                   <NumberField
                     label="Size"
                     unit="px"
@@ -1048,7 +1126,11 @@ function EffectsSection({ node }: { node: LogoNode }) {
               )}
 
               {effect.type === "glow" && (
-                <div className="fill-row effect-params">
+                <div
+                  className={`${FILL_ROW} effect-params flex-wrap${
+                    effect.enabled ? "" : " opacity-45"
+                  }`}
+                >
                   <NumberField
                     label="Blur"
                     value={effect.blur}
@@ -1058,7 +1140,7 @@ function EffectsSection({ node }: { node: LogoNode }) {
                   />
                   <input
                     type="color"
-                    className="fill-swatch"
+                    className={FILL_SWATCH}
                     value={effect.color}
                     aria-label="Glow color"
                     onChange={(event) =>
@@ -1099,17 +1181,17 @@ function GroupSection({ group }: { group: GroupNode }) {
   }
 
   return (
-    <section className="inspector-section">
-      <header className="section-head">
-        <h2>Group</h2>
-        <span className="section-meta">
+    <section className={SECTION}>
+      <header className={SECTION_HEAD}>
+        <h2 className={SECTION_H2}>Group</h2>
+        <span className={SECTION_META}>
           {leafCount} object{leafCount === 1 ? "" : "s"}
         </span>
       </header>
 
       <AlignPanel nodeIds={[group.id]} />
 
-      <div className="field-grid">
+      <div className={FIELD_GRID}>
         <NumberField
           label="X"
           unit="px"
@@ -1150,13 +1232,14 @@ function GroupSection({ group }: { group: GroupNode }) {
         />
       </div>
 
-      <div className="fill-row">
-        <div className="opacity-field">
+      <div className={FILL_ROW}>
+        <div className={OPACITY_FIELD}>
           <input
             type="range"
             min="0"
             max="1"
             step="0.01"
+            className="min-w-0 flex-1 accent-accent"
             value={group.opacity}
             onChange={(event) =>
               documentStore.apply({
@@ -1171,18 +1254,18 @@ function GroupSection({ group }: { group: GroupNode }) {
             }
             aria-label="Group opacity"
           />
-          <span>{Math.round(group.opacity * 100)}%</span>
+          <span className={OPACITY_PCT}>{Math.round(group.opacity * 100)}%</span>
         </div>
       </div>
 
       {/* Blend mode lives on the group itself: the renderer composites
           the whole subtree as one layer, not per child. */}
-      <div className="stroke-head">
+      <div className={STROKE_HEAD}>
         <span>Blend</span>
       </div>
-      <div className="field-row" style={{ marginBottom: 10 }}>
+      <div className={`${FIELD_ROW} mb-10`}>
         <select
-          className="font-select"
+          className={`${SELECT} min-w-0 flex-1`}
           value={group.blendMode ?? "normal"}
           aria-label="Blend mode"
           onChange={(event) =>
@@ -1213,7 +1296,7 @@ function GroupSection({ group }: { group: GroupNode }) {
 
       <button
         type="button"
-        className="outline-button"
+        className={OUTLINE_BUTTON}
         onClick={() => {
           const freed = ungroupSelection([group.id]);
           if (freed.length > 0) {
@@ -1235,17 +1318,17 @@ function SwatchesSection() {
   }
 
   return (
-    <section className="inspector-section">
-      <header className="section-head">
-        <h2>Brand colors</h2>
-        <span className="section-meta">{palette.colors.length}</span>
+    <section className={SECTION}>
+      <header className={SECTION_HEAD}>
+        <h2 className={SECTION_H2}>Brand colors</h2>
+        <span className={SECTION_META}>{palette.colors.length}</span>
       </header>
-      <div className="swatch-row">
+      <div className={FIELD_ROW}>
         {palette.colors.map((color, index) => (
           <input
             key={`${index}-${color}`}
             type="color"
-            className="swatch swatch-editable"
+            className={`swatch-editable ${SWATCH}`}
             defaultValue={color}
             aria-label={`Edit brand color ${index + 1}`}
             title="Edit — recolors every use"
@@ -1257,7 +1340,7 @@ function SwatchesSection() {
           />
         ))}
       </div>
-      <p className="muted" style={{ marginTop: 8 }}>
+      <p className={`${MUTED} mt-8`}>
         Editing a swatch recolors every object using it.
       </p>
     </section>
@@ -1511,10 +1594,10 @@ function LayersSection() {
   }
 
   return (
-    <section className="inspector-section">
-      <header className="section-head">
-        <h2>Layers</h2>
-        <span className="section-meta">
+    <section className={SECTION}>
+      <header className={SECTION_HEAD}>
+        <h2 className={SECTION_H2}>Layers</h2>
+        <span className={SECTION_META}>
           {objectCount} object{objectCount === 1 ? "" : "s"}
         </span>
       </header>
@@ -1667,32 +1750,39 @@ function AssistantSection() {
   const setReview = useEditorStore((state) => state.setReview);
 
   return (
-    <section className="inspector-section">
-      <header className="section-head">
-        <h2>Design mate</h2>
+    <section className={SECTION}>
+      <header className={SECTION_HEAD}>
+        <h2 className={SECTION_H2}>Design mate</h2>
       </header>
       <button
         type="button"
-        className="primary-button"
+        className="flex w-full items-center justify-center gap-7 rounded-m bg-linear-to-b from-[#5d77f7] to-accent px-10 py-8 text-[12.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.22),0_1px_3px_rgb(79_107_246/0.35)] transition-[filter] duration-140 ease-studio hover:brightness-[1.08]"
         onClick={() => setReview(analyzeLogoDocument(documentStore.document))}
       >
         <Sparkles size={14} />
         Review active logo
       </button>
       {review && (
-        <div className="agent-review">
+        <div className="mt-10">
           {review.findings.length === 0 ? (
-            <p className="muted">No issues found in this pass.</p>
+            <p className={MUTED}>No issues found in this pass.</p>
           ) : (
-            <ul>
+            <ul className="m-0 grid list-none gap-8 p-0">
               {review.findings.map((finding) => (
                 <li
                   key={`${finding.title}-${finding.detail}`}
                   data-severity={finding.severity}
+                  className={`rounded-[7px] border-l-[3px] px-10 py-8 text-[12px] ${
+                    finding.severity === "warning"
+                      ? "border-[#f59e0b] bg-[#fdf6e9]"
+                      : finding.severity === "strong"
+                        ? "border-danger bg-[#fdf1f0]"
+                        : "border-accent bg-accent-soft"
+                  }`}
                 >
-                  <span>{finding.title}</span>
-                  <p>{finding.detail}</p>
-                  <em>{finding.action}</em>
+                  <span className="font-[650]">{finding.title}</span>
+                  <p className="mx-0 my-4 text-[#55515c]">{finding.detail}</p>
+                  <em className="text-[11.5px] text-ink-dim">{finding.action}</em>
                 </li>
               ))}
             </ul>
@@ -1725,16 +1815,16 @@ function MultiDesignSection({
   );
 
   return (
-    <section className="inspector-section">
-      <header className="section-head">
-        <h2>Design</h2>
-        <span className="section-meta">{nodes.length} selected</span>
+    <section className={SECTION}>
+      <header className={SECTION_HEAD}>
+        <h2 className={SECTION_H2}>Design</h2>
+        <span className={SECTION_META}>{nodes.length} selected</span>
       </header>
       <AlignPanel nodeIds={nodes.map((node) => node.id)} />
       {textPathPair && (
         <button
           type="button"
-          className="outline-button"
+          className={OUTLINE_BUTTON}
           title="Lay the text out along the selected path"
           onClick={() => {
             attachTextToPath(textPathPair.text.id, textPathPair.path.id);
@@ -1744,10 +1834,10 @@ function MultiDesignSection({
           Put on path
         </button>
       )}
-      <div className="fill-row">
+      <div className={FILL_ROW}>
         <input
           type="color"
-          className="fill-swatch"
+          className={FILL_SWATCH}
           value={fillColor}
           onChange={(event) =>
             patchSelection({
@@ -1756,27 +1846,28 @@ function MultiDesignSection({
           }
           aria-label="Fill color"
         />
-        <div className="opacity-field">
+        <div className={OPACITY_FIELD}>
           <input
             type="range"
             min="0"
             max="1"
             step="0.01"
+            className="min-w-0 flex-1 accent-accent"
             value={first.opacity}
             onChange={(event) =>
               patchSelection({ opacity: Number(event.target.value) })
             }
             aria-label="Opacity"
           />
-          <span>{Math.round(first.opacity * 100)}%</span>
+          <span className={OPACITY_PCT}>{Math.round(first.opacity * 100)}%</span>
         </div>
       </div>
-      <div className="swatch-row">
+      <div className={FIELD_ROW}>
         {document.palettes[0]?.colors.map((color) => (
           <button
             key={color}
             type="button"
-            className="swatch"
+            className={SWATCH}
             style={{ background: color }}
             aria-label={`Use ${color}`}
             onClick={() => patchSelection({ fill: { type: "solid", color } })}
@@ -1812,8 +1903,11 @@ export function Inspector() {
   // selection-driven layout changes above never shift the layer rows
   // (double-click rename needs rows that hold still between clicks).
   return (
-    <aside className="inspector" aria-label="Inspector">
-      <div className="inspector-card">
+    <aside
+      className="inspector m-16 ml-0 flex min-h-0 flex-col gap-12 overflow-hidden"
+      aria-label="Inspector"
+    >
+      <div className="inspector-card flex min-h-0 flex-initial flex-col gap-8 overflow-y-auto rounded-panel border border-panel-hairline bg-panel p-8 shadow-panel">
       {selectedNodes.length > 1 ? (
         <MultiDesignSection
           nodes={selectedNodes}
@@ -1833,42 +1927,46 @@ export function Inspector() {
           <EffectsSection node={selectedNodes[0]!} />
         </>
       ) : (
-        <section className="inspector-section empty-state">
-          <span className="empty-state-mark">
+        <section
+          className={`${SECTION} grid justify-items-center gap-6 px-14 pb-18 pt-22 text-center`}
+        >
+          <span className="mb-4 grid h-34 w-34 place-items-center rounded-[10px] border border-[rgb(79_107_246/0.18)] bg-[linear-gradient(135deg,var(--color-accent-soft),#e4e9fd)] text-accent">
             <Shapes size={16} strokeWidth={1.75} />
           </span>
-          <strong>Nothing selected</strong>
-          <p>
+          <strong className="text-[12.5px] font-[650]">Nothing selected</strong>
+          <p className="m-0 text-[11.5px] leading-[1.5] text-ink-dim">
             Select an object on the canvas to edit it,
             <br />
             or start drawing with the tools.
           </p>
-          <div className="empty-shortcuts">
-            <span>
-              <kbd>V</kbd> Select
-            </span>
-            <span>
-              <kbd>R</kbd> Rectangle
-            </span>
-            <span>
-              <kbd>O</kbd> Ellipse
-            </span>
-            <span>
-              <kbd>P</kbd> Pen
-            </span>
-            <span>
-              <kbd>T</kbd> Text
-            </span>
-            <span>
-              <kbd>⌘G</kbd> Group
-            </span>
+          <div className="mt-12 grid grid-cols-[auto_auto] justify-center gap-x-10 gap-y-6">
+            {(
+              [
+                ["V", "Select"],
+                ["R", "Rectangle"],
+                ["O", "Ellipse"],
+                ["P", "Pen"],
+                ["T", "Text"],
+                ["⌘G", "Group"],
+              ] as const
+            ).map(([key, label]) => (
+              <span
+                key={key}
+                className="flex items-center gap-7 text-[11px] text-ink-dim"
+              >
+                <kbd>{key}</kbd> {label}
+              </span>
+            ))}
           </div>
         </section>
       )}
       <SwatchesSection />
       <AssistantSection />
       </div>
-      <div className="inspector-card inspector-layers">
+      {/* Bottom-anchored and never squeezed by the card above: layout
+          changes there must not move the rows (double-click rename
+          relies on it). */}
+      <div className="inspector-card inspector-layers mt-auto flex max-h-[44%] flex-none flex-col gap-8 overflow-y-auto rounded-panel border border-panel-hairline bg-panel p-8 shadow-panel">
         <LayersSection />
       </div>
     </aside>

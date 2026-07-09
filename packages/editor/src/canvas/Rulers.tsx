@@ -216,29 +216,37 @@ export function CanvasRulers({
     };
   }, [draw]);
 
+  // Frosted panel material shared by both strips and the corner square.
+  const material =
+    "absolute bg-[rgb(250_249_247/0.66)] backdrop-blur-[10px] backdrop-saturate-[1.15]";
+  const strip = `ruler ${material} z-15 overflow-hidden transition-colors duration-140 ease-studio hover:bg-[rgb(250_249_247/0.88)]`;
+  const cursor = "ruler-cursor pointer-events-none absolute left-0 top-0 bg-accent opacity-0";
+
   return (
     <>
       <div
-        className="ruler ruler-top"
+        className={`${strip} ruler-top left-20 right-0 top-0 h-20 cursor-row-resize shadow-[inset_0_-1px_0_var(--color-panel-border)]`}
         onPointerDown={onGuideStart("h")}
         onPointerMove={onGuideMove}
         onPointerUp={onGuideEnd}
         title="Drag down to add a horizontal guide"
       >
-        <canvas ref={topRef} />
-        <div ref={cursorTopRef} className="ruler-cursor" />
+        <canvas ref={topRef} className="pointer-events-none block h-full w-full" />
+        <div ref={cursorTopRef} className={`${cursor} h-full w-px`} />
       </div>
       <div
-        className="ruler ruler-left"
+        className={`${strip} ruler-left bottom-0 left-0 top-20 w-20 cursor-col-resize shadow-[inset_-1px_0_0_var(--color-panel-border)]`}
         onPointerDown={onGuideStart("v")}
         onPointerMove={onGuideMove}
         onPointerUp={onGuideEnd}
         title="Drag right to add a vertical guide"
       >
-        <canvas ref={leftRef} />
-        <div ref={cursorLeftRef} className="ruler-cursor" />
+        <canvas ref={leftRef} className="pointer-events-none block h-full w-full" />
+        <div ref={cursorLeftRef} className={`${cursor} h-px w-full`} />
       </div>
-      <div className="ruler-corner" />
+      <div
+        className={`ruler-corner ${material} left-0 top-0 z-16 h-20 w-20 shadow-[inset_-1px_0_0_var(--color-panel-border),inset_0_-1px_0_var(--color-panel-border)]`}
+      />
     </>
   );
 }

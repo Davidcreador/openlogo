@@ -37,6 +37,13 @@ const SHAPE_TOOL_IDS = new Set(SHAPE_TOOLS.map((item) => item.id));
 
 const LONG_PRESS_MS = 350;
 
+const TOOL_BUTTON =
+  "toolbar-button grid h-34 w-34 place-items-center rounded-[9px] transition-[background-color,color,box-shadow] duration-140 ease-studio";
+const TOOL_BUTTON_ACTIVE =
+  "bg-linear-to-b from-[#5d77f7] to-accent text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.24),0_2px_8px_rgb(79_107_246/0.45)]";
+const TOOL_BUTTON_IDLE =
+  "text-chrome-dim hover:bg-chrome-raised hover:text-chrome-text";
+
 /**
  * Rectangle tool slot with a shape-library flyout: click activates the
  * remembered shape, long-press (or the corner caret) opens the library.
@@ -84,10 +91,12 @@ function ShapeToolSlot() {
   }
 
   return (
-    <div className="tool-flyout-anchor" ref={anchorRef}>
+    <div className="tool-flyout-anchor relative" ref={anchorRef}>
       <button
         type="button"
-        className={`toolbar-button has-flyout ${active ? "active" : ""}`}
+        className={`${TOOL_BUTTON} relative ${
+          active ? `active ${TOOL_BUTTON_ACTIVE}` : TOOL_BUTTON_IDLE
+        }`}
         onPointerDown={() => {
           openedByPress.current = false;
           clearPressTimer();
@@ -172,7 +181,9 @@ export function Toolbar() {
       <button
         key={item.id}
         type="button"
-        className={`toolbar-button ${tool === item.id ? "active" : ""}`}
+        className={`${TOOL_BUTTON} ${
+          tool === item.id ? `active ${TOOL_BUTTON_ACTIVE}` : TOOL_BUTTON_IDLE
+        }`}
         onClick={() => setTool(item.id)}
         title={title}
         aria-label={title}
@@ -184,7 +195,10 @@ export function Toolbar() {
   };
 
   return (
-    <nav className="toolbar" aria-label="Tools">
+    <nav
+      className="toolbar mt-16 flex flex-col items-center gap-2 self-start justify-self-center rounded-panel border border-[rgb(0_0_0/0.5)] bg-linear-to-b from-[#1c1a22] to-chrome p-6 shadow-[inset_0_1px_0_var(--color-chrome-hairline),0_2px_6px_rgb(20_17_26/0.18),0_14px_36px_rgb(20_17_26/0.26)]"
+      aria-label="Tools"
+    >
       {renderButton({
         id: "select",
         label: "Select",

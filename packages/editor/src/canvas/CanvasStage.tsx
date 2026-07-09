@@ -364,7 +364,7 @@ function TextEditOverlay({
   return (
     <textarea
       ref={inputRef}
-      className="text-edit-overlay"
+      className="text-edit-overlay absolute z-20 m-0 resize-none overflow-hidden whitespace-nowrap border border-dashed border-accent bg-transparent p-0 outline-none"
       value={draft}
       onChange={(event) => setDraft(event.target.value.replace(/\n/g, ""))}
       onBlur={() => onDone(nodeId, draft, true)}
@@ -2165,12 +2165,16 @@ export function CanvasStage() {
   }
 
   return (
-    <div ref={containerRef} className="canvas-host">
+    <div ref={containerRef} className="canvas-host absolute inset-0 overflow-hidden">
       <canvas
         ref={canvasRef}
-        className={`gpu-canvas ${
-          tool === "pen" || SHAPE_DRAW_TOOLS.has(tool) ? "is-pen" : ""
-        } ${spaceHeld ? "is-pan" : ""}`}
+        className={`gpu-canvas block h-full w-full touch-none bg-transparent ${
+          spaceHeld
+            ? "cursor-grab"
+            : tool === "pen" || SHAPE_DRAW_TOOLS.has(tool)
+              ? "cursor-crosshair"
+              : "cursor-default"
+        }`}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -2182,7 +2186,11 @@ export function CanvasStage() {
       {editingTextId && (
         <TextEditOverlay nodeId={editingTextId} onDone={finishTextEdit} />
       )}
-      {handleHint && <div className="canvas-hint">{handleHint}</div>}
+      {handleHint && (
+        <div className="canvas-hint pointer-events-none absolute bottom-20 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full border border-[rgb(255_255_255/0.07)] bg-[rgb(23_21_27/0.88)] px-13 py-6 text-[11.5px] tracking-[0.01em] text-[#e8e6ee] shadow-[0_4px_16px_rgb(20_17_26/0.25)]">
+          {handleHint}
+        </div>
+      )}
       <CanvasRulers
         onGuideStart={startGuideFromRuler}
         onGuideMove={moveGuideFromRuler}
