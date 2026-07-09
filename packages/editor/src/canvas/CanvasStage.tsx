@@ -775,6 +775,90 @@ export function CanvasStage() {
     };
   }, [syncScene]);
 
+  // Wheel zoom/pan must use a native non-passive listener: React 17+
+  // attaches synthetic onWheel passively at the root, so preventDefault()
+  // there is ignored and a ctrlKey pinch-wheel zooms the whole page.
+  useEffect(() => {
+    const maybeCanvas = canvasRef.current;
+    if (!maybeCanvas) {
+      return;
+    }
+    const canvas: HTMLCanvasElement = maybeCanvas;
+
+    function screenPoint(point: { clientX: number; clientY: number }): Vec2 {
+      const rect = canvas.getBoundingClientRect();
+      return { x: point.clientX - rect.left, y: point.clientY - rect.top };
+    }
+
+    function onWheel(event: WheelEvent) {
+      // Consume pinch AND scroll: pinch would page-zoom, scroll would
+      // rubber-band / back-swipe ancestors.
+      event.preventDefault();
+      const camera = useEditorStore.getState().camera;
+      if (event.ctrlKey || event.metaKey) {
+        const factor = Math.exp(-event.deltaY * 0.0015);
+        setCamera(zoomAt(camera, screenPoint(event), camera.zoom * factor));
+      } else {
+        setCamera(panBy(camera, { x: -event.deltaX, y: -event.deltaY }));
+      }
+    }
+
+    // Safari trackpad pinch arrives as gesture* events, not ctrlKey wheels.
+    type SafariGestureEvent = Event & {
+      scale?: number;
+      clientX?: number;
+      clientY?: number;
+    };
+    let gestureScale = 1;
+    function onGestureStart(event: Event) {
+      event.preventDefault();
+      gestureScale = (event as SafariGestureEvent).scale ?? 1;
+    }
+    function onGestureChange(event: Event) {
+      event.preventDefault();
+      const gesture = event as SafariGestureEvent;
+      const scale = gesture.scale ?? 1;
+      if (gestureScale === 0) {
+        gestureScale = scale;
+        return;
+      }
+      const factor = scale / gestureScale;
+      gestureScale = scale;
+      const screen =
+        gesture.clientX !== undefined && gesture.clientY !== undefined
+          ? screenPoint({ clientX: gesture.clientX, clientY: gesture.clientY })
+          : { x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 };
+      const camera = useEditorStore.getState().camera;
+      setCamera(zoomAt(camera, screen, camera.zoom * factor));
+    }
+    function onGestureEnd(event: Event) {
+      event.preventDefault();
+    }
+
+    // Pinch over rulers/panels must not page-zoom either; pinch wheels
+    // always carry ctrlKey, so this never blocks plain panel scrolling.
+    function onWindowWheel(event: WheelEvent) {
+      if (event.ctrlKey) {
+        event.preventDefault();
+      }
+    }
+
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    canvas.addEventListener("gesturestart", onGestureStart, { passive: false });
+    canvas.addEventListener("gesturechange", onGestureChange, {
+      passive: false,
+    });
+    canvas.addEventListener("gestureend", onGestureEnd, { passive: false });
+    window.addEventListener("wheel", onWindowWheel, { passive: false });
+    return () => {
+      canvas.removeEventListener("wheel", onWheel);
+      canvas.removeEventListener("gesturestart", onGestureStart);
+      canvas.removeEventListener("gesturechange", onGestureChange);
+      canvas.removeEventListener("gestureend", onGestureEnd);
+      window.removeEventListener("wheel", onWindowWheel);
+    };
+  }, [setCamera]);
+
   // Leaving the pen tool cancels an in-progress path.
   useEffect(() => {
     if (tool !== "pen" && penRef.current) {
@@ -2275,24 +2359,11 @@ export function CanvasStage() {
     syncScene();
   }
 
-  function handleWheel(event: React.WheelEvent<HTMLCanvasElement>) {
-    const rect = canvasRef.current!.getBoundingClientRect();
-    const screen = {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-    };
-    const camera = useEditorStore.getState().camera;
-
-    if (event.ctrlKey || event.metaKey) {
-      const factor = Math.exp(-event.deltaY * 0.0015);
-      setCamera(zoomAt(camera, screen, camera.zoom * factor));
-    } else {
-      setCamera(panBy(camera, { x: -event.deltaX, y: -event.deltaY }));
-    }
-  }
-
   return (
-    <div ref={containerRef} className="canvas-host absolute inset-0 overflow-hidden">
+    <div
+      ref={containerRef}
+      className="canvas-host absolute inset-0 overflow-hidden overscroll-none"
+    >
       <canvas
         ref={canvasRef}
         className={`gpu-canvas block h-full w-full touch-none bg-transparent ${
@@ -2307,7 +2378,6 @@ export function CanvasStage() {
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
         onDoubleClick={handleDoubleClick}
-        onWheel={handleWheel}
         aria-label="OpenLogo canvas"
       />
       {editingTextId && (
