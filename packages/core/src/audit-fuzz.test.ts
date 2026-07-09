@@ -292,7 +292,13 @@ function randomCommand(
       return {
         type: "update-artboard",
         artboardId: pick(rng, doc.artboards).id,
-        patch: { name: `board${int(rng, 100)}`, background: "#ffffff" },
+        patch: {
+          name: `board${int(rng, 100)}`,
+          background: "#ffffff",
+          // Canvas repositioning (label drag) must round-trip exactly too.
+          x: int(rng, 4000) - 2000,
+          y: int(rng, 4000) - 2000,
+        },
       };
     case "palette": {
       const palette = doc.palettes[0];

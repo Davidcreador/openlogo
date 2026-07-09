@@ -2,8 +2,8 @@ import { Data, Effect } from "effect";
 import { z } from "zod";
 import { boundsUnion } from "./geometry";
 import { createGroup } from "./factory";
-import { nodeBounds } from "./queries";
-import type { LogoDocument, LogoNode } from "./types";
+import { ARTBOARD_GAP, nodeBounds } from "./queries";
+import type { Artboard, LogoDocument, LogoNode } from "./types";
 import { DOCUMENT_SCHEMA_VERSION } from "./types";
 
 /**
@@ -161,8 +161,11 @@ const nodeSchema = z.discriminatedUnion("type", [
 const artboardSchema = z.object({
   id: z.string(),
   name: z.string(),
-  x: z.number(),
-  y: z.number(),
+  // Canvas position on the shared surface. Optional at the wire level:
+  // documents from builds before the multi-board canvas carry no x/y —
+  // migrateArtboardPositions lays those out after parsing.
+  x: z.number().optional(),
+  y: z.number().optional(),
   width: z.number().positive(),
   height: z.number().positive(),
   background: z.string(),
@@ -312,6 +315,41 @@ function sanitizeDocument(document: LogoDocument): LogoDocument {
   return { ...document, nodes, artboards, activeArtboardId };
 }
 
+/**
+ * Artboards from builds before the shared multi-board canvas carry no
+ * x/y. Lay those out left-to-right with a gap — after any boards that DO
+ * have positions — so old documents open with nothing stacked. Triggered
+ * by field absence, not schemaVersion: positioned v2 docs pass through
+ * untouched.
+ */
+function migrateArtboardPositions(document: LogoDocument): LogoDocument {
+  const hasPosition = (item: Partial<Artboard>) =>
+    typeof item.x === "number" && typeof item.y === "number";
+
+  if (document.artboards.every((item) => hasPosition(item))) {
+    return document;
+  }
+
+  const positioned = document.artboards.filter((item) => hasPosition(item));
+  let cursor =
+    positioned.length > 0
+      ? Math.max(...positioned.map((item) => item.x + item.width)) +
+        ARTBOARD_GAP
+      : 0;
+  const y = positioned[0]?.y ?? 0;
+
+  const artboards = document.artboards.map((item) => {
+    if (hasPosition(item)) {
+      return item;
+    }
+    const placed = { ...item, x: cursor, y };
+    cursor += item.width + ARTBOARD_GAP;
+    return placed;
+  });
+
+  return { ...document, artboards };
+}
+
 export function parseDocument(data: unknown): LogoDocument {
   const parsed = documentSchema.parse(data);
 
@@ -325,6 +363,7 @@ export function parseDocument(data: unknown): LogoDocument {
   if (parsed.schemaVersion < 2) {
     document = migrateGroupIdTags(document);
   }
+  document = migrateArtboardPositions(document);
 
   return sanitizeDocument({ ...document, schemaVersion: DOCUMENT_SCHEMA_VERSION });
 }

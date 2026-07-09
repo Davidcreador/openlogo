@@ -121,6 +121,20 @@ type DragState =
   | { kind: "marquee"; startLocal: Vec2; current: Bounds | null }
   | { kind: "guide"; axis: "v" | "h"; index: number; value: number }
   | {
+      /** Repositioning an artboard on the shared canvas by its label. */
+      kind: "artboard";
+      artboardId: string;
+      /** Pointer-down position, world space. */
+      startWorld: Vec2;
+      /** Board origin at pointer-down. */
+      origin: Vec2;
+      /** Live (snapped) board origin; rides in syncScene's document only. */
+      current: Vec2;
+      /** Other boards' rects, world space — edge snap targets. */
+      snapTargets: Bounds[];
+      moved: boolean;
+    }
+  | {
       kind: "draw";
       tool: Tool;
       /** Stable id so the ghost stays one node across preview frames. */
@@ -561,6 +575,20 @@ export function CanvasStage() {
         ...sceneDocument,
         artboards: sceneDocument.artboards.map((item) =>
           item.id === artboard.id ? { ...item, guides } : item,
+        ),
+      };
+    }
+
+    // Live artboard reposition preview — same pattern as guide drags:
+    // the moved board rides in the scene document only, committed as one
+    // update-artboard command on pointer-up.
+    if (drag?.kind === "artboard" && drag.moved) {
+      sceneDocument = {
+        ...sceneDocument,
+        artboards: sceneDocument.artboards.map((item) =>
+          item.id === drag.artboardId
+            ? { ...item, x: drag.current.x, y: drag.current.y }
+            : item,
         ),
       };
     }
@@ -1478,9 +1506,53 @@ export function CanvasStage() {
       return;
     }
 
+    // Artboard name label: a click activates that board, a drag
+    // repositions it on the shared canvas (checked before node hits —
+    // the label is chrome floating above everything).
+    const labelBoardId = renderer.hitArtboardLabel(screen);
+    if (labelBoardId) {
+      const doc = documentStore.document;
+      const board = doc.artboards.find((item) => item.id === labelBoardId);
+      if (board) {
+        dragRef.current = {
+          kind: "artboard",
+          artboardId: board.id,
+          startWorld: screenToWorld(state.camera, screen),
+          origin: { x: board.x, y: board.y },
+          current: { x: board.x, y: board.y },
+          snapTargets: doc.artboards
+            .filter((item) => item.id !== board.id)
+            .map((item) => ({
+              x: item.x,
+              y: item.y,
+              width: item.width,
+              height: item.height,
+            })),
+          moved: false,
+        };
+        return;
+      }
+    }
+
     const hit = renderer.hitTest(screen);
 
     if (!hit) {
+      // Clicking inside another artboard's area makes it the active one —
+      // you work "in" the board you clicked, Illustrator-style.
+      const bodyBoardId = renderer.hitArtboardBody(screen);
+      if (
+        bodyBoardId &&
+        bodyBoardId !== documentStore.document.activeArtboardId
+      ) {
+        documentStore.apply({
+          type: "set-active-artboard",
+          artboardId: bodyBoardId,
+        });
+        setSelection([]);
+        syncScene();
+        return;
+      }
+
       const local = toArtboardLocal(screen);
       if (!event.shiftKey) {
         setSelection([]);
@@ -1747,6 +1819,39 @@ export function CanvasStage() {
       return;
     }
 
+    // Artboard reposition (label drag) works in world space and snaps the
+    // board's edges to the other boards' edges (Alt disables).
+    if (drag.kind === "artboard") {
+      const zoom = useEditorStore.getState().camera.zoom;
+      const world = screenToWorld(useEditorStore.getState().camera, screen);
+      const dx = world.x - drag.startWorld.x;
+      const dy = world.y - drag.startWorld.y;
+      const board = documentStore.document.artboards.find(
+        (item) => item.id === drag.artboardId,
+      );
+      if (!board) {
+        dragRef.current = null;
+        return;
+      }
+      const raw = {
+        x: drag.origin.x + dx,
+        y: drag.origin.y + dy,
+        width: board.width,
+        height: board.height,
+      };
+      let snapDx = 0;
+      let snapDy = 0;
+      if (!event.altKey) {
+        const snap = computeSnap(raw, drag.snapTargets, 6 / zoom);
+        snapDx = snap.dx;
+        snapDy = snap.dy;
+      }
+      drag.current = { x: raw.x + snapDx, y: raw.y + snapDy };
+      drag.moved = drag.moved || Math.hypot(dx, dy) > 3 / zoom;
+      syncScene();
+      return;
+    }
+
     const local = toArtboardLocal(screen);
 
     if (drag.kind === "draw") {
@@ -2005,6 +2110,28 @@ export function CanvasStage() {
     dragRef.current = null;
 
     if (!drag) {
+      return;
+    }
+
+    if (drag.kind === "artboard") {
+      if (drag.moved) {
+        // One history entry; update-artboard's inverse restores x/y exactly.
+        documentStore.apply({
+          type: "update-artboard",
+          artboardId: drag.artboardId,
+          patch: { x: drag.current.x, y: drag.current.y },
+        });
+      } else if (
+        documentStore.document.activeArtboardId !== drag.artboardId
+      ) {
+        // Plain click on the label: activate that board.
+        documentStore.apply({
+          type: "set-active-artboard",
+          artboardId: drag.artboardId,
+        });
+        setSelection([]);
+      }
+      syncScene();
       return;
     }
 

@@ -13,6 +13,51 @@ export function getActiveArtboard(document: LogoDocument): Artboard {
   return active;
 }
 
+/** Canvas gap between adjacent artboards on the shared surface. */
+export const ARTBOARD_GAP = 120;
+
+/**
+ * Canvas position for a new artboard of the given size: adjacent to the
+ * right of the anchor artboard (normally the active one), pushed further
+ * right past any artboard it would overlap so boards never stack.
+ */
+export function nextArtboardPosition(
+  document: LogoDocument,
+  anchorArtboardId: string,
+  size: { width: number; height: number },
+): { x: number; y: number } {
+  const anchor =
+    document.artboards.find((item) => item.id === anchorArtboardId) ??
+    document.artboards[0];
+  if (!anchor) {
+    return { x: 0, y: 0 };
+  }
+
+  const y = anchor.y;
+  let x = anchor.x + anchor.width + ARTBOARD_GAP;
+
+  const blockerAt = (candidateX: number) =>
+    document.artboards.find(
+      (item) =>
+        candidateX < item.x + item.width &&
+        candidateX + size.width > item.x &&
+        y < item.y + item.height &&
+        y + size.height > item.y,
+    );
+
+  // Each pass clears one blocker by moving strictly right; N boards can
+  // block at most N times.
+  for (let i = 0; i <= document.artboards.length; i += 1) {
+    const blocker = blockerAt(x);
+    if (!blocker) {
+      break;
+    }
+    x = blocker.x + blocker.width + ARTBOARD_GAP;
+  }
+
+  return { x, y };
+}
+
 /** Top-level nodes of an artboard (includes group nodes, not their children). */
 export function getNodesForArtboard(
   document: LogoDocument,

@@ -109,6 +109,16 @@ export class SceneRenderer {
   /** Last computed text-on-path layout per text node (debug/automation). */
   private textPathLayouts = new Map<string, TextPathGlyph[]>();
 
+  /** Floating artboard name labels, keyed by artboard id. */
+  private labelCache = new Map<string, ParagraphCacheEntry>();
+
+  /**
+   * World-space rects of the artboard labels drawn last frame, for
+   * pointer hit-testing (click activates, drag repositions the board).
+   * Culled boards carry no rect — their labels are offscreen anyway.
+   */
+  private labelRects = new Map<string, Bounds>();
+
   constructor(
     private readonly canvasKit: CanvasKit,
     private readonly canvas: HTMLCanvasElement,
@@ -145,6 +155,16 @@ export class SceneRenderer {
           this.textPathLayouts.delete(nodeId);
         }
       }
+      const artboardIds = new Set(
+        scene.document.artboards.map((item) => item.id),
+      );
+      for (const [artboardId, entry] of this.labelCache) {
+        if (!artboardIds.has(artboardId)) {
+          entry.paragraph.delete();
+          this.labelCache.delete(artboardId);
+          this.labelRects.delete(artboardId);
+        }
+      }
     }
     this.invalidate();
   }
@@ -173,8 +193,13 @@ export class SceneRenderer {
     for (const entry of this.paragraphCache.values()) {
       entry.paragraph.delete();
     }
+    for (const entry of this.labelCache.values()) {
+      entry.paragraph.delete();
+    }
     this.pathCache.clear();
     this.paragraphCache.clear();
+    this.labelCache.clear();
+    this.labelRects.clear();
     this.surface?.delete();
     this.surface = null;
   }
@@ -301,13 +326,33 @@ export class SceneRenderer {
     canvas.scale(this.dpr * camera.zoom, this.dpr * camera.zoom);
     canvas.translate(-camera.offset.x, -camera.offset.y);
 
-    // Only the active artboard draws: keeps frame cost flat however many
-    // artboards the document holds (the switcher is the way between them).
-    const active = document.artboards.find(
-      (item) => item.id === document.activeArtboardId,
-    );
-    if (active) {
-      this.drawArtboard(canvas, document, active, camera);
+    // Every artboard lives on one shared canvas (Illustrator-style), but
+    // only the ones intersecting the viewport draw: culling keeps frame
+    // cost flat however many artboards the document holds.
+    const viewLeft = camera.offset.x;
+    const viewTop = camera.offset.y;
+    const viewRight = viewLeft + this.canvas.width / (this.dpr * camera.zoom);
+    const viewBottom = viewTop + this.canvas.height / (this.dpr * camera.zoom);
+    // Covers the drop shadow bleed and the floating name label above.
+    const margin = 48 / camera.zoom;
+
+    this.labelRects.clear();
+    for (const artboard of document.artboards) {
+      const visible =
+        artboard.x - margin < viewRight &&
+        artboard.x + artboard.width + margin > viewLeft &&
+        artboard.y - margin < viewBottom &&
+        artboard.y + artboard.height + margin > viewTop;
+      if (!visible) {
+        continue;
+      }
+      this.drawArtboard(canvas, document, artboard, camera);
+      this.drawArtboardChrome(
+        canvas,
+        artboard,
+        camera,
+        artboard.id === document.activeArtboardId,
+      );
     }
 
     this.drawRulerGuides(canvas, scene);
@@ -374,6 +419,134 @@ export class SceneRenderer {
     }
 
     canvas.restore();
+  }
+
+  /**
+   * Per-board chrome on the shared canvas: the floating name label above
+   * the board (screen-constant size) and, on the active board, a subtle
+   * accent outline. Records the label's world rect for hit-testing.
+   */
+  private drawArtboardChrome(
+    canvas: Canvas,
+    artboard: Artboard,
+    camera: Camera,
+    isActive: boolean,
+  ): void {
+    const ck = this.canvasKit;
+    const zoom = camera.zoom;
+
+    if (isActive) {
+      const outline = new ck.Paint();
+      outline.setStyle(ck.PaintStyle.Stroke);
+      outline.setStrokeWidth(1.25 / zoom);
+      outline.setColor(ck.parseColorString(SELECTION_COLOR));
+      outline.setAlphaf(0.65);
+      outline.setAntiAlias(true);
+      canvas.drawRect(
+        ck.XYWHRect(artboard.x, artboard.y, artboard.width, artboard.height),
+        outline,
+      );
+      outline.delete();
+    }
+
+    const family = this.fonts.isEmpty
+      ? null
+      : this.fonts.resolveFamily("Inter, ui-sans-serif");
+    if (!family) {
+      return; // no fonts yet — board still clickable via its body
+    }
+
+    const fontSize = 11 / zoom;
+    const key = `${artboard.name}|${fontSize}|${isActive ? 1 : 0}`;
+    let entry = this.labelCache.get(artboard.id);
+    if (!entry || entry.key !== key) {
+      entry?.paragraph.delete();
+      const style = new ck.ParagraphStyle({
+        textAlign: ck.TextAlign.Left,
+        maxLines: 1,
+        ellipsis: "…",
+        textStyle: {
+          color: ck.parseColorString(isActive ? SELECTION_COLOR : "#5d5966"),
+          fontFamilies: [family],
+          fontSize,
+          fontStyle: { weight: { value: 550 } },
+          fontVariations: [{ axis: "wght", value: 550 }],
+        },
+      });
+      const builder = ck.ParagraphBuilder.MakeFromFontProvider(
+        style,
+        this.fonts.provider,
+      );
+      builder.addText(artboard.name);
+      const paragraph = builder.build();
+      // Labels never grow past their board (ellipsized), min 80px wide.
+      paragraph.layout(Math.max(artboard.width, 80 / zoom));
+      builder.delete();
+      entry = { key, paragraph };
+      this.labelCache.set(artboard.id, entry);
+    }
+
+    const textWidth = Math.min(
+      entry.paragraph.getLongestLine(),
+      Math.max(artboard.width, 80 / zoom),
+    );
+    const textHeight = entry.paragraph.getHeight();
+    const labelX = artboard.x;
+    const labelY = artboard.y - textHeight - 6 / zoom;
+    canvas.drawParagraph(entry.paragraph, labelX, labelY);
+
+    // Slightly padded hit rect so the label is comfortably grabbable.
+    const pad = 4 / zoom;
+    this.labelRects.set(artboard.id, {
+      x: labelX - pad,
+      y: labelY - pad,
+      width: Math.max(textWidth, 24 / zoom) + pad * 2,
+      height: textHeight + pad * 2,
+    });
+  }
+
+  /**
+   * Artboard whose floating name label contains the screen point (topmost
+   * wins). Rects come from the last drawn frame.
+   */
+  hitArtboardLabel(screenPoint: Vec2): string | null {
+    if (!this.scene) {
+      return null;
+    }
+    const world = screenToWorld(this.scene.camera, screenPoint);
+    let hit: string | null = null;
+    for (const [artboardId, rect] of this.labelRects) {
+      if (
+        world.x >= rect.x &&
+        world.x <= rect.x + rect.width &&
+        world.y >= rect.y &&
+        world.y <= rect.y + rect.height
+      ) {
+        hit = artboardId; // later boards draw on top
+      }
+    }
+    return hit;
+  }
+
+  /** Topmost artboard whose canvas rect contains the screen point. */
+  hitArtboardBody(screenPoint: Vec2): string | null {
+    if (!this.scene) {
+      return null;
+    }
+    const { document, camera } = this.scene;
+    const world = screenToWorld(camera, screenPoint);
+    for (let i = document.artboards.length - 1; i >= 0; i -= 1) {
+      const artboard = document.artboards[i]!;
+      if (
+        world.x >= artboard.x &&
+        world.x <= artboard.x + artboard.width &&
+        world.y >= artboard.y &&
+        world.y <= artboard.y + artboard.height
+      ) {
+        return artboard.id;
+      }
+    }
+    return null;
   }
 
   private drawSubtree(

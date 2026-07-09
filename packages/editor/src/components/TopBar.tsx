@@ -23,6 +23,7 @@ import {
   cloneArtboardForVariant,
   createArtboard,
   getActiveArtboard,
+  nextArtboardPosition,
 } from "@openlogo/core";
 import { type BooleanOp, fitBounds } from "@openlogo/renderer";
 import { applyBooleanOp, combinableNodes } from "../lib/boolean-ops";
@@ -98,10 +99,43 @@ function fitCameraTo(artboardId: string) {
   }
 }
 
-/** X for a new artboard: clear of everything, to the right. */
-function nextArtboardX(): number {
-  const artboards = documentStore.document.artboards;
-  return Math.max(...artboards.map((item) => item.x + item.width)) + 120;
+/**
+ * Scroll (never zoom) just enough to bring an artboard into view; no-op
+ * when it is already fully visible. New/duplicated boards land adjacent
+ * to their anchor, so the camera must not jump — only reveal.
+ */
+function ensureArtboardVisible(artboardId: string) {
+  const state = useEditorStore.getState();
+  const target = documentStore.document.artboards.find(
+    (item) => item.id === artboardId,
+  );
+  if (!target || state.viewport.width === 0) {
+    return;
+  }
+
+  const { camera, viewport } = state;
+  const viewWidth = viewport.width / camera.zoom;
+  const viewHeight = viewport.height / camera.zoom;
+  const margin = 24 / camera.zoom;
+
+  let ox = camera.offset.x;
+  let oy = camera.offset.y;
+  // Minimal nudge per axis; a board wider/taller than the viewport keeps
+  // its near (top-left) edge visible.
+  if (target.x - margin < ox) {
+    ox = target.x - margin;
+  } else if (target.x + target.width + margin > ox + viewWidth) {
+    ox = Math.min(target.x - margin, target.x + target.width + margin - viewWidth);
+  }
+  if (target.y - margin < oy) {
+    oy = target.y - margin;
+  } else if (target.y + target.height + margin > oy + viewHeight) {
+    oy = Math.min(target.y - margin, target.y + target.height + margin - viewHeight);
+  }
+
+  if (ox !== camera.offset.x || oy !== camera.offset.y) {
+    state.setCamera({ ...camera, offset: { x: ox, y: oy } });
+  }
 }
 
 function ArtboardRenameField({
@@ -170,16 +204,21 @@ function ArtboardMenu() {
   }
 
   function addArtboard(width: number, height: number) {
-    const board = createArtboard("primary", {
-      name: `Artboard ${documentStore.document.artboards.length + 1}`,
-      x: nextArtboardX(),
-      y: documentStore.document.artboards[0]?.y ?? 0,
+    const doc = documentStore.document;
+    const size = {
       width: Math.max(1, Math.round(width)),
       height: Math.max(1, Math.round(height)),
+    };
+    // Illustrator-style: the new board joins the shared canvas right next
+    // to the board you are working in, and becomes the active one.
+    const board = createArtboard("primary", {
+      name: `Artboard ${doc.artboards.length + 1}`,
+      ...nextArtboardPosition(doc, doc.activeArtboardId, size),
+      ...size,
     });
     documentStore.apply({ type: "add-artboard", artboard: board, nodes: [] });
     setSelection([]);
-    fitCameraTo(board.id);
+    ensureArtboardVisible(board.id);
     setOpen(false);
   }
 
@@ -195,8 +234,12 @@ function ArtboardMenu() {
       source.purpose,
     );
     clone.name = `${source.name} copy`;
-    clone.x = nextArtboardX();
-    clone.y = source.y;
+    const position = nextArtboardPosition(doc, artboardId, {
+      width: clone.width,
+      height: clone.height,
+    });
+    clone.x = position.x;
+    clone.y = position.y;
     documentStore.apply({
       type: "add-artboard",
       artboard: clone,
@@ -204,7 +247,7 @@ function ArtboardMenu() {
       index: doc.artboards.indexOf(source) + 1,
     });
     setSelection([]);
-    fitCameraTo(clone.id);
+    ensureArtboardVisible(clone.id);
     setOpen(false);
   }
 
@@ -231,14 +274,21 @@ function ArtboardMenu() {
   }
 
   function createVariant(purpose: LogoVariant) {
+    const doc = documentStore.document;
     const { artboard: next, nodes } = cloneArtboardForVariant(
-      documentStore.document,
-      documentStore.document.activeArtboardId,
+      doc,
+      doc.activeArtboardId,
       purpose,
     );
+    const position = nextArtboardPosition(doc, doc.activeArtboardId, {
+      width: next.width,
+      height: next.height,
+    });
+    next.x = position.x;
+    next.y = position.y;
     documentStore.apply({ type: "add-artboard", artboard: next, nodes });
     setSelection([]);
-    fitCameraTo(next.id);
+    ensureArtboardVisible(next.id);
     setOpen(false);
   }
 
