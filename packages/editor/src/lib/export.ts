@@ -4,6 +4,7 @@ import {
   type LogoNode,
   type Paint,
   getActiveArtboard,
+  unitBounds,
 } from "@openlogo/core";
 
 function escapeXml(value: string): string {
@@ -155,6 +156,51 @@ export function documentToSvg(
   <rect width="100%" height="100%" fill="${artboard.background}" />
   ${body}
 </svg>`;
+}
+
+/**
+ * Tiny inline-SVG preview of one node (or group subtree) for the layers
+ * panel. Rendered from the same tree walk as the real export, so the
+ * thumbnail is literally what ships. Hidden layers still get a preview
+ * (only the root's visibility is overridden); returns null when the
+ * subtree renders to nothing.
+ */
+export function nodeToPreviewSvg(
+  document: LogoDocument,
+  nodeId: string,
+): string | null {
+  const node = document.nodes[nodeId];
+  if (!node) {
+    return null;
+  }
+  const bounds = unitBounds(document, nodeId);
+  if (!bounds || bounds.width <= 0 || bounds.height <= 0) {
+    return null;
+  }
+
+  const doc: LogoDocument = node.visible
+    ? document
+    : {
+        ...document,
+        nodes: {
+          ...document.nodes,
+          [nodeId]: { ...node, visible: true } as LogoNode,
+        },
+      };
+
+  const defs: string[] = [];
+  const body = renderTree(doc, nodeId, defs);
+  if (!body) {
+    return null;
+  }
+
+  const pad = Math.max(2, Math.max(bounds.width, bounds.height) * 0.08);
+  const defsBlock = defs.length > 0 ? `<defs>${defs.join("")}</defs>` : "";
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${bounds.x - pad} ${
+    bounds.y - pad
+  } ${bounds.width + pad * 2} ${
+    bounds.height + pad * 2
+  }" preserveAspectRatio="xMidYMid meet" aria-hidden="true">${defsBlock}${body}</svg>`;
 }
 
 export function downloadTextFile(

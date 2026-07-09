@@ -54,6 +54,7 @@ import {
 } from "../lib/shape-builder";
 import { documentStore, useDocument } from "../state/document";
 import { type Tool, useEditorStore } from "../state/editor-store";
+import { CanvasRulers } from "./Rulers";
 
 const HANDLE_HIT_RADIUS = 7;
 const FONT_URL = "/fonts/Inter-Variable.ttf";
@@ -1968,10 +1969,6 @@ export function CanvasStage() {
     }
   }
 
-  const tickSpacing = 50 * camera.zoom;
-  const tickOffsetX = ((-camera.offset.x * camera.zoom) % tickSpacing) - 0.5;
-  const tickOffsetY = ((-camera.offset.y * camera.zoom) % tickSpacing) - 0.5;
-
   return (
     <div ref={containerRef} className="canvas-host">
       <canvas
@@ -1991,29 +1988,11 @@ export function CanvasStage() {
         <TextEditOverlay nodeId={editingTextId} onDone={finishTextEdit} />
       )}
       {handleHint && <div className="canvas-hint">{handleHint}</div>}
-      <div
-        className="ruler ruler-top"
-        style={{
-          backgroundPositionX: tickOffsetX,
-          backgroundSize: `${tickSpacing}px 100%`,
-        }}
-        onPointerDown={startGuideFromRuler("h")}
-        onPointerMove={moveGuideFromRuler}
-        onPointerUp={commitGuideDrag}
-        title="Drag down to add a horizontal guide"
+      <CanvasRulers
+        onGuideStart={startGuideFromRuler}
+        onGuideMove={moveGuideFromRuler}
+        onGuideEnd={commitGuideDrag}
       />
-      <div
-        className="ruler ruler-left"
-        style={{
-          backgroundPositionY: tickOffsetY,
-          backgroundSize: `100% ${tickSpacing}px`,
-        }}
-        onPointerDown={startGuideFromRuler("v")}
-        onPointerMove={moveGuideFromRuler}
-        onPointerUp={commitGuideDrag}
-        title="Drag right to add a vertical guide"
-      />
-      <div className="ruler-corner" />
     </div>
   );
 }

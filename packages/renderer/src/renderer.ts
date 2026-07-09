@@ -68,7 +68,6 @@ export type Scene = {
   } | null;
 };
 
-const EDITOR_BACKGROUND = "#e8eaef";
 const SELECTION_COLOR = "#4f6bf6";
 const GUIDE_COLOR = "#ec4899";
 const RULER_GUIDE_COLOR = "#06b6d4";
@@ -255,7 +254,9 @@ export class SceneRenderer {
     const canvas = surface.getCanvas();
     const { camera, document } = scene;
 
-    canvas.clear(ck.parseColorString(EDITOR_BACKGROUND));
+    // Transparent clear: the editor styles the worksurface (color + dot
+    // grid) in CSS, so floating panels and canvas share one material.
+    canvas.clear(ck.TRANSPARENT);
     canvas.save();
     canvas.scale(this.dpr * camera.zoom, this.dpr * camera.zoom);
     canvas.translate(-camera.offset.x, -camera.offset.y);
@@ -294,15 +295,15 @@ export class SceneRenderer {
 
     // Drop shadow + background.
     const shadow = new ck.Paint();
-    shadow.setColor(ck.parseColorString("#0f172a"));
-    shadow.setAlphaf(0.12);
+    shadow.setColor(ck.parseColorString("#1c1921"));
+    shadow.setAlphaf(0.1);
     shadow.setMaskFilter(
-      ck.MaskFilter.MakeBlur(ck.BlurStyle.Normal, 6 / camera.zoom, true),
+      ck.MaskFilter.MakeBlur(ck.BlurStyle.Normal, 14 / camera.zoom, true),
     );
     canvas.drawRect(
       ck.XYWHRect(
         artboard.x,
-        artboard.y + 3 / camera.zoom,
+        artboard.y + 5 / camera.zoom,
         artboard.width,
         artboard.height,
       ),

@@ -246,29 +246,33 @@ export function TopBar() {
   return (
     <header className="topbar">
       <div className="topbar-left">
-        <span className="topbar-mark">OL</span>
-        <span className="topbar-title">OpenLogo</span>
-        <div className="topbar-separator" />
-        <ArtboardMenu />
+        <div className="brand-cluster">
+          <span className="topbar-mark">OL</span>
+          <span className="topbar-title">OpenLogo</span>
+          <span className="brand-divider" />
+          <ArtboardMenu />
+        </div>
       </div>
 
       <div className="topbar-center">
-        {BOOLEAN_OPS.map((op) => {
-          const Icon = op.icon;
-          return (
-            <button
-              key={op.id}
-              type="button"
-              className="icon-button"
-              onClick={() => void runBoolean(op.id)}
-              disabled={!canCombine}
-              title={`${op.label} selected shapes`}
-              aria-label={op.label}
-            >
-              <Icon size={16} strokeWidth={1.75} />
-            </button>
-          );
-        })}
+        <div className="topbar-tools" role="group" aria-label="Boolean operations">
+          {BOOLEAN_OPS.map((op) => {
+            const Icon = op.icon;
+            return (
+              <button
+                key={op.id}
+                type="button"
+                className="icon-button"
+                onClick={() => void runBoolean(op.id)}
+                disabled={!canCombine}
+                title={`${op.label} selected shapes`}
+                aria-label={op.label}
+              >
+                <Icon size={16} strokeWidth={1.75} />
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="topbar-right">

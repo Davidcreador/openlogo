@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlignCenter,
   AlignCenterHorizontal,
@@ -22,6 +22,7 @@ import {
   Lock,
   PenTool,
   RotateCw,
+  Shapes,
   Sparkles,
   Square,
   Type,
@@ -56,6 +57,7 @@ import {
   flipNodes,
   rotateCopies,
 } from "../lib/object-ops";
+import { nodeToPreviewSvg } from "../lib/export";
 import { editSwatch } from "../lib/swatches";
 import { convertTextToPath } from "../lib/text-to-path";
 import { documentStore, useDocument } from "../state/document";
@@ -78,26 +80,32 @@ const NODE_ICONS = {
   group: Folder,
 } as const;
 
-/** Numeric field that commits on blur/Enter and follows external changes. */
+/**
+ * Numeric field that commits on blur/Enter and follows external changes.
+ * The label doubles as a scrubber: drag horizontally to adjust, committing
+ * once on release so history gets a single entry.
+ */
 function NumberField({
   label,
   value,
   onCommit,
   step = 1,
+  unit,
 }: {
   label: string;
   value: number;
   onCommit: (value: number) => void;
   step?: number;
+  unit?: string;
 }) {
   const [draft, setDraft] = useState(String(Math.round(value * 100) / 100));
+  const scrubRef = useRef<{ startX: number; active: boolean } | null>(null);
 
   useEffect(() => {
     setDraft(String(Math.round(value * 100) / 100));
   }, [value]);
 
-  function commit() {
-    const parsed = Number(draft);
+  function commitNumber(parsed: number) {
     if (Number.isFinite(parsed) && parsed !== value) {
       onCommit(parsed);
     } else {
@@ -105,21 +113,61 @@ function NumberField({
     }
   }
 
+  // Scrubbing always starts from the committed value: 3px per step.
+  function scrubbedValue(event: React.PointerEvent): number {
+    const scrub = scrubRef.current!;
+    const raw = value + Math.round((event.clientX - scrub.startX) / 3) * step;
+    return Math.round(raw * 100) / 100;
+  }
+
   return (
     <label className="number-field">
-      <span>{label}</span>
+      <span
+        className="nf-label"
+        title="Drag to adjust"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          scrubRef.current = { startX: event.clientX, active: false };
+        }}
+        onPointerMove={(event) => {
+          const scrub = scrubRef.current;
+          if (!scrub) {
+            return;
+          }
+          if (!scrub.active && Math.abs(event.clientX - scrub.startX) < 3) {
+            return;
+          }
+          scrub.active = true;
+          setDraft(String(scrubbedValue(event)));
+        }}
+        onPointerUp={(event) => {
+          const scrub = scrubRef.current;
+          scrubRef.current = null;
+          if (scrub?.active) {
+            commitNumber(scrubbedValue(event));
+          }
+        }}
+        onPointerCancel={() => {
+          scrubRef.current = null;
+          setDraft(String(Math.round(value * 100) / 100));
+        }}
+      >
+        {label}
+      </span>
       <input
         type="number"
         step={step}
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
-        onBlur={commit}
+        onBlur={() => commitNumber(Number(draft))}
         onKeyDown={(event) => {
           if (event.key === "Enter") {
             (event.target as HTMLInputElement).blur();
           }
         }}
       />
+      {unit && <span className="nf-unit">{unit}</span>}
     </label>
   );
 }
@@ -272,6 +320,7 @@ function FillEditor({
             ))}
             <NumberField
               label="∠"
+              unit="°"
               value={node.fill.angle}
               onCommit={(angle) => {
                 if (node.fill.type === "linear-gradient") {
@@ -367,6 +416,7 @@ function StrokeEditor({
           />
           <NumberField
             label="W"
+            unit="px"
             value={stroke.width}
             step={0.5}
             onCommit={(width) =>
@@ -402,31 +452,40 @@ function DesignSection({
 
   return (
     <section className="inspector-section">
-      <h2>Design</h2>
+      <header className="section-head">
+        <h2>Design</h2>
+        <span className="section-meta">
+          {node.type === "path" ? "Path" : node.type[0]!.toUpperCase() + node.type.slice(1)}
+        </span>
+      </header>
 
       <AlignPanel nodeIds={[node.id]} />
 
       <div className="field-grid">
-        <NumberField label="X" value={node.x} onCommit={(x) => patchSelection({ x })} />
-        <NumberField label="Y" value={node.y} onCommit={(y) => patchSelection({ y })} />
+        <NumberField label="X" unit="px" value={node.x} onCommit={(x) => patchSelection({ x })} />
+        <NumberField label="Y" unit="px" value={node.y} onCommit={(y) => patchSelection({ y })} />
         <NumberField
           label="W"
+          unit="px"
           value={node.width}
           onCommit={(width) => patchSelection({ width: Math.max(1, width) })}
         />
         <NumberField
           label="H"
+          unit="px"
           value={node.height}
           onCommit={(height) => patchSelection({ height: Math.max(1, height) })}
         />
         <NumberField
           label="∠"
+          unit="°"
           value={node.rotation}
           onCommit={(rotation) => patchSelection({ rotation })}
         />
         {node.type === "rectangle" && (
           <NumberField
             label="◜"
+            unit="px"
             value={node.cornerRadius}
             onCommit={(cornerRadius) =>
               patchSelection({ cornerRadius: Math.max(0, cornerRadius) })
@@ -438,6 +497,9 @@ function DesignSection({
       <FillEditor node={node} patchSelection={patchSelection} />
       <StrokeEditor node={node} patchSelection={patchSelection} />
 
+      <div className="stroke-head">
+        <span>Blend</span>
+      </div>
       <div className="field-row" style={{ marginBottom: 10 }}>
         <select
           className="font-select"
@@ -484,6 +546,9 @@ function DesignSection({
         </button>
       </div>
 
+      <div className="stroke-head">
+        <span>Quick fill</span>
+      </div>
       <div className="swatch-row">
         {document.palettes[0]?.colors.map((color) => (
           <button
@@ -555,6 +620,7 @@ function DesignSection({
           <div className="field-grid">
             <NumberField
               label="Size"
+              unit="px"
               value={node.fontSize}
               onCommit={(fontSize) =>
                 patchSelection({ fontSize: Math.max(1, fontSize) })
@@ -630,26 +696,31 @@ function GroupSection({ group }: { group: GroupNode }) {
 
   return (
     <section className="inspector-section">
-      <h2>Group</h2>
-      <p className="muted" style={{ marginBottom: 10 }}>
-        {group.name} — {leafCount} object{leafCount === 1 ? "" : "s"}
-      </p>
+      <header className="section-head">
+        <h2>Group</h2>
+        <span className="section-meta">
+          {leafCount} object{leafCount === 1 ? "" : "s"}
+        </span>
+      </header>
 
       <AlignPanel nodeIds={[group.id]} />
 
       <div className="field-grid">
         <NumberField
           label="X"
+          unit="px"
           value={bounds.x}
           onCommit={(x) => setUnitBounds(group.id, { x })}
         />
         <NumberField
           label="Y"
+          unit="px"
           value={bounds.y}
           onCommit={(y) => setUnitBounds(group.id, { y })}
         />
         <NumberField
           label="W"
+          unit="px"
           value={bounds.width}
           onCommit={(width) =>
             setUnitBounds(group.id, { width: Math.max(1, width) })
@@ -657,6 +728,7 @@ function GroupSection({ group }: { group: GroupNode }) {
         />
         <NumberField
           label="H"
+          unit="px"
           value={bounds.height}
           onCommit={(height) =>
             setUnitBounds(group.id, { height: Math.max(1, height) })
@@ -665,6 +737,7 @@ function GroupSection({ group }: { group: GroupNode }) {
         <NumberField
           key={rotateNonce}
           label="∠+"
+          unit="°"
           value={0}
           onCommit={(degrees) => {
             rotateUnitBy(group.id, degrees);
@@ -700,6 +773,9 @@ function GroupSection({ group }: { group: GroupNode }) {
 
       {/* Blend mode lives on the group itself: the renderer composites
           the whole subtree as one layer, not per child. */}
+      <div className="stroke-head">
+        <span>Blend</span>
+      </div>
       <div className="field-row" style={{ marginBottom: 10 }}>
         <select
           className="font-select"
@@ -756,7 +832,10 @@ function SwatchesSection() {
 
   return (
     <section className="inspector-section">
-      <h2>Brand colors</h2>
+      <header className="section-head">
+        <h2>Brand colors</h2>
+        <span className="section-meta">{palette.colors.length}</span>
+      </header>
       <div className="swatch-row">
         {palette.colors.map((color, index) => (
           <input
@@ -814,6 +893,90 @@ function buildLayerRows(
   return rows;
 }
 
+/** Live thumbnail; memo + useMemo cache it until the document changes. */
+const LayerThumb = memo(function LayerThumb({
+  document,
+  node,
+}: {
+  document: LogoDocument;
+  node: LogoNode;
+}) {
+  const svg = useMemo(
+    () => nodeToPreviewSvg(document, node.id),
+    [document, node.id],
+  );
+
+  if (!svg) {
+    const Icon = NODE_ICONS[node.type];
+    return (
+      <i className="layer-thumb layer-thumb-empty" aria-hidden="true">
+        <Icon size={12} strokeWidth={1.75} />
+      </i>
+    );
+  }
+  // Same generator as the SVG export, so the preview is trustworthy.
+  return (
+    <i
+      className="layer-thumb"
+      aria-hidden="true"
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  );
+});
+
+function LayerRenameField({
+  node,
+  onDone,
+}: {
+  node: LogoNode;
+  onDone: () => void;
+}) {
+  const [draft, setDraft] = useState(node.name);
+
+  function commit() {
+    const name = draft.trim();
+    if (name && name !== node.name) {
+      documentStore.apply({
+        type: "update-nodes",
+        updates: [{ nodeId: node.id, patch: { name } }],
+      });
+    }
+    onDone();
+  }
+
+  return (
+    <input
+      className="layer-rename"
+      value={draft}
+      autoFocus
+      aria-label="Layer name"
+      onFocus={(event) => event.target.select()}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          (event.target as HTMLInputElement).blur();
+        } else if (event.key === "Escape") {
+          onDone();
+        }
+      }}
+      onClick={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
+    />
+  );
+}
+
+const BLEND_BADGES: Record<string, string> = {
+  multiply: "Mul",
+  screen: "Scr",
+  overlay: "Ovl",
+  darken: "Drk",
+  lighten: "Lgt",
+};
+
+type DropZone = "before" | "after" | "inside";
+type DropSpec = { rowIndex: number; zone: DropZone };
+
 function LayersSection() {
   const document = useDocument();
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
@@ -821,8 +984,9 @@ function LayersSection() {
   const setActiveGroupId = useEditorStore((state) => state.setActiveGroupId);
   // Ref, not state: drop can fire before a state commit lands.
   const dragRef = useRef<LayerRow | null>(null);
-  const [dropRow, setDropRow] = useState<number | null>(null);
+  const [drop, setDrop] = useState<DropSpec | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [renamingId, setRenamingId] = useState<string | null>(null);
 
   const artboard = document.artboards.find(
     (item) => item.id === document.activeArtboardId,
@@ -830,6 +994,10 @@ function LayersSection() {
   const rows = artboard
     ? buildLayerRows(document, artboard.id, artboard.nodeIds, 0, expanded)
     : [];
+  const hasGroups = rows.some((row) => row.node.type === "group");
+  const objectCount = artboard
+    ? collectLeafNodeIds(document, artboard.nodeIds).length
+    : 0;
 
   function toggle(nodeId: string, patch: NodePatch) {
     documentStore.apply({ type: "update-nodes", updates: [{ nodeId, patch }] });
@@ -847,17 +1015,42 @@ function LayersSection() {
     });
   }
 
-  function handleDrop(target: LayerRow) {
+  /**
+   * Drop zone from the pointer position within the row: edges insert
+   * between rows, a group's middle nests into it. Null when the event has
+   * no usable coordinates (synthetic DnD, e.g. regression scripts) — those
+   * keep the legacy whole-row semantics.
+   */
+  function zoneAt(
+    event: React.DragEvent<HTMLDivElement>,
+    row: LayerRow,
+  ): DropZone | null {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (event.clientY < rect.top || event.clientY > rect.bottom) {
+      return null;
+    }
+    const ratio = (event.clientY - rect.top) / rect.height;
+    if (row.node.type === "group") {
+      return ratio < 0.3 ? "before" : ratio > 0.7 ? "after" : "inside";
+    }
+    return ratio < 0.5 ? "before" : "after";
+  }
+
+  function handleDrop(
+    event: React.DragEvent<HTMLDivElement>,
+    target: LayerRow,
+  ) {
+    const zone = zoneAt(event, target);
     const dragged = dragRef.current;
     dragRef.current = null;
-    setDropRow(null);
+    setDrop(null);
     if (!dragged || dragged.node.id === target.node.id) {
       return;
     }
 
-    // Dropping onto a group row nests into it, topmost in its stack;
+    // Onto a group row's body nests into it, topmost in its stack;
     // onto the group that already holds it, reorders to the top instead.
-    if (target.node.type === "group") {
+    if (target.node.type === "group" && (zone === "inside" || zone === null)) {
       const childIds = getContainerChildIds(document, target.node.id);
       if (target.node.id === dragged.containerId) {
         documentStore.apply({
@@ -872,73 +1065,130 @@ function LayersSection() {
       return;
     }
 
-    // Dropping onto a row in another container moves it there (into or
-    // out of groups); within one container it stays a reorder.
-    if (dragged.containerId !== target.containerId) {
-      moveUnitToContainer(dragged.node.id, target.containerId, target.zIndex);
+    if (zone === null) {
+      // Legacy whole-row drop: another container moves it there (into or
+      // out of groups); within one container it stays a reorder.
+      if (dragged.containerId !== target.containerId) {
+        moveUnitToContainer(dragged.node.id, target.containerId, target.zIndex);
+        return;
+      }
+      documentStore.apply({
+        type: "reorder-node",
+        containerId: dragged.containerId,
+        nodeId: dragged.node.id,
+        toIndex: target.zIndex,
+      });
       return;
     }
-    documentStore.apply({
-      type: "reorder-node",
-      containerId: dragged.containerId,
-      nodeId: dragged.node.id,
-      toIndex: target.zIndex,
-    });
+
+    // Between-row drop. Rows render topmost-first, so the slot visually
+    // above a row is one z-index higher within its container.
+    const insertIndex = zone === "before" ? target.zIndex + 1 : target.zIndex;
+    if (dragged.containerId === target.containerId) {
+      const list = getContainerChildIds(document, dragged.containerId);
+      const fromIndex = list.indexOf(dragged.node.id);
+      if (fromIndex === -1) {
+        return;
+      }
+      // reorder-node splices after removal: slots above shift down one.
+      const toIndex = insertIndex > fromIndex ? insertIndex - 1 : insertIndex;
+      if (toIndex === fromIndex) {
+        return;
+      }
+      documentStore.apply({
+        type: "reorder-node",
+        containerId: dragged.containerId,
+        nodeId: dragged.node.id,
+        toIndex,
+      });
+    } else {
+      moveUnitToContainer(dragged.node.id, target.containerId, insertIndex);
+    }
   }
 
   return (
     <section className="inspector-section">
-      <h2>Layers</h2>
+      <header className="section-head">
+        <h2>Layers</h2>
+        <span className="section-meta">
+          {objectCount} object{objectCount === 1 ? "" : "s"}
+        </span>
+      </header>
       <div className="layer-rows">
         {rows.map((row, rowIndex) => {
           const { node } = row;
-          const Icon = NODE_ICONS[node.type];
           const selected = selectedNodeIds.includes(node.id);
           const isGroup = node.type === "group";
+          const isExpanded = isGroup && expanded.has(node.id);
+          const renaming = renamingId === node.id;
+          const badge = [
+            node.blendMode ? BLEND_BADGES[node.blendMode] : null,
+            node.opacity !== 1 ? `${Math.round(node.opacity * 100)}%` : null,
+          ]
+            .filter(Boolean)
+            .join(" ");
+          const dropClass =
+            drop?.rowIndex === rowIndex ? ` drop-${drop.zone}` : "";
           return (
             <div
               key={node.id}
-              className={`layer-row ${selected ? "active" : ""} ${
-                node.visible ? "" : "is-hidden"
-              } ${dropRow === rowIndex ? "drop-target" : ""}`}
-              style={row.depth > 0 ? { paddingLeft: row.depth * 14 } : undefined}
-              draggable
+              className={`layer-row${selected ? " active" : ""}${
+                node.visible ? "" : " is-hidden"
+              }${dropClass}`}
+              draggable={!renaming}
               onDragStart={(event) => {
                 dragRef.current = row;
                 event.dataTransfer.effectAllowed = "move";
               }}
               onDragOver={(event) => {
                 event.preventDefault();
-                if (dropRow !== rowIndex) {
-                  setDropRow(rowIndex);
-                }
+                const zone = zoneAt(event, row);
+                const spec: DropSpec | null =
+                  zone === null
+                    ? isGroup
+                      ? { rowIndex, zone: "inside" }
+                      : null
+                    : { rowIndex, zone };
+                setDrop((current) =>
+                  current?.rowIndex === spec?.rowIndex &&
+                  current?.zone === spec?.zone
+                    ? current
+                    : spec,
+                );
               }}
-              onDragLeave={() => setDropRow(null)}
+              onDragLeave={() =>
+                setDrop((current) =>
+                  current?.rowIndex === rowIndex ? null : current,
+                )
+              }
               onDrop={(event) => {
                 event.preventDefault();
-                handleDrop(row);
+                handleDrop(event, row);
               }}
               onDragEnd={() => {
                 dragRef.current = null;
-                setDropRow(null);
+                setDrop(null);
               }}
             >
-              {isGroup && (
+              {Array.from({ length: row.depth }, (_, i) => (
+                <i key={i} className="layer-indent" />
+              ))}
+              {isGroup ? (
                 <button
                   type="button"
-                  className="layer-toggle"
+                  className="layer-caret"
                   onClick={() => toggleExpanded(node.id)}
-                  title={expanded.has(node.id) ? "Collapse" : "Expand"}
-                  aria-label={
-                    expanded.has(node.id) ? "Collapse group" : "Expand group"
-                  }
+                  title={isExpanded ? "Collapse" : "Expand"}
+                  aria-label={isExpanded ? "Collapse group" : "Expand group"}
                 >
-                  {expanded.has(node.id) ? (
-                    <ChevronDown size={13} />
+                  {isExpanded ? (
+                    <ChevronDown size={12} />
                   ) : (
-                    <ChevronRight size={13} />
+                    <ChevronRight size={12} />
                   )}
                 </button>
+              ) : (
+                hasGroups && <i className="layer-caret-space" />
               )}
               <button
                 type="button"
@@ -957,8 +1207,30 @@ function LayersSection() {
                   }
                 }}
               >
-                <Icon size={13} strokeWidth={1.75} />
-                <span>{node.name}</span>
+                <LayerThumb document={document} node={node} />
+                {renaming ? (
+                  <LayerRenameField
+                    node={node}
+                    onDone={() => setRenamingId(null)}
+                  />
+                ) : (
+                  <span
+                    className="layer-name"
+                    title="Double-click to rename"
+                    onDoubleClick={(event) => {
+                      event.stopPropagation();
+                      setRenamingId(node.id);
+                    }}
+                  >
+                    {node.name}
+                  </span>
+                )}
+                {isGroup && !renaming && (
+                  <small className="layer-count">{node.children.length}</small>
+                )}
+                {badge && !renaming && (
+                  <small className="layer-badge">{badge}</small>
+                )}
               </button>
               <button
                 type="button"
@@ -992,7 +1264,9 @@ function AssistantSection() {
 
   return (
     <section className="inspector-section">
-      <h2>Design mate</h2>
+      <header className="section-head">
+        <h2>Design mate</h2>
+      </header>
       <button
         type="button"
         className="primary-button"
@@ -1043,10 +1317,10 @@ function MultiDesignSection({
 
   return (
     <section className="inspector-section">
-      <h2>Design</h2>
-      <p className="muted" style={{ marginBottom: 10 }}>
-        {nodes.length} objects selected
-      </p>
+      <header className="section-head">
+        <h2>Design</h2>
+        <span className="section-meta">{nodes.length} selected</span>
+      </header>
       <AlignPanel nodeIds={nodes.map((node) => node.id)} />
       <div className="fill-row">
         <input
@@ -1112,8 +1386,12 @@ export function Inspector() {
     });
   }
 
+  // Two floating cards: design/swatches on top, layers bottom-anchored so
+  // selection-driven layout changes above never shift the layer rows
+  // (double-click rename needs rows that hold still between clicks).
   return (
     <aside className="inspector" aria-label="Inspector">
+      <div className="inspector-card">
       {selectedNodes.length > 1 ? (
         <MultiDesignSection
           nodes={selectedNodes}
@@ -1124,14 +1402,44 @@ export function Inspector() {
       ) : selectedNodes.length === 1 ? (
         <DesignSection node={selectedNodes[0]!} patchSelection={patchSelection} />
       ) : (
-        <section className="inspector-section">
-          <h2>Design</h2>
-          <p className="muted">Select an object to edit its properties.</p>
+        <section className="inspector-section empty-state">
+          <span className="empty-state-mark">
+            <Shapes size={16} strokeWidth={1.75} />
+          </span>
+          <strong>Nothing selected</strong>
+          <p>
+            Select an object on the canvas to edit it,
+            <br />
+            or start drawing with the tools.
+          </p>
+          <div className="empty-shortcuts">
+            <span>
+              <kbd>V</kbd> Select
+            </span>
+            <span>
+              <kbd>R</kbd> Rectangle
+            </span>
+            <span>
+              <kbd>O</kbd> Ellipse
+            </span>
+            <span>
+              <kbd>P</kbd> Pen
+            </span>
+            <span>
+              <kbd>T</kbd> Text
+            </span>
+            <span>
+              <kbd>⌘G</kbd> Group
+            </span>
+          </div>
         </section>
       )}
       <SwatchesSection />
-      <LayersSection />
       <AssistantSection />
+      </div>
+      <div className="inspector-card inspector-layers">
+        <LayersSection />
+      </div>
     </aside>
   );
 }
