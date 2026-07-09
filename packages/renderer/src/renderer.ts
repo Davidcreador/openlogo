@@ -24,9 +24,12 @@ import type {
   Vec2,
 } from "@openlogo/core";
 import {
+  type SelectionFrame,
   getRenderNodesForArtboard,
   pathGeometryToSvg,
   rotatePoint,
+  selectionFrame,
+  selectionFrameCenter,
   unitBounds,
 } from "@openlogo/core";
 import type { Camera } from "./camera";
@@ -60,7 +63,7 @@ export type Scene = {
   /** Bezier node editing overlay, artboard-local coordinates. */
   pathEdit?: {
     geometry: PathGeometry;
-    selected?: { subpath: number; index: number } | null;
+    selected?: ReadonlyArray<{ subpath: number; index: number }> | null;
   } | null;
   /** Shape Builder overlay regions, artboard-local coordinates. */
   shapeBuilder?: {
@@ -1226,29 +1229,20 @@ export class SceneRenderer {
       return;
     }
 
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-
-    for (const nodeId of selectedNodeIds) {
-      // Unit bounds: group selections use derived child bounds.
-      const bounds = unitBounds(document, nodeId);
-      if (!bounds) {
-        continue;
-      }
-      minX = Math.min(minX, bounds.x);
-      minY = Math.min(minY, bounds.y);
-      maxX = Math.max(maxX, bounds.x + bounds.width);
-      maxY = Math.max(maxY, bounds.y + bounds.height);
-    }
-
-    if (!Number.isFinite(minX)) {
+    const frame = selectionFrame(document, selectedNodeIds);
+    if (!frame) {
       return;
     }
+    const { bounds } = frame;
 
     canvas.save();
     canvas.translate(artboard.x, artboard.y);
+    // A single rotated leaf gets a tilted frame; the rotate handle and
+    // the editor's hit-testing rotate the same way (rotateHandlePoint).
+    if (frame.rotation !== 0) {
+      const center = selectionFrameCenter(frame);
+      canvas.rotate(frame.rotation, center.x, center.y);
+    }
 
     const outline = new ck.Paint();
     outline.setStyle(ck.PaintStyle.Stroke);
@@ -1258,11 +1252,35 @@ export class SceneRenderer {
     const dash = ck.PathEffect.MakeDash([6 / camera.zoom, 4 / camera.zoom], 0);
     outline.setPathEffect(dash);
     canvas.drawRect(
-      ck.XYWHRect(minX, minY, maxX - minX, maxY - minY),
+      ck.XYWHRect(bounds.x, bounds.y, bounds.width, bounds.height),
       outline,
     );
     dash.delete();
     outline.delete();
+
+    // Rotate handle: a lollipop above the frame's top edge.
+    const stemTop = {
+      x: bounds.x + bounds.width / 2,
+      y: bounds.y - ROTATE_HANDLE_OFFSET / camera.zoom,
+    };
+    const stem = new ck.Paint();
+    stem.setStyle(ck.PaintStyle.Stroke);
+    stem.setStrokeWidth(1.25 / camera.zoom);
+    stem.setColor(ck.parseColorString(SELECTION_COLOR));
+    stem.setAntiAlias(true);
+    const stemPath = new ck.Path();
+    stemPath.moveTo(stemTop.x, bounds.y);
+    stemPath.lineTo(stemTop.x, stemTop.y);
+    canvas.drawPath(stemPath, stem);
+    stemPath.delete();
+
+    const knobFill = new ck.Paint();
+    knobFill.setColor(ck.parseColorString("#ffffff"));
+    knobFill.setAntiAlias(true);
+    canvas.drawCircle(stemTop.x, stemTop.y, 4.5 / camera.zoom, knobFill);
+    canvas.drawCircle(stemTop.x, stemTop.y, 4.5 / camera.zoom, stem);
+    knobFill.delete();
+    stem.delete();
 
     // Corner + edge handles.
     const handleSize = 8 / camera.zoom;
@@ -1275,9 +1293,7 @@ export class SceneRenderer {
     handleStroke.setColor(ck.parseColorString(SELECTION_COLOR));
     handleStroke.setAntiAlias(true);
 
-    for (const handle of selectionHandles(
-      { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
-    )) {
+    for (const handle of selectionHandles(bounds)) {
       const rect = ck.XYWHRect(
         handle.x - handleSize / 2,
         handle.y - handleSize / 2,
@@ -1680,7 +1696,9 @@ export class SceneRenderer {
             this.drawHandle(canvas, point, point.handleOut, zoom);
           }
           const isSelected =
-            edit.selected?.subpath === si && edit.selected?.index === pi;
+            edit.selected?.some(
+              (ref) => ref.subpath === si && ref.index === pi,
+            ) ?? false;
           this.drawAnchor(canvas, point, zoom, isSelected);
         }
       }
@@ -1727,6 +1745,25 @@ export type HandleId =
   | "w";
 
 export type SelectionHandle = Vec2 & { id: HandleId };
+
+/** Screen-px gap between the frame's top edge and the rotate knob. */
+export const ROTATE_HANDLE_OFFSET = 22;
+
+/**
+ * Artboard-space centre of the rotate knob for a selection frame —
+ * the same point drawSelection draws it at (the frame's own rotation
+ * applied), so pointer hit-testing and rendering can never drift.
+ */
+export function rotateHandlePoint(frame: SelectionFrame, zoom: number): Vec2 {
+  const { bounds } = frame;
+  const top = {
+    x: bounds.x + bounds.width / 2,
+    y: bounds.y - ROTATE_HANDLE_OFFSET / zoom,
+  };
+  return frame.rotation === 0
+    ? top
+    : rotatePoint(top, selectionFrameCenter(frame), frame.rotation);
+}
 
 /** Handle centre points for a selection box, artboard space. */
 export function selectionHandles(bounds: Bounds): SelectionHandle[] {

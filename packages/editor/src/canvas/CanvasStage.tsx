@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getCanvasKit } from "../lib/canvaskit";
 import { fontStore } from "../lib/font-store";
 import {
+  type AnchorRef,
   type Bounds,
   type LogoDocument,
   type LogoNode,
@@ -12,6 +13,7 @@ import {
   type PathPoint,
   type SnapGuide,
   type Vec2,
+  averageAnchors,
   collectLeafNodeIds,
   computeSnap,
   computeSpacingSnap,
@@ -22,17 +24,25 @@ import {
   createRectangle,
   createText,
   createVectorShapeNode,
+  cutPathAt,
+  findContainerId,
   findSegmentNear,
   getActiveArtboard,
   getAncestorGroupIds,
   getContainerChildIds,
   insertAnchor,
+  joinAnchors,
   measureDistances,
-  pathGeometryBounds,
-  pathGeometryToSvg,
+  nodeBounds,
+  normalizeAngle,
+  pathNodeLocalGeometry,
   removeAnchor,
+  rotatePoint,
+  selectionFrame,
+  selectionFrameCenter,
+  setAnchorCorner,
+  setAnchorSmooth,
   snapValue,
-  translatePathGeometry,
   unitBounds,
 } from "@openlogo/core";
 import {
@@ -41,12 +51,15 @@ import {
   SceneRenderer,
   fitBounds,
   panBy,
+  rotateHandlePoint,
   screenToWorld,
   selectionHandles,
   worldToScreen,
   zoomAt,
 } from "@openlogo/renderer";
 import { cloneUnits, resolveUnit } from "../lib/group-ops";
+import { patchFromLocalGeometry } from "../lib/path-node-geometry";
+import { recordTransform } from "../lib/transform-again";
 import {
   type ShapeBuilderSession,
   commitShapeBuilder,
@@ -66,6 +79,7 @@ type NodeSnapshot = {
   y: number;
   width: number;
   height: number;
+  rotation: number;
   fontSize?: number;
 };
 
@@ -83,9 +97,13 @@ type PathEditSession = {
   drag: {
     subpath: number;
     index: number;
-    part: "anchor" | "in" | "out";
+    /** "pull" = ⌥-drag from an anchor: symmetric handles grow out. */
+    part: "anchor" | "in" | "out" | "pull";
+    /** Convert-anchor click state (part "pull" only). */
+    pull?: { hadHandles: boolean; downLocal: Vec2; moved: boolean };
   } | null;
-  selected: { subpath: number; index: number } | null;
+  /** Multi-anchor selection (⇧-click adds); join/average/delete targets. */
+  selected: AnchorRef[];
   changed: boolean;
 };
 
@@ -97,6 +115,11 @@ type DragState =
       snapshots: Map<string, NodeSnapshot>;
       patches: Array<{ nodeId: string; patch: NodePatch }>;
       moved: boolean;
+      /** The gesture began as an ⌥-drag duplicate (Transform Again copy flag). */
+      copied: boolean;
+      /** Final applied delta including snapping (Transform Again record). */
+      appliedDx: number;
+      appliedDy: number;
       /** Static snap candidates: unselected nodes + the artboard box. */
       snapTargets: Bounds[];
       guides: SnapGuide[];
@@ -110,6 +133,10 @@ type DragState =
       handle: HandleId;
       startLocal: Vec2;
       startBounds: Bounds;
+      /** Selection-frame tilt: non-zero only for a single rotated leaf. */
+      frameRotation: number;
+      /** Last applied bounds (Transform Again scale record). */
+      lastBounds: Bounds;
       snapshots: Map<string, NodeSnapshot>;
       patches: Array<{ nodeId: string; patch: NodePatch }>;
       moved: boolean;
@@ -117,6 +144,20 @@ type DragState =
       guides: SnapGuide[];
       spacingGaps: MeasureSegment[];
       distanceLabels: MeasureSegment[];
+    }
+  | {
+      kind: "rotate";
+      /** Rotation pivot: the selection frame's centre, artboard-local. */
+      pivot: Vec2;
+      /** Pointer angle at grab, degrees. */
+      startPointerAngle: number;
+      /** First snapshot's rotation — the ⇧ 15°-snap reference. */
+      baseRotation: number;
+      /** Last applied delta, degrees. */
+      delta: number;
+      snapshots: Map<string, NodeSnapshot>;
+      patches: Array<{ nodeId: string; patch: NodePatch }>;
+      moved: boolean;
     }
   | { kind: "marquee"; startLocal: Vec2; current: Bounds | null }
   | { kind: "guide"; axis: "v" | "h"; index: number; value: number }
@@ -171,6 +212,7 @@ function snapshotNodes(nodeIds: readonly string[]): Map<string, NodeSnapshot> {
         y: node.y,
         width: node.width,
         height: node.height,
+        rotation: node.rotation,
         ...(node.type === "text" ? { fontSize: node.fontSize } : {}),
       });
     }
@@ -256,7 +298,9 @@ function collectSnapTargets(excludedIds: ReadonlySet<string>): Bounds[] {
     if (containsExcluded) {
       continue;
     }
-    const bounds = unitBounds(document, nodeId);
+    // Rotated leaves snap by their rotated AABB — the box on screen.
+    const bounds =
+      node.type === "group" ? unitBounds(document, nodeId) : nodeBounds(node);
     if (bounds) {
       targets.push(bounds);
     }
@@ -299,50 +343,14 @@ function selectionUnitBounds(
     : null;
 }
 
-/** Node patch for a path whose artboard-local geometry changed. */
-function patchFromLocalGeometry(geometry: PathGeometry): NodePatch | null {
-  const bounds = pathGeometryBounds(geometry);
-  if (!bounds) {
-    return null;
-  }
-
-  const normalized = translatePathGeometry(geometry, -bounds.x, -bounds.y);
-  return {
-    x: bounds.x,
-    y: bounds.y,
-    width: bounds.width,
-    height: bounds.height,
-    intrinsicWidth: bounds.width,
-    intrinsicHeight: bounds.height,
-    d: pathGeometryToSvg(normalized),
-    geometry: normalized,
-    // A bezier edit detaches a shape-library node from its params.
-    shape: undefined,
-  };
+/** Rotate a vector (not a point) by `degrees`. */
+function rotateVec(v: Vec2, degrees: number): Vec2 {
+  return rotatePoint(v, { x: 0, y: 0 }, degrees);
 }
 
-/** Denormalise a path node's geometry into artboard-local coordinates. */
-function localGeometryOf(node: PathNode): PathGeometry | null {
-  if (!node.geometry) {
-    return null;
-  }
-  const sx = node.width / node.intrinsicWidth;
-  const sy = node.height / node.intrinsicHeight;
-  const map = (p: Vec2): Vec2 => ({
-    x: node.x + p.x * sx,
-    y: node.y + p.y * sy,
-  });
-
-  return {
-    subpaths: node.geometry.subpaths.map((subpath) => ({
-      closed: subpath.closed,
-      points: subpath.points.map((point) => ({
-        ...map(point),
-        ...(point.handleIn ? { handleIn: map(point.handleIn) } : {}),
-        ...(point.handleOut ? { handleOut: map(point.handleOut) } : {}),
-      })),
-    })),
-  };
+/** Pointer angle around a pivot, degrees. */
+function pointerAngle(local: Vec2, pivot: Vec2): number {
+  return (Math.atan2(local.y - pivot.y, local.x - pivot.x) * 180) / Math.PI;
 }
 
 function TextEditOverlay({
@@ -525,6 +533,8 @@ export function CanvasStage() {
   const dragRef = useRef<DragState | null>(null);
   const penRef = useRef<PenSession | null>(null);
   const editRef = useRef<PathEditSession | null>(null);
+  /** Scissors sub-mode within bezier editing (C toggles). */
+  const scissorsRef = useRef(false);
   const sbRef = useRef<ShapeBuilderSession | null>(null);
   const hoverRef = useRef<string | null>(null);
   /** ⌥-hover distance readouts between the selection and a hovered unit. */
@@ -1032,25 +1042,76 @@ export function CanvasStage() {
         }
         if (event.key === "Escape") {
           consume();
+          // Esc backs out of scissors before it backs out of editing.
+          if (scissorsRef.current) {
+            scissorsRef.current = false;
+            setHandleHint(null);
+            return;
+          }
           cancelPathEdit();
+          return;
+        }
+
+        // C toggles scissors within the edit session.
+        if (
+          event.code === "KeyC" &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.altKey
+        ) {
+          consume();
+          scissorsRef.current = !scissorsRef.current;
+          setHandleHint(
+            scissorsRef.current
+              ? "Scissors: click an anchor or segment to cut · C/Esc cancels"
+              : null,
+          );
+          return;
+        }
+
+        // ⌘J join / ⌥⌘J average (event.code: ⌥J types "∆" as event.key).
+        if (event.code === "KeyJ" && (event.metaKey || event.ctrlKey)) {
+          consume();
+          if (event.altKey) {
+            averageAnchorsInEdit(
+              event.shiftKey ? "horizontal" : event.ctrlKey && event.metaKey ? "vertical" : "both",
+            );
+          } else {
+            joinAnchorsInEdit();
+          }
           return;
         }
 
         if (
           (event.key === "Backspace" || event.key === "Delete") &&
-          edit.selected
+          edit.selected.length > 0
         ) {
           event.preventDefault();
-          const next = removeAnchor(
-            edit.geometry,
-            edit.selected.subpath,
-            edit.selected.index,
+          // Remove back-to-front so earlier indices stay valid.
+          const ordered = [...edit.selected].sort(
+            (a, b) => b.subpath - a.subpath || b.index - a.index,
           );
+          let next: PathGeometry | null = edit.geometry;
+          const droppedSubpaths = new Set<number>();
+          for (const ref of ordered) {
+            if (droppedSubpaths.has(ref.subpath)) {
+              continue; // the whole subpath already fell away
+            }
+            const before = next.subpaths.length;
+            next = removeAnchor(next, ref.subpath, ref.index);
+            if (!next) {
+              break;
+            }
+            if (next.subpaths.length !== before) {
+              droppedSubpaths.add(ref.subpath);
+            }
+          }
 
           if (!next) {
             // Path would be empty: delete the node and leave edit mode.
             const nodeId = edit.nodeId;
             editRef.current = null;
+            scissorsRef.current = false;
             setEditingPathId(null);
             documentStore.cancelPreview();
             documentStore.apply({ type: "delete-nodes", nodeIds: [nodeId] });
@@ -1060,7 +1121,7 @@ export function CanvasStage() {
           }
 
           edit.geometry = next;
-          edit.selected = null;
+          edit.selected = [];
           edit.drag = null;
           edit.changed = true;
           const patch = patchFromLocalGeometry(edit.geometry);
@@ -1094,17 +1155,22 @@ export function CanvasStage() {
       if (state.selectedNodeIds.length === 0) {
         return null;
       }
-      const snapshots = snapshotNodes(state.selectedNodeIds);
-      const bounds = snapshotBounds(snapshots);
-      if (!bounds) {
+      const frame = selectionFrame(documentStore.document, state.selectedNodeIds);
+      if (!frame) {
         return null;
       }
+      const center = selectionFrameCenter(frame);
 
       const artboard = getActiveArtboard(documentStore.document);
-      for (const handle of selectionHandles(bounds)) {
+      for (const handle of selectionHandles(frame.bounds)) {
+        // A tilted frame's handles rotate with it (drawSelection parity).
+        const point =
+          frame.rotation === 0
+            ? handle
+            : rotatePoint(handle, center, frame.rotation);
         const handleScreen = worldToScreen(state.camera, {
-          x: handle.x + artboard.x,
-          y: handle.y + artboard.y,
+          x: point.x + artboard.x,
+          y: point.y + artboard.y,
         });
         if (
           Math.abs(handleScreen.x - screen.x) <= HANDLE_HIT_RADIUS &&
@@ -1117,6 +1183,28 @@ export function CanvasStage() {
     },
     [],
   );
+
+  /** True when the pointer is over the selection frame's rotate knob. */
+  const hitRotateHandle = useCallback((screen: Vec2): boolean => {
+    const state = useEditorStore.getState();
+    if (state.selectedNodeIds.length === 0) {
+      return false;
+    }
+    const frame = selectionFrame(documentStore.document, state.selectedNodeIds);
+    if (!frame) {
+      return false;
+    }
+    const artboard = getActiveArtboard(documentStore.document);
+    const knob = rotateHandlePoint(frame, state.camera.zoom);
+    const knobScreen = worldToScreen(state.camera, {
+      x: knob.x + artboard.x,
+      y: knob.y + artboard.y,
+    });
+    return (
+      Math.abs(knobScreen.x - screen.x) <= HANDLE_HIT_RADIUS &&
+      Math.abs(knobScreen.y - screen.y) <= HANDLE_HIT_RADIUS
+    );
+  }, []);
 
   function finalizePen(closed: boolean) {
     const pen = penRef.current;
@@ -1173,7 +1261,7 @@ export function CanvasStage() {
   }
 
   function startPathEdit(node: PathNode) {
-    const geometry = localGeometryOf(node);
+    const geometry = pathNodeLocalGeometry(node);
     if (!geometry) {
       return;
     }
@@ -1181,7 +1269,7 @@ export function CanvasStage() {
       nodeId: node.id,
       geometry,
       drag: null,
-      selected: null,
+      selected: [],
       changed: false,
     };
     setEditingPathId(node.id);
@@ -1192,6 +1280,7 @@ export function CanvasStage() {
   function commitPathEdit() {
     const edit = editRef.current;
     editRef.current = null;
+    scissorsRef.current = false;
     setEditingPathId(null);
 
     // The node may be gone (undo popped its insert mid-edit): committing
@@ -1220,6 +1309,7 @@ export function CanvasStage() {
   function cancelPathEdit() {
     const edit = editRef.current;
     editRef.current = null;
+    scissorsRef.current = false;
     setEditingPathId(null);
     documentStore.cancelPreview();
     setSelection(
@@ -1229,9 +1319,9 @@ export function CanvasStage() {
   }
 
   /**
-   * Abort an in-flight pointer gesture (move/resize/marquee/guide/pan)
-   * without committing anything — Esc mid-drag, or undo arriving while
-   * a gesture is live.
+   * Abort an in-flight pointer gesture (move/resize/rotate/marquee/
+   * guide/pan) without committing anything — Esc mid-drag, or undo
+   * arriving while a gesture is live.
    */
   function cancelActiveDrag() {
     const drag = dragRef.current;
@@ -1239,10 +1329,161 @@ export function CanvasStage() {
       return;
     }
     dragRef.current = null;
-    if (drag.kind === "move" || drag.kind === "resize") {
+    if (drag.kind === "move" || drag.kind === "resize" || drag.kind === "rotate") {
       documentStore.cancelPreview();
+      setHandleHint(null);
     }
     syncScene(); // drops marquee/guide previews and snap/spacing overlays
+  }
+
+  /**
+   * Scissors: cut the edited path at an anchor. The whole edit session
+   * (any prior anchor edits included) commits together with the cut as
+   * one undoable command: a closed subpath just opens in place; an open
+   * subpath severs into two nodes (the trailing piece inserts above).
+   */
+  function commitScissorsCut(subpath: number, index: number) {
+    const edit = editRef.current;
+    if (!edit) {
+      return;
+    }
+    scissorsRef.current = false;
+    setHandleHint(null);
+
+    const result = cutPathAt(edit.geometry, subpath, index);
+    if (!result) {
+      syncScene();
+      return;
+    }
+
+    const document = documentStore.document;
+    const node = document.nodes[edit.nodeId];
+    editRef.current = null;
+    setEditingPathId(null);
+    documentStore.cancelPreview();
+    if (!node || node.type !== "path") {
+      setSelection([]);
+      syncScene();
+      return;
+    }
+
+    if (result.kind === "opened") {
+      const patch = patchFromLocalGeometry(result.geometry);
+      if (patch) {
+        documentStore.apply({
+          type: "update-nodes",
+          updates: [{ nodeId: node.id, patch }],
+        });
+      }
+      setSelection([node.id]);
+      syncScene();
+      return;
+    }
+
+    const firstPatch = patchFromLocalGeometry(result.first);
+    const secondPatch = patchFromLocalGeometry(result.second);
+    if (!firstPatch || !secondPatch) {
+      setSelection([node.id]);
+      syncScene();
+      return;
+    }
+
+    const containerId = findContainerId(document, node.id);
+    const artboard = getActiveArtboard(document);
+    const container =
+      containerId && document.nodes[containerId]?.type === "group"
+        ? containerId
+        : undefined;
+    const siblings = getContainerChildIds(document, containerId ?? artboard.id);
+
+    const piece: PathNode = {
+      id: createId("node"),
+      type: "path",
+      name: `${node.name} cut`,
+      x: secondPatch.x!,
+      y: secondPatch.y!,
+      width: secondPatch.width!,
+      height: secondPatch.height!,
+      rotation: 0,
+      opacity: node.opacity,
+      visible: true,
+      locked: false,
+      fill: structuredClone(node.fill),
+      ...(node.stroke ? { stroke: { ...node.stroke } } : {}),
+      d: secondPatch.d!,
+      intrinsicWidth: secondPatch.intrinsicWidth!,
+      intrinsicHeight: secondPatch.intrinsicHeight!,
+      geometry: secondPatch.geometry!,
+    };
+
+    documentStore.apply({
+      type: "batch",
+      label: "Cut path",
+      commands: [
+        { type: "update-nodes", updates: [{ nodeId: node.id, patch: firstPatch }] },
+        {
+          type: "insert-nodes",
+          artboardId: artboard.id,
+          ...(container ? { containerId: container } : {}),
+          nodes: [piece],
+          index: siblings.indexOf(node.id) + 1,
+        },
+      ],
+    });
+    setSelection([node.id, piece.id]);
+    syncScene();
+  }
+
+  /** ⌘J in edit mode: join the two selected endpoint anchors. */
+  function joinAnchorsInEdit() {
+    const edit = editRef.current;
+    if (!edit) {
+      return;
+    }
+    if (edit.selected.length !== 2) {
+      setHandleHint("Join: ⇧-click two endpoint anchors first");
+      return;
+    }
+    const joined = joinAnchors(edit.geometry, edit.selected[0]!, edit.selected[1]!);
+    if (!joined) {
+      setHandleHint("Join: both anchors must be open-path endpoints");
+      return;
+    }
+    edit.geometry = joined;
+    edit.selected = []; // indices may have shifted
+    edit.drag = null;
+    edit.changed = true;
+    const patch = patchFromLocalGeometry(edit.geometry);
+    if (patch) {
+      documentStore.preview([{ nodeId: edit.nodeId, patch }]);
+    }
+    setHandleHint(null);
+    syncScene();
+  }
+
+  /** ⌥⌘J in edit mode: average the selected anchors (⇧ = y only, ⌃ = x only). */
+  function averageAnchorsInEdit(axis: "horizontal" | "vertical" | "both") {
+    const edit = editRef.current;
+    if (!edit) {
+      return;
+    }
+    if (edit.selected.length < 2) {
+      setHandleHint("Average: ⇧-click two or more anchors first");
+      return;
+    }
+    const averaged = averageAnchors(edit.geometry, edit.selected, axis);
+    if (!averaged) {
+      return;
+    }
+    edit.geometry = averaged;
+    edit.drag = null;
+    edit.changed = true;
+    const patch = patchFromLocalGeometry(edit.geometry);
+    if (patch) {
+      documentStore.preview([{ nodeId: edit.nodeId, patch }]);
+    }
+    setHandleHint(null);
+    syncScene();
   }
 
   function hitEditTarget(
@@ -1379,12 +1620,99 @@ export function CanvasStage() {
       const edit = editRef.current;
       const target = hitEditTarget(screen);
 
+      // Scissors sub-mode: the click cuts at an anchor or segment point.
+      if (scissorsRef.current) {
+        if (target && target.part === "anchor") {
+          commitScissorsCut(target.subpath, target.index);
+          return;
+        }
+        const local = toArtboardLocal(screen);
+        const segment = findSegmentNear(
+          edit.geometry,
+          local,
+          6 / state.camera.zoom,
+        );
+        if (segment) {
+          const inserted = insertAnchor(
+            edit.geometry,
+            segment.subpath,
+            segment.index,
+            segment.t,
+          );
+          if (inserted) {
+            edit.geometry = inserted.geometry;
+            commitScissorsCut(segment.subpath, inserted.index);
+            return;
+          }
+        }
+        scissorsRef.current = false; // clicked empty space: disarm
+        setHandleHint(null);
+        syncScene();
+        return;
+      }
+
       if (target) {
+        // ⌥ on an anchor = convert-anchor: a click retracts a smooth
+        // point to a corner (or, on a corner, pulls smooth handles back
+        // out via the heuristic on release); an ⌥-drag grows symmetric
+        // handles out of the anchor, pen-style.
+        if (event.altKey && target.part === "anchor") {
+          const point =
+            edit.geometry.subpaths[target.subpath]?.points[target.index];
+          if (!point) {
+            return;
+          }
+          const hadHandles = Boolean(point.handleIn || point.handleOut);
+          if (hadHandles) {
+            const next = setAnchorCorner(
+              edit.geometry,
+              target.subpath,
+              target.index,
+            );
+            if (next) {
+              edit.geometry = next;
+              edit.changed = true;
+              const patch = patchFromLocalGeometry(edit.geometry);
+              if (patch) {
+                documentStore.preview([{ nodeId: edit.nodeId, patch }]);
+              }
+            }
+          }
+          edit.drag = {
+            subpath: target.subpath,
+            index: target.index,
+            part: "pull",
+            pull: {
+              hadHandles,
+              downLocal: toArtboardLocal(screen),
+              moved: false,
+            },
+          };
+          edit.selected = [
+            { subpath: target.subpath, index: target.index },
+          ];
+          syncScene();
+          return;
+        }
+
         edit.drag = target;
-        edit.selected =
-          target.part === "anchor"
-            ? { subpath: target.subpath, index: target.index }
-            : edit.selected;
+        if (target.part === "anchor") {
+          const ref = { subpath: target.subpath, index: target.index };
+          const already = edit.selected.some(
+            (item) => item.subpath === ref.subpath && item.index === ref.index,
+          );
+          // ⇧ builds a multi-anchor selection (join/average/delete).
+          edit.selected = event.shiftKey
+            ? already
+              ? edit.selected.filter(
+                  (item) =>
+                    item.subpath !== ref.subpath || item.index !== ref.index,
+                )
+              : [...edit.selected, ref]
+            : already
+              ? edit.selected
+              : [ref];
+        }
         syncScene();
         return;
       }
@@ -1402,7 +1730,7 @@ export function CanvasStage() {
         );
         if (inserted) {
           edit.geometry = inserted.geometry;
-          edit.selected = { subpath: segment.subpath, index: inserted.index };
+          edit.selected = [{ subpath: segment.subpath, index: inserted.index }];
           edit.drag = {
             subpath: segment.subpath,
             index: inserted.index,
@@ -1559,17 +1887,45 @@ export function CanvasStage() {
       }
     }
 
-    // Resize handle first — takes priority over node hits.
+    // Rotate handle — outside the frame, checked before everything else.
+    if (hitRotateHandle(screen)) {
+      const frame = selectionFrame(
+        documentStore.document,
+        state.selectedNodeIds,
+      );
+      if (frame) {
+        const pivot = selectionFrameCenter(frame);
+        const snapshots = snapshotNodes(state.selectedNodeIds);
+        dragRef.current = {
+          kind: "rotate",
+          pivot,
+          startPointerAngle: pointerAngle(toArtboardLocal(screen), pivot),
+          baseRotation: snapshots.values().next().value?.rotation ?? 0,
+          delta: 0,
+          snapshots,
+          patches: [],
+          moved: false,
+        };
+      }
+      return;
+    }
+
+    // Resize handle next — takes priority over node hits.
     const handle = hitHandle(screen);
     if (handle) {
+      const frame = selectionFrame(
+        documentStore.document,
+        state.selectedNodeIds,
+      );
       const snapshots = snapshotNodes(state.selectedNodeIds);
-      const bounds = snapshotBounds(snapshots);
-      if (bounds) {
+      if (frame) {
         dragRef.current = {
           kind: "resize",
           handle,
           startLocal: toArtboardLocal(screen),
-          startBounds: bounds,
+          startBounds: frame.bounds,
+          frameRotation: frame.rotation,
+          lastBounds: frame.bounds,
           snapshots,
           patches: [],
           moved: false,
@@ -1672,6 +2028,7 @@ export function CanvasStage() {
         : targetIds;
 
     // Alt-drag duplicates the selection (whole subtrees) and drags the copies.
+    let copied = false;
     if (event.altKey && !event.shiftKey) {
       const document = documentStore.document;
       const artboard = getActiveArtboard(document);
@@ -1685,6 +2042,7 @@ export function CanvasStage() {
           nodes: clones,
         });
         nextSelection = rootIds;
+        copied = true;
       }
     }
 
@@ -1699,6 +2057,9 @@ export function CanvasStage() {
       snapshots: snapshotNodes(nextSelection),
       patches: [],
       moved: false,
+      copied,
+      appliedDx: 0,
+      appliedDy: 0,
       snapTargets: collectSnapTargets(excluded),
       guides: [],
       spacingGaps: [],
@@ -1756,6 +2117,27 @@ export function CanvasStage() {
             y: point.handleOut.y + dy,
           };
         }
+      } else if (edit.drag.part === "pull") {
+        // Convert-anchor ⌥-drag: symmetric handles grow out of the
+        // anchor regardless of ⌥ (that's what armed the gesture).
+        const pull = edit.drag.pull;
+        if (
+          pull &&
+          !pull.moved &&
+          Math.hypot(local.x - pull.downLocal.x, local.y - pull.downLocal.y) <=
+            2 / useEditorStore.getState().camera.zoom
+        ) {
+          return; // ignore jitter so a plain ⌥-click stays a click
+        }
+        if (pull) {
+          pull.moved = true;
+        }
+        point.handleOut = { x: local.x, y: local.y };
+        point.handleIn = {
+          x: point.x * 2 - local.x,
+          y: point.y * 2 - local.y,
+        };
+        setHandleHint("Convert anchor: symmetric handles");
       } else if (edit.drag.part === "in") {
         point.handleIn = { x: local.x, y: local.y };
         // Mirrored (symmetric) by default; Alt breaks the pair apart.
@@ -1775,7 +2157,7 @@ export function CanvasStage() {
         }
       }
 
-      if (edit.drag.part !== "anchor") {
+      if (edit.drag.part === "in" || edit.drag.part === "out") {
         setHandleHint(
           event.altKey
             ? "Handles: broken (⌥)"
@@ -1963,6 +2345,41 @@ export function CanvasStage() {
       return;
     }
 
+    if (drag.kind === "rotate") {
+      let delta = pointerAngle(local, drag.pivot) - drag.startPointerAngle;
+      // ⇧ snaps the RESULTING rotation to 15° multiples.
+      if (event.shiftKey) {
+        delta =
+          Math.round((drag.baseRotation + delta) / 15) * 15 -
+          drag.baseRotation;
+      }
+      drag.delta = delta;
+      drag.patches = [...drag.snapshots.entries()].map(([nodeId, snap]) => {
+        const center = rotatePoint(
+          { x: snap.x + snap.width / 2, y: snap.y + snap.height / 2 },
+          drag.pivot,
+          delta,
+        );
+        return {
+          nodeId,
+          patch: {
+            x: center.x - snap.width / 2,
+            y: center.y - snap.height / 2,
+            rotation: normalizeAngle(snap.rotation + delta),
+          },
+        };
+      });
+      drag.moved = drag.moved || delta !== 0;
+      setHandleHint(
+        `∠ ${Math.round(normalizeAngle(drag.baseRotation + delta))}°${
+          event.shiftKey ? "" : " — ⇧ snaps to 15°"
+        }`,
+      );
+      documentStore.preview(drag.patches);
+      syncScene();
+      return;
+    }
+
     const dx = local.x - drag.startLocal.x;
     const dy = local.y - drag.startLocal.y;
 
@@ -2031,13 +2448,28 @@ export function CanvasStage() {
         patch: { x: snap.x + dx + snapDx, y: snap.y + dy + snapDy },
       }));
       drag.moved = drag.moved || dx !== 0 || dy !== 0;
+      drag.appliedDx = dx + snapDx;
+      drag.appliedDy = dy + snapDy;
       documentStore.preview(drag.patches);
       syncScene();
       return;
     }
 
-    // Resize.
-    let next = resizeBounds(drag.startBounds, drag.handle, dx, dy);
+    // Resize. A tilted frame (single rotated leaf) resizes in the
+    // node's local space: the pointer delta rotates into that space,
+    // the box scales axis-aligned there, and a final translation keeps
+    // the anchored corner fixed in world space (the box rotates about
+    // its own centre, which the resize moved).
+    const rotated = drag.frameRotation !== 0;
+    const localDelta = rotated
+      ? rotateVec({ x: dx, y: dy }, -drag.frameRotation)
+      : { x: dx, y: dy };
+    let next = resizeBounds(
+      drag.startBounds,
+      drag.handle,
+      localDelta.x,
+      localDelta.y,
+    );
     drag.guides = [];
     drag.spacingGaps = [];
     drag.distanceLabels = [];
@@ -2062,8 +2494,9 @@ export function CanvasStage() {
       };
     }
 
-    // Snap the dragged edges (Alt disables; skipped while constraining).
-    if (!event.altKey && !(event.shiftKey && isCornerHandle)) {
+    // Snap the dragged edges (Alt disables; skipped while constraining
+    // and on tilted frames, whose edges are not axis-aligned).
+    if (!event.altKey && !(event.shiftKey && isCornerHandle) && !rotated) {
       const zoom = useEditorStore.getState().camera.zoom;
       const threshold = 6 / zoom;
       const extentY = { start: next.y, end: next.y + next.height };
@@ -2123,6 +2556,21 @@ export function CanvasStage() {
       drag.distanceLabels = measureDistances(next, drag.snapTargets);
     }
 
+    if (rotated) {
+      // Keep the anchored corner still: the stored box's centre moved by
+      // d, but the node renders rotated about that centre — translate by
+      // R(d) − d so the rotation pivot shift cancels at the anchor.
+      const d = {
+        x:
+          next.x + next.width / 2 - (drag.startBounds.x + drag.startBounds.width / 2),
+        y:
+          next.y + next.height / 2 - (drag.startBounds.y + drag.startBounds.height / 2),
+      };
+      const spun = rotateVec(d, drag.frameRotation);
+      next = { ...next, x: next.x + spun.x - d.x, y: next.y + spun.y - d.y };
+    }
+    drag.lastBounds = next;
+
     const sx = next.width / drag.startBounds.width;
     const sy = next.height / drag.startBounds.height;
     const isCorner = drag.handle.length === 2;
@@ -2178,6 +2626,26 @@ export function CanvasStage() {
 
     const edit = editRef.current;
     if (edit) {
+      const drag = edit.drag;
+      // A plain ⌥-click (no drag) on a handle-less anchor converts it
+      // to smooth; ⌥-click on a smooth one already retracted on press.
+      if (
+        drag?.part === "pull" &&
+        drag.pull &&
+        !drag.pull.moved &&
+        !drag.pull.hadHandles
+      ) {
+        const next = setAnchorSmooth(edit.geometry, drag.subpath, drag.index);
+        if (next) {
+          edit.geometry = next;
+          edit.changed = true;
+          const patch = patchFromLocalGeometry(edit.geometry);
+          if (patch) {
+            documentStore.preview([{ nodeId: edit.nodeId, patch }]);
+          }
+          syncScene();
+        }
+      }
       edit.drag = null;
       setHandleHint(null);
       return;
@@ -2253,7 +2721,11 @@ export function CanvasStage() {
           if (!node || !node.visible || node.locked) {
             continue;
           }
-          const bounds = unitBounds(document, nodeId);
+          // Rotated leaves intersect by their rotated AABB.
+          const bounds =
+            node.type === "group"
+              ? unitBounds(document, nodeId)
+              : nodeBounds(node);
           if (!bounds) {
             continue;
           }
@@ -2272,12 +2744,54 @@ export function CanvasStage() {
       return;
     }
 
+    if (drag.kind === "rotate") {
+      setHandleHint(null);
+      if (drag.moved && drag.patches.length > 0) {
+        // One history entry for the whole gesture.
+        documentStore.apply({ type: "update-nodes", updates: drag.patches });
+        recordTransform({
+          kind: "rotate",
+          degrees: drag.delta,
+          pivot: drag.pivot,
+          copy: false,
+        });
+      } else {
+        documentStore.cancelPreview();
+      }
+      syncScene();
+      return;
+    }
+
     if (
       (drag.kind === "move" || drag.kind === "resize") &&
       drag.moved &&
       drag.patches.length > 0
     ) {
       documentStore.apply({ type: "update-nodes", updates: drag.patches });
+
+      if (drag.kind === "move") {
+        recordTransform({
+          kind: "move",
+          dx: drag.appliedDx,
+          dy: drag.appliedDy,
+          copy: drag.copied,
+        });
+      } else if (drag.frameRotation === 0) {
+        // Scale about the anchor the handle held still. Tilted-frame
+        // resizes are not recorded (their anchor is not axis-aligned).
+        const start = drag.startBounds;
+        const last = drag.lastBounds;
+        recordTransform({
+          kind: "scale",
+          sx: last.width / start.width,
+          sy: last.height / start.height,
+          pivot: {
+            x: drag.handle.includes("w") ? start.x + start.width : start.x,
+            y: drag.handle.includes("n") ? start.y + start.height : start.y,
+          },
+          copy: false,
+        });
+      }
     } else if (drag.kind === "move" || drag.kind === "resize") {
       documentStore.cancelPreview();
     }

@@ -26,6 +26,7 @@ import {
   RotateCw,
   Shapes,
   Sparkles,
+  Spline,
   Square,
   Type,
   Unlock,
@@ -64,6 +65,7 @@ import {
   rotateCopies,
 } from "../lib/object-ops";
 import { nodeToPreviewSvg } from "../lib/export";
+import { offsetPathOp } from "../lib/offset-path";
 import { editSwatch } from "../lib/swatches";
 import {
   attachTextToPath,
@@ -219,6 +221,9 @@ function NumberField({
 
 function AlignPanel({ nodeIds }: { nodeIds: readonly string[] }) {
   const canDistribute = nodeIds.length >= 3;
+  const setTransformDialogOpen = useEditorStore(
+    (state) => state.setTransformDialogOpen,
+  );
 
   const alignButtons = [
     { edge: "left", icon: AlignStartVertical, label: "Align left" },
@@ -287,6 +292,15 @@ function AlignPanel({ nodeIds }: { nodeIds: readonly string[] }) {
         onClick={() => flipNodes(nodeIds, "vertical")}
       >
         <FlipVertical2 size={14} />
+      </button>
+      <button
+        type="button"
+        className={button}
+        title="Rotate / reflect…"
+        aria-label="Rotate or reflect"
+        onClick={() => setTransformDialogOpen(true)}
+      >
+        <RotateCw size={14} />
       </button>
     </div>
   );
@@ -515,6 +529,7 @@ function DesignSection({
   const document = useDocument();
   const setSelection = useEditorStore((state) => state.setSelection);
   const [copiesCount, setCopiesCount] = useState(6);
+  const [offsetAmount, setOffsetAmount] = useState(10);
 
   return (
     <section className={SECTION}>
@@ -658,6 +673,34 @@ function DesignSection({
           <RotateCw size={12} /> Rotate copies
         </button>
       </div>
+
+      {(node.type === "path" ||
+        node.type === "rectangle" ||
+        node.type === "ellipse") && (
+        <div className="offset-path mb-10 flex items-center gap-6">
+          <NumberField
+            label="±"
+            unit="px"
+            value={offsetAmount}
+            onCommit={(value) => setOffsetAmount(Math.round(value * 10) / 10)}
+          />
+          <button
+            type="button"
+            className={STROKE_TOGGLE}
+            title="New path offset outward (+) or inward (−) from this one"
+            aria-label="Offset path"
+            onClick={() => {
+              void offsetPathOp(node.id, offsetAmount).then((newId) => {
+                if (newId) {
+                  setSelection([newId]);
+                }
+              });
+            }}
+          >
+            <Spline size={12} /> Offset path
+          </button>
+        </div>
+      )}
 
       <div className={STROKE_HEAD}>
         <span>Quick fill</span>

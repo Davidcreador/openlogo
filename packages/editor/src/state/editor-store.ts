@@ -32,7 +32,10 @@ type EditorState = {
   activeGroupId: string | null;
   /** Canvas viewport CSS size, kept fresh by CanvasStage's resize observer. */
   viewport: { width: number; height: number };
+  /** Rotate/reflect dialog visibility (operates on the selection). */
+  transformDialogOpen: boolean;
   setTool: (tool: Tool) => void;
+  setTransformDialogOpen: (open: boolean) => void;
   setEditingPathId: (id: string | null) => void;
   setActiveGroupId: (id: string | null) => void;
   setViewport: (viewport: { width: number; height: number }) => void;
@@ -51,7 +54,9 @@ export const useEditorStore = create<EditorState>((set) => ({
   editingPathId: null,
   activeGroupId: null,
   viewport: { width: 0, height: 0 },
+  transformDialogOpen: false,
   setTool: (tool) => set({ tool }),
+  setTransformDialogOpen: (transformDialogOpen) => set({ transformDialogOpen }),
   setEditingPathId: (editingPathId) => set({ editingPathId }),
   setActiveGroupId: (activeGroupId) => set({ activeGroupId }),
   setViewport: (viewport) => set({ viewport }),

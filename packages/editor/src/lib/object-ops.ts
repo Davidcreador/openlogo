@@ -17,6 +17,7 @@ import {
 } from "@openlogo/core";
 import { expandStroke } from "@openlogo/renderer";
 import { getCanvasKit } from "./canvaskit";
+import { recordTransform } from "./transform-again";
 import { documentStore } from "../state/document";
 
 export type AlignEdge =
@@ -227,6 +228,18 @@ export function flipNodes(
   });
 
   documentStore.apply({ type: "update-nodes", updates });
+  // A flip is a reflect: "horizontal" mirrors across the vertical line
+  // through the selection centre (axis 90°), "vertical" across the
+  // horizontal one (axis 0°). ⌘D repeats it.
+  recordTransform({
+    kind: "reflect",
+    axisAngle: horizontal ? 90 : 0,
+    pivot: {
+      x: bounds.x + bounds.width / 2,
+      y: bounds.y + bounds.height / 2,
+    },
+    copy: false,
+  });
 }
 
 /**

@@ -7,6 +7,7 @@ export * from "./store";
 export * from "./factory";
 export * from "./shapes";
 export * from "./queries";
+export * from "./transforms";
 export * from "./schema";
 export * from "./snapping";
 export * from "./review";

@@ -307,6 +307,336 @@ export function removeAnchor(
   return { subpaths };
 }
 
+/** Anchor address within a PathGeometry. */
+export type AnchorRef = { subpath: number; index: number };
+
+/** Averaging axis: horizontal → common y, vertical → common x. */
+export type AverageAxis = "horizontal" | "vertical" | "both";
+
+/** Two anchors closer than this weld into one on join. */
+export const JOIN_WELD_TOLERANCE = 0.5;
+
+/**
+ * Retract both bezier handles so the anchor becomes a hard corner
+ * (convert-anchor click on a smooth point). Null when the anchor does
+ * not exist.
+ */
+export function setAnchorCorner(
+  geometry: PathGeometry,
+  subpathIndex: number,
+  pointIndex: number,
+): PathGeometry | null {
+  const subpath = geometry.subpaths[subpathIndex];
+  if (!subpath?.points[pointIndex]) {
+    return null;
+  }
+
+  const points = subpath.points.map((point, index) =>
+    index === pointIndex ? { x: point.x, y: point.y } : point,
+  );
+  const subpaths = [...geometry.subpaths];
+  subpaths[subpathIndex] = { ...subpath, points };
+  return { subpaths };
+}
+
+/**
+ * Pull smooth handles out of a corner anchor (convert-anchor click on a
+ * corner): handles run along the chord between the neighbouring anchors,
+ * each a third of the distance to its neighbour — collinear (smooth),
+ * not necessarily symmetric, which is the Illustrator conversion.
+ */
+export function setAnchorSmooth(
+  geometry: PathGeometry,
+  subpathIndex: number,
+  pointIndex: number,
+): PathGeometry | null {
+  const subpath = geometry.subpaths[subpathIndex];
+  const point = subpath?.points[pointIndex];
+  if (!subpath || !point) {
+    return null;
+  }
+
+  const count = subpath.points.length;
+  const previous = subpath.closed
+    ? subpath.points[(pointIndex - 1 + count) % count]
+    : subpath.points[pointIndex - 1];
+  const next = subpath.closed
+    ? subpath.points[(pointIndex + 1) % count]
+    : subpath.points[pointIndex + 1];
+  if (!previous && !next) {
+    return null;
+  }
+
+  const from = previous ?? point;
+  const to = next ?? point;
+  let dx = to.x - from.x;
+  let dy = to.y - from.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 1e-6) {
+    dx = 1;
+    dy = 0;
+  } else {
+    dx /= length;
+    dy /= length;
+  }
+
+  const smooth: PathPoint = { x: point.x, y: point.y };
+  if (previous) {
+    const reach = Math.hypot(point.x - previous.x, point.y - previous.y) / 3;
+    smooth.handleIn = { x: point.x - dx * reach, y: point.y - dy * reach };
+  }
+  if (next) {
+    const reach = Math.hypot(next.x - point.x, next.y - point.y) / 3;
+    smooth.handleOut = { x: point.x + dx * reach, y: point.y + dy * reach };
+  }
+
+  const points = subpath.points.map((item, index) =>
+    index === pointIndex ? smooth : item,
+  );
+  const subpaths = [...geometry.subpaths];
+  subpaths[subpathIndex] = { ...subpath, points };
+  return { subpaths };
+}
+
+export type CutResult =
+  /** A closed subpath opened at the anchor — still one path. */
+  | { kind: "opened"; geometry: PathGeometry }
+  /** An open subpath severed — the caller splits into two nodes. */
+  | { kind: "split"; first: PathGeometry; second: PathGeometry };
+
+/**
+ * Scissors: cut a subpath at an anchor. A closed subpath opens there
+ * (the anchor duplicates into the new start and end). An open subpath
+ * severs at an interior anchor into two pieces: `first` keeps every
+ * other subpath plus the leading half, `second` is the trailing half
+ * alone. Cutting an open subpath at one of its endpoints is a no-op
+ * (null).
+ */
+export function cutPathAt(
+  geometry: PathGeometry,
+  subpathIndex: number,
+  pointIndex: number,
+): CutResult | null {
+  const subpath = geometry.subpaths[subpathIndex];
+  const point = subpath?.points[pointIndex];
+  if (!subpath || !point) {
+    return null;
+  }
+
+  if (subpath.closed) {
+    const rotated = [
+      ...subpath.points.slice(pointIndex),
+      ...subpath.points.slice(0, pointIndex),
+    ];
+    const start: PathPoint = {
+      x: point.x,
+      y: point.y,
+      ...(point.handleOut ? { handleOut: point.handleOut } : {}),
+    };
+    const end: PathPoint = {
+      x: point.x,
+      y: point.y,
+      ...(point.handleIn ? { handleIn: point.handleIn } : {}),
+    };
+    const points = [start, ...rotated.slice(1), end];
+    const subpaths = [...geometry.subpaths];
+    subpaths[subpathIndex] = { closed: false, points };
+    return { kind: "opened", geometry: { subpaths } };
+  }
+
+  if (pointIndex === 0 || pointIndex === subpath.points.length - 1) {
+    return null;
+  }
+
+  const leading: PathPoint = {
+    x: point.x,
+    y: point.y,
+    ...(point.handleIn ? { handleIn: point.handleIn } : {}),
+  };
+  const trailing: PathPoint = {
+    x: point.x,
+    y: point.y,
+    ...(point.handleOut ? { handleOut: point.handleOut } : {}),
+  };
+  const firstHalf: SubPath = {
+    closed: false,
+    points: [...subpath.points.slice(0, pointIndex), leading],
+  };
+  const secondHalf: SubPath = {
+    closed: false,
+    points: [trailing, ...subpath.points.slice(pointIndex + 1)],
+  };
+
+  const firstSubpaths = [...geometry.subpaths];
+  firstSubpaths[subpathIndex] = firstHalf;
+  return {
+    kind: "split",
+    first: { subpaths: firstSubpaths },
+    second: { subpaths: [secondHalf] },
+  };
+}
+
+/** True when the ref addresses the first or last anchor of an OPEN subpath. */
+export function isOpenEndpoint(
+  geometry: PathGeometry,
+  ref: AnchorRef,
+): boolean {
+  const subpath = geometry.subpaths[ref.subpath];
+  if (!subpath || subpath.closed || subpath.points.length < 2) {
+    return false;
+  }
+  return ref.index === 0 || ref.index === subpath.points.length - 1;
+}
+
+function reverseSubPath(subpath: SubPath): SubPath {
+  return {
+    closed: subpath.closed,
+    points: [...subpath.points].reverse().map((point) => ({
+      x: point.x,
+      y: point.y,
+      ...(point.handleOut ? { handleIn: point.handleOut } : {}),
+      ...(point.handleIn ? { handleOut: point.handleIn } : {}),
+    })),
+  };
+}
+
+/**
+ * Join two open-subpath endpoint anchors (⌘J).
+ *
+ * Same subpath → the subpath closes; when its two ends are coincident
+ * (within JOIN_WELD_TOLERANCE) the duplicate anchor welds away first.
+ * Different subpaths → they merge into one open subpath, reoriented so
+ * the selected anchors meet; coincident anchors weld, otherwise a
+ * straight segment connects them. Null when either ref is not an open
+ * endpoint (or a weld would degenerate the subpath).
+ */
+export function joinAnchors(
+  geometry: PathGeometry,
+  a: AnchorRef,
+  b: AnchorRef,
+): PathGeometry | null {
+  if (!isOpenEndpoint(geometry, a) || !isOpenEndpoint(geometry, b)) {
+    return null;
+  }
+
+  if (a.subpath === b.subpath) {
+    if (a.index === b.index) {
+      return null;
+    }
+    const subpath = geometry.subpaths[a.subpath]!;
+    const first = subpath.points[0]!;
+    const last = subpath.points[subpath.points.length - 1]!;
+    const coincident =
+      Math.hypot(first.x - last.x, first.y - last.y) <= JOIN_WELD_TOLERANCE;
+
+    let points = subpath.points;
+    if (coincident) {
+      if (points.length - 1 < 3) {
+        return null; // closing a welded 2-point subpath degenerates
+      }
+      const welded: PathPoint = {
+        ...first,
+        ...(last.handleIn ? { handleIn: last.handleIn } : {}),
+      };
+      points = [welded, ...points.slice(1, -1)];
+    } else if (points.length < 3) {
+      return null; // closing a 2-point line back onto itself
+    }
+
+    const subpaths = [...geometry.subpaths];
+    subpaths[a.subpath] = { closed: true, points };
+    return { subpaths };
+  }
+
+  // Cross-subpath: orient A to END at its anchor, B to START at its.
+  let source = geometry.subpaths[a.subpath]!;
+  let target = geometry.subpaths[b.subpath]!;
+  if (a.index === 0) {
+    source = reverseSubPath(source);
+  }
+  if (b.index !== 0) {
+    target = reverseSubPath(target);
+  }
+
+  const tail = source.points[source.points.length - 1]!;
+  const head = target.points[0]!;
+  const coincident =
+    Math.hypot(tail.x - head.x, tail.y - head.y) <= JOIN_WELD_TOLERANCE;
+
+  const points = coincident
+    ? [
+        ...source.points.slice(0, -1),
+        {
+          ...tail,
+          ...(head.handleOut ? { handleOut: head.handleOut } : {}),
+        },
+        ...target.points.slice(1),
+      ]
+    : [...source.points, ...target.points];
+
+  const subpaths = geometry.subpaths
+    .map((item, index) =>
+      index === a.subpath ? { closed: false, points } : item,
+    )
+    .filter((_, index) => index !== b.subpath);
+  return { subpaths };
+}
+
+/**
+ * Average (⌥⌘J): move the referenced anchors (handles riding along) to
+ * their mean — a common point, a common y (horizontal) or a common x
+ * (vertical). Null when fewer than two valid anchors are referenced.
+ */
+export function averageAnchors(
+  geometry: PathGeometry,
+  refs: readonly AnchorRef[],
+  axis: AverageAxis,
+): PathGeometry | null {
+  const anchors = refs
+    .map((ref) => geometry.subpaths[ref.subpath]?.points[ref.index])
+    .filter((point): point is PathPoint => Boolean(point));
+  if (anchors.length < 2) {
+    return null;
+  }
+
+  const meanX = anchors.reduce((sum, p) => sum + p.x, 0) / anchors.length;
+  const meanY = anchors.reduce((sum, p) => sum + p.y, 0) / anchors.length;
+  const targeted = new Map<string, true>();
+  for (const ref of refs) {
+    targeted.set(`${ref.subpath}:${ref.index}`, true);
+  }
+
+  const subpaths = geometry.subpaths.map((subpath, si) => ({
+    closed: subpath.closed,
+    points: subpath.points.map((point, pi) => {
+      if (!targeted.has(`${si}:${pi}`)) {
+        return point;
+      }
+      const dx = axis === "horizontal" ? 0 : meanX - point.x;
+      const dy = axis === "vertical" ? 0 : meanY - point.y;
+      if (dx === 0 && dy === 0) {
+        return point;
+      }
+      return {
+        x: point.x + dx,
+        y: point.y + dy,
+        ...(point.handleIn
+          ? { handleIn: { x: point.handleIn.x + dx, y: point.handleIn.y + dy } }
+          : {}),
+        ...(point.handleOut
+          ? {
+              handleOut: {
+                x: point.handleOut.x + dx,
+                y: point.handleOut.y + dy,
+              },
+            }
+          : {}),
+      };
+    }),
+  }));
+  return { subpaths };
+}
+
 /**
  * Generic absolute path command, the shape emitted by font engines
  * (opentype.js) and SVG parsers. Quadratics are converted to cubics so

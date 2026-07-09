@@ -1,5 +1,6 @@
-import { type Bounds, boundsUnion, rotatedBounds } from "./geometry";
-import type { Artboard, GroupNode, LogoDocument, LogoNode } from "./types";
+import { type Bounds, type Vec2, boundsUnion, rotatedBounds } from "./geometry";
+import type { PathGeometry } from "./path-data";
+import type { Artboard, GroupNode, LogoDocument, LogoNode, PathNode } from "./types";
 
 export function getActiveArtboard(document: LogoDocument): Artboard {
   const active = document.artboards.find(
@@ -363,4 +364,88 @@ export function getRenderNodesForArtboard(
 
 export function isGroupNode(node: LogoNode | undefined): node is GroupNode {
   return node?.type === "group";
+}
+
+/**
+ * Selection frame the editor draws handles on. A single rotated leaf
+ * gets its own rotated box (the frame tilts with the node,
+ * Illustrator-style); everything else gets the axis-aligned union of
+ * unit bounds, with rotated leaves contributing their rotated AABBs so
+ * the frame always contains what is on screen.
+ */
+export type SelectionFrame = {
+  bounds: Bounds;
+  /** Degrees; non-zero only for a single rotated leaf selection. */
+  rotation: number;
+};
+
+export function selectionFrame(
+  document: LogoDocument,
+  selectedNodeIds: readonly string[],
+): SelectionFrame | null {
+  if (selectedNodeIds.length === 1) {
+    const node = document.nodes[selectedNodeIds[0]!];
+    if (node && node.type !== "group" && node.rotation !== 0) {
+      return {
+        bounds: {
+          x: node.x,
+          y: node.y,
+          width: node.width,
+          height: node.height,
+        },
+        rotation: node.rotation,
+      };
+    }
+  }
+
+  const parts: Bounds[] = [];
+  for (const nodeId of selectedNodeIds) {
+    const node = document.nodes[nodeId];
+    if (!node) {
+      continue;
+    }
+    const bounds =
+      node.type === "group" ? unitBounds(document, nodeId) : nodeBounds(node);
+    if (bounds) {
+      parts.push(bounds);
+    }
+  }
+  const union = boundsUnion(parts);
+  return union ? { bounds: union, rotation: 0 } : null;
+}
+
+/** Centre of a selection frame (also its rotation pivot). */
+export function selectionFrameCenter(frame: SelectionFrame): Vec2 {
+  return {
+    x: frame.bounds.x + frame.bounds.width / 2,
+    y: frame.bounds.y + frame.bounds.height / 2,
+  };
+}
+
+/**
+ * A path node's structured geometry denormalised into artboard-local
+ * coordinates (intrinsic space × box scale + position). Rotation is NOT
+ * applied — callers that allow rotated nodes must handle it themselves.
+ */
+export function pathNodeLocalGeometry(node: PathNode): PathGeometry | null {
+  if (!node.geometry) {
+    return null;
+  }
+  const sx = node.width / node.intrinsicWidth;
+  const sy = node.height / node.intrinsicHeight;
+  const map = (p: Vec2): Vec2 => ({
+    x: node.x + p.x * sx,
+    y: node.y + p.y * sy,
+  });
+
+  return {
+    subpaths: node.geometry.subpaths.map((subpath) => ({
+      closed: subpath.closed,
+      points: subpath.points.map((point) => ({
+        ...map(point),
+        ...(point.handleIn ? { handleIn: map(point.handleIn) } : {}),
+        ...(point.handleOut ? { handleOut: map(point.handleOut) } : {}),
+      })),
+    })),
+  };
 }

@@ -14,12 +14,10 @@ import {
   getParentGroupId,
 } from "@openlogo/core";
 import { fitBounds, zoomAt } from "@openlogo/renderer";
-import {
-  copyNodes,
-  cutNodes,
-  duplicateNodes,
-  pasteNodes,
-} from "./lib/clipboard";
+import { copyNodes, cutNodes, pasteNodes } from "./lib/clipboard";
+import { joinSelectedPaths } from "./lib/path-surgery";
+import { recordTransform, transformAgain } from "./lib/transform-again";
+import { TransformDialog } from "./components/TransformDialog";
 import {
   deleteSelection,
   groupSelection,
@@ -131,14 +129,30 @@ export default function App() {
           return;
         }
 
+        // ⌘D = Transform Again (Illustrator): repeat the last committed
+        // move/rotate/scale/reflect, honouring its copy flag. Duplicate
+        // moved to ⌥-drag and ⌘C⌘V.
         if (key === "d") {
           // Always consumed — otherwise an empty selection lets the
           // browser open its bookmark dialog.
           event.preventDefault();
           if (selection.length > 0) {
-            const cloned = duplicateNodes(selection);
-            if (cloned.length > 0) {
-              state.setSelection(cloned);
+            const ids = transformAgain(selection);
+            if (ids && ids.length > 0) {
+              state.setSelection(ids);
+            }
+          }
+          return;
+        }
+
+        // ⌘J = Join paths (edit-mode joins are handled by CanvasStage,
+        // which consumes the event first). event.code: ⌥J types "∆".
+        if (event.code === "KeyJ" && !event.altKey) {
+          event.preventDefault();
+          if (!state.editingPathId && selection.length > 0) {
+            const ids = joinSelectedPaths(selection);
+            if (ids) {
+              state.setSelection(ids);
             }
           }
           return;
@@ -295,6 +309,8 @@ export default function App() {
               (update): update is NonNullable<typeof update> => update !== null,
             ),
         });
+        // Nudges are moves: ⌘D repeats the last one, Illustrator-style.
+        recordTransform({ kind: "move", dx, dy, copy: false });
         return;
       }
 
@@ -325,6 +341,7 @@ export default function App() {
         </section>
         <Inspector />
       </div>
+      <TransformDialog />
     </main>
   );
 }

@@ -1,4 +1,4 @@
-import { type LogoDocument, type LogoNode, createId } from "@openlogo/core";
+import { type LogoNode, createId } from "@openlogo/core";
 import { cloneUnits, deleteSelection, sortBySceneOrder } from "./group-ops";
 import { documentStore } from "../state/document";
 
@@ -82,28 +82,6 @@ export function pasteNodes(): string[] {
   documentStore.apply({
     type: "insert-nodes",
     artboardId: documentStore.document.activeArtboardId,
-    nodes,
-  });
-
-  return rootIds;
-}
-
-/** ⌘D: copy + paste in one step, offset once from the source. */
-export function duplicateNodes(nodeIds: readonly string[]): string[] {
-  const document: LogoDocument = documentStore.document;
-  const ordered = sortBySceneOrder(
-    document,
-    nodeIds.filter((id) => document.nodes[id]),
-  );
-  if (ordered.length === 0) {
-    return [];
-  }
-
-  const { nodes, rootIds } = cloneUnits(document, ordered, PASTE_OFFSET);
-
-  documentStore.apply({
-    type: "insert-nodes",
-    artboardId: document.activeArtboardId,
     nodes,
   });
 

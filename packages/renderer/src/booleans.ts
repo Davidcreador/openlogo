@@ -108,6 +108,73 @@ export function expandStroke(
   return { d, x: left, y: top, width, height };
 }
 
+/**
+ * Offset path (Illustrator Object → Path → Offset Path): grow (amount>0)
+ * or shrink (amount<0) a node's filled outline by |amount| px.
+ *
+ * Approach: stroke-expand a copy of the node's path at width 2·|amount| —
+ * a ring straddling the outline by exactly |amount| on each side — then
+ * PathOp it with the original fill region: union for outset, difference
+ * for inset. Joins use Skia's Miter with limit 4 (Illustrator's default
+ * miter join/limit); switching StrokeJoin to Round would produce
+ * Illustrator's "round join" variant. Convex corners therefore stay
+ * sharp until the miter limit trips, where Skia falls back to a bevel.
+ *
+ * Rotation is baked in by nodeToSkPath, so the result is an unrotated
+ * path node in artboard-local space, normalised to its own origin.
+ * Returns null when the inset swallows the shape entirely.
+ */
+export function offsetNodePath(
+  ck: CanvasKit,
+  node: LogoNode,
+  amount: number,
+): CombineResult | null {
+  if (amount === 0) {
+    return null;
+  }
+
+  const base = nodeToSkPath(ck, node);
+  if (!base) {
+    return null;
+  }
+
+  const ring = base.copy();
+  const ok = ring.stroke({
+    width: Math.abs(amount) * 2,
+    join: ck.StrokeJoin.Miter,
+    cap: ck.StrokeCap.Butt,
+    miter_limit: 4,
+    precision: 0.3,
+  });
+  if (!ok) {
+    ring.delete();
+    base.delete();
+    return null;
+  }
+
+  const combined = ck.Path.MakeFromOp(
+    base,
+    ring,
+    amount > 0 ? ck.PathOp.Union : ck.PathOp.Difference,
+  );
+  base.delete();
+  ring.delete();
+  if (!combined || combined.isEmpty()) {
+    combined?.delete();
+    return null;
+  }
+
+  const [left = 0, top = 0, right = 0, bottom = 0] =
+    combined.computeTightBounds();
+  const width = Math.max(0.01, right - left);
+  const height = Math.max(0.01, bottom - top);
+  combined.transform([1, 0, -left, 0, 1, -top, 0, 0, 1]);
+  const d = combined.toSVGString();
+  combined.delete();
+
+  return { d, x: left, y: top, width, height };
+}
+
 export type RegionResult = {
   /** Path data in the same (artboard-local) space as the input nodes. */
   d: string;
