@@ -11,6 +11,7 @@ import type {
   Bounds,
   LogoDocument,
   LogoNode,
+  MeasureSegment,
   Paint,
   PathGeometry,
   PathPoint,
@@ -40,6 +41,13 @@ export type Scene = {
   marquee?: Bounds | null;
   /** Smart guides in active-artboard-local space while dragging. */
   guides?: readonly SnapGuide[] | null;
+  /** Distance/spacing readouts in active-artboard-local space. */
+  measurements?: {
+    /** Pixel-distance readouts to nearby edges (line + label). */
+    labels: readonly MeasureSegment[];
+    /** Equal-spacing gap indicators (paired bars + labels). */
+    spacing: readonly MeasureSegment[];
+  } | null;
   /** In-progress pen drawing, artboard-local coordinates. */
   penPreview?: {
     points: readonly PathPoint[];
@@ -247,6 +255,7 @@ export class SceneRenderer {
     this.drawShapeBuilder(canvas, scene);
     this.drawSelection(canvas, scene);
     this.drawGuides(canvas, scene);
+    this.drawMeasurements(canvas, scene);
     this.drawPenPreview(canvas, scene);
     this.drawPathEdit(canvas, scene);
     this.drawMarquee(canvas, scene);
@@ -834,6 +843,136 @@ export class SceneRenderer {
 
     paint.delete();
     canvas.restore();
+  }
+
+  private drawMeasurements(canvas: Canvas, scene: Scene): void {
+    const measurements = scene.measurements;
+    if (
+      !measurements ||
+      (measurements.labels.length === 0 && measurements.spacing.length === 0)
+    ) {
+      return;
+    }
+
+    const zoom = scene.camera.zoom;
+    this.withActiveArtboard(canvas, scene, () => {
+      // Spacing bars are thicker than distance readouts so equal gaps
+      // read as a pair at a glance.
+      for (const seg of measurements.spacing) {
+        this.drawMeasureSegment(canvas, seg, zoom, 2);
+      }
+      for (const seg of measurements.labels) {
+        this.drawMeasureSegment(canvas, seg, zoom, 1);
+      }
+    });
+  }
+
+  /** A gap readout: line with perpendicular end ticks + a px label chip. */
+  private drawMeasureSegment(
+    canvas: Canvas,
+    seg: MeasureSegment,
+    zoom: number,
+    weight: number,
+  ): void {
+    const ck = this.canvasKit;
+    const paint = new ck.Paint();
+    paint.setStyle(ck.PaintStyle.Stroke);
+    paint.setStrokeWidth(weight / zoom);
+    paint.setColor(ck.parseColorString(GUIDE_COLOR));
+    paint.setAntiAlias(true);
+
+    const tick = 4 / zoom;
+    const path = new ck.Path();
+    if (seg.axis === "x") {
+      path.moveTo(seg.from, seg.cross);
+      path.lineTo(seg.to, seg.cross);
+      path.moveTo(seg.from, seg.cross - tick);
+      path.lineTo(seg.from, seg.cross + tick);
+      path.moveTo(seg.to, seg.cross - tick);
+      path.lineTo(seg.to, seg.cross + tick);
+    } else {
+      path.moveTo(seg.cross, seg.from);
+      path.lineTo(seg.cross, seg.to);
+      path.moveTo(seg.cross - tick, seg.from);
+      path.lineTo(seg.cross + tick, seg.from);
+      path.moveTo(seg.cross - tick, seg.to);
+      path.lineTo(seg.cross + tick, seg.to);
+    }
+    canvas.drawPath(path, paint);
+    path.delete();
+    paint.delete();
+
+    const mid = (seg.from + seg.to) / 2;
+    const offset = 12 / zoom;
+    const value = Math.round(seg.distance * 10) / 10;
+    if (seg.axis === "x") {
+      this.drawMeasureChip(canvas, String(value), mid, seg.cross + offset, zoom);
+    } else {
+      this.drawMeasureChip(canvas, String(value), seg.cross + offset, mid, zoom);
+    }
+  }
+
+  /** Rounded label chip at a fixed screen size, skipped if no fonts yet. */
+  private drawMeasureChip(
+    canvas: Canvas,
+    text: string,
+    x: number,
+    y: number,
+    zoom: number,
+  ): void {
+    const ck = this.canvasKit;
+    const family = this.fonts.isEmpty
+      ? null
+      : this.fonts.resolveFamily("Inter, ui-sans-serif");
+    if (!family) {
+      return;
+    }
+
+    const fontSize = 10 / zoom;
+    const style = new ck.ParagraphStyle({
+      textAlign: ck.TextAlign.Left,
+      textStyle: {
+        color: ck.parseColorString("#ffffff"),
+        fontFamilies: [family],
+        fontSize,
+        fontStyle: { weight: { value: 500 } },
+        fontVariations: [{ axis: "wght", value: 500 }],
+      },
+    });
+    const builder = ck.ParagraphBuilder.MakeFromFontProvider(
+      style,
+      this.fonts.provider,
+    );
+    builder.addText(text);
+    const paragraph = builder.build();
+    paragraph.layout(10000 / zoom);
+    builder.delete();
+
+    const textWidth = paragraph.getLongestLine();
+    const textHeight = paragraph.getHeight();
+    const padX = 4 / zoom;
+    const padY = 2 / zoom;
+
+    const chip = new ck.Paint();
+    chip.setColor(ck.parseColorString(GUIDE_COLOR));
+    chip.setAntiAlias(true);
+    canvas.drawRRect(
+      ck.RRectXY(
+        ck.XYWHRect(
+          x - textWidth / 2 - padX,
+          y - textHeight / 2 - padY,
+          textWidth + padX * 2,
+          textHeight + padY * 2,
+        ),
+        3 / zoom,
+        3 / zoom,
+      ),
+      chip,
+    );
+    chip.delete();
+
+    canvas.drawParagraph(paragraph, x - textWidth / 2, y - textHeight / 2);
+    paragraph.delete();
   }
 
   private withActiveArtboard(

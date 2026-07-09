@@ -3,7 +3,9 @@ import { getCanvasKit } from "../lib/canvaskit";
 import { fontStore } from "../lib/font-store";
 import {
   type Bounds,
+  type LogoDocument,
   type LogoNode,
+  type MeasureSegment,
   type NodePatch,
   type PathGeometry,
   type PathNode,
@@ -12,6 +14,7 @@ import {
   type Vec2,
   collectLeafNodeIds,
   computeSnap,
+  computeSpacingSnap,
   createEllipse,
   createId,
   createPath,
@@ -22,6 +25,7 @@ import {
   getAncestorGroupIds,
   getContainerChildIds,
   insertAnchor,
+  measureDistances,
   pathGeometryBounds,
   pathGeometryToSvg,
   removeAnchor,
@@ -93,6 +97,10 @@ type DragState =
       /** Static snap candidates: unselected nodes + the artboard box. */
       snapTargets: Bounds[];
       guides: SnapGuide[];
+      /** Equal-spacing gap indicators while spacing-snapped. */
+      spacingGaps: MeasureSegment[];
+      /** Distance readouts to nearby edges while snapped. */
+      distanceLabels: MeasureSegment[];
     }
   | {
       kind: "resize";
@@ -104,6 +112,8 @@ type DragState =
       moved: boolean;
       snapTargets: Bounds[];
       guides: SnapGuide[];
+      spacingGaps: MeasureSegment[];
+      distanceLabels: MeasureSegment[];
     }
   | { kind: "marquee"; startLocal: Vec2; current: Bounds | null }
   | { kind: "guide"; axis: "v" | "h"; index: number; value: number };
@@ -223,6 +233,32 @@ function collectSnapTargets(excludedIds: ReadonlySet<string>): Bounds[] {
   }
 
   return targets;
+}
+
+/** Union of derived unit bounds over a selection. */
+function selectionUnitBounds(
+  document: LogoDocument,
+  nodeIds: readonly string[],
+): Bounds | null {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const nodeId of nodeIds) {
+    const bounds = unitBounds(document, nodeId);
+    if (!bounds) {
+      continue;
+    }
+    minX = Math.min(minX, bounds.x);
+    minY = Math.min(minY, bounds.y);
+    maxX = Math.max(maxX, bounds.x + bounds.width);
+    maxY = Math.max(maxY, bounds.y + bounds.height);
+  }
+
+  return Number.isFinite(minX)
+    ? { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+    : null;
 }
 
 /** Node patch for a path whose artboard-local geometry changed. */
@@ -364,6 +400,8 @@ export function CanvasStage() {
   const editRef = useRef<PathEditSession | null>(null);
   const sbRef = useRef<ShapeBuilderSession | null>(null);
   const hoverRef = useRef<string | null>(null);
+  /** ⌥-hover distance readouts between the selection and a hovered unit. */
+  const measureRef = useRef<MeasureSegment[] | null>(null);
   const spaceRef = useRef(false);
   const editingTextRef = useRef<string | null>(null);
   const cameraFittedRef = useRef(false);
@@ -424,6 +462,12 @@ export function CanvasStage() {
       marquee: drag?.kind === "marquee" ? drag.current : null,
       guides:
         drag?.kind === "move" || drag?.kind === "resize" ? drag.guides : null,
+      measurements:
+        drag?.kind === "move" || drag?.kind === "resize"
+          ? { labels: drag.distanceLabels, spacing: drag.spacingGaps }
+          : measureRef.current && measureRef.current.length > 0
+            ? { labels: measureRef.current, spacing: [] }
+            : null,
       penPreview: pen ? { points: pen.points, cursor: pen.cursor } : null,
       pathEdit: edit
         ? { geometry: edit.geometry, selected: edit.selected }
@@ -531,6 +575,11 @@ export function CanvasStage() {
         spaceRef.current = false;
         setSpaceHeld(false);
       }
+      // Releasing ⌥ drops the hover-measure overlay immediately.
+      if (event.key === "Alt" && measureRef.current) {
+        measureRef.current = null;
+        syncScene();
+      }
     }
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
@@ -538,7 +587,7 @@ export function CanvasStage() {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, []);
+  }, [syncScene]);
 
   // Leaving the pen tool cancels an in-progress path.
   useEffect(() => {
@@ -1136,6 +1185,8 @@ export function CanvasStage() {
             ]),
           ),
           guides: [],
+          spacingGaps: [],
+          distanceLabels: [],
         };
       }
       return;
@@ -1208,6 +1259,8 @@ export function CanvasStage() {
       moved: false,
       snapTargets: collectSnapTargets(excluded),
       guides: [],
+      spacingGaps: [],
+      distanceLabels: [],
     };
   }
 
@@ -1342,12 +1395,36 @@ export function CanvasStage() {
               event.metaKey,
             ).unitId
           : null;
-        if (hoverRef.current !== nextId) {
+
+        // ⌥-hover measures between the selection and the hovered unit.
+        let nextMeasure: MeasureSegment[] | null = null;
+        if (
+          event.altKey &&
+          nextId &&
+          state.selectedNodeIds.length > 0 &&
+          !state.selectedNodeIds.includes(nextId)
+        ) {
+          const document = documentStore.document;
+          const selection = selectionUnitBounds(
+            document,
+            state.selectedNodeIds,
+          );
+          const hovered = unitBounds(document, nextId);
+          if (selection && hovered) {
+            nextMeasure = measureDistances(selection, [hovered]);
+          }
+        }
+        const measureChanged =
+          JSON.stringify(nextMeasure) !== JSON.stringify(measureRef.current);
+
+        if (hoverRef.current !== nextId || measureChanged) {
           hoverRef.current = nextId;
+          measureRef.current = nextMeasure;
           syncScene();
         }
-      } else if (hoverRef.current) {
+      } else if (hoverRef.current || measureRef.current) {
         hoverRef.current = null;
+        measureRef.current = null;
         syncScene();
       }
       return;
@@ -1397,20 +1474,59 @@ export function CanvasStage() {
       let snapDx = 0;
       let snapDy = 0;
       drag.guides = [];
+      drag.spacingGaps = [];
+      drag.distanceLabels = [];
 
       // Alt disables snapping, Illustrator-style.
       if (!event.altKey) {
         const startBounds = snapshotBounds(drag.snapshots);
         if (startBounds) {
           const zoom = useEditorStore.getState().camera.zoom;
-          const snap = computeSnap(
-            { ...startBounds, x: startBounds.x + dx, y: startBounds.y + dy },
-            drag.snapTargets,
-            6 / zoom,
-          );
+          const threshold = 6 / zoom;
+          const raw = {
+            ...startBounds,
+            x: startBounds.x + dx,
+            y: startBounds.y + dy,
+          };
+          const snap = computeSnap(raw, drag.snapTargets, threshold);
           snapDx = snap.dx;
           snapDy = snap.dy;
-          drag.guides = snap.guides;
+          let guides = snap.guides;
+
+          // Equal-spacing candidates compete with edge snapping per
+          // axis; the smaller correction wins and drops that axis's
+          // edge guides (the alignment they claim no longer holds).
+          for (const axis of ["x", "y"] as const) {
+            const spacing = computeSpacingSnap(
+              raw,
+              drag.snapTargets,
+              axis,
+              threshold,
+            );
+            if (!spacing) {
+              continue;
+            }
+            const edgeDelta = axis === "x" ? snapDx : snapDy;
+            const hasEdge = guides.some((guide) => guide.axis === axis);
+            if (!hasEdge || Math.abs(spacing.delta) < Math.abs(edgeDelta)) {
+              if (axis === "x") {
+                snapDx = spacing.delta;
+              } else {
+                snapDy = spacing.delta;
+              }
+              guides = guides.filter((guide) => guide.axis !== axis);
+              drag.spacingGaps.push(...spacing.gaps);
+            }
+          }
+          drag.guides = guides;
+
+          // Distance readouts appear once anything snapped.
+          if (guides.length > 0 || drag.spacingGaps.length > 0) {
+            drag.distanceLabels = measureDistances(
+              { ...raw, x: raw.x + snapDx, y: raw.y + snapDy },
+              drag.snapTargets,
+            );
+          }
         }
       }
 
@@ -1427,6 +1543,8 @@ export function CanvasStage() {
     // Resize.
     let next = resizeBounds(drag.startBounds, drag.handle, dx, dy);
     drag.guides = [];
+    drag.spacingGaps = [];
+    drag.distanceLabels = [];
 
     // Shift on a corner keeps the aspect ratio (dominant axis wins).
     const isCornerHandle = drag.handle.length === 2;
@@ -1502,6 +1620,11 @@ export function CanvasStage() {
           drag.guides.push(snap.guide);
         }
       }
+    }
+
+    // Distance readouts for the snapped bounds.
+    if (drag.guides.length > 0) {
+      drag.distanceLabels = measureDistances(next, drag.snapTargets);
     }
 
     const sx = next.width / drag.startBounds.width;
