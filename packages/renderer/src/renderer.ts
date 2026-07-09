@@ -1,6 +1,9 @@
 import type {
   Canvas,
   CanvasKit,
+  ContourMeasure,
+  EmbindEnumEntity,
+  ImageFilter,
   Paint as SkPaint,
   Paragraph,
   Path,
@@ -9,6 +12,7 @@ import type {
 import type {
   Artboard,
   Bounds,
+  Effect,
   LogoDocument,
   LogoNode,
   MeasureSegment,
@@ -77,6 +81,19 @@ type ParagraphCacheEntry = {
   paragraph: Paragraph;
 };
 
+/** One placed glyph of a text-on-path layout (artboard-local baseline). */
+export type TextPathGlyph = {
+  x: number;
+  y: number;
+  /** Baseline direction at the glyph, degrees. */
+  angle: number;
+};
+
+/** CSS-ish blur radius → Skia gaussian sigma. */
+function blurSigma(blur: number): number {
+  return blur / 2;
+}
+
 /**
  * Draws a LogoDocument to a canvas via CanvasKit and answers hit-tests.
  * Owns the frame loop: callers mutate the scene then call `invalidate()`.
@@ -89,6 +106,8 @@ export class SceneRenderer {
   private dpr = 1;
   private pathCache = new Map<string, Path>();
   private paragraphCache = new Map<string, ParagraphCacheEntry>();
+  /** Last computed text-on-path layout per text node (debug/automation). */
+  private textPathLayouts = new Map<string, TextPathGlyph[]>();
 
   constructor(
     private readonly canvasKit: CanvasKit,
@@ -119,6 +138,11 @@ export class SceneRenderer {
         if (!scene.document.nodes[nodeId]) {
           entry.paragraph.delete();
           this.paragraphCache.delete(nodeId);
+        }
+      }
+      for (const nodeId of this.textPathLayouts.keys()) {
+        if (!scene.document.nodes[nodeId]) {
+          this.textPathLayouts.delete(nodeId);
         }
       }
     }
@@ -364,13 +388,21 @@ export class SceneRenderer {
     }
 
     if (node.type === "group") {
+      const effects = node.effects?.filter((effect) => effect.enabled) ?? [];
+      const drawChildren = () => {
+        for (const childId of node.children) {
+          this.drawSubtree(canvas, document, childId, opacity * node.opacity);
+        }
+      };
       const layerPaint = node.blendMode ? new this.canvasKit.Paint() : null;
       if (layerPaint && node.blendMode) {
         layerPaint.setBlendMode(this.skBlendMode(node.blendMode));
         canvas.saveLayer(layerPaint);
       }
-      for (const childId of node.children) {
-        this.drawSubtree(canvas, document, childId, opacity * node.opacity);
+      if (effects.length > 0) {
+        this.drawWithEffects(canvas, effects, drawChildren);
+      } else {
+        drawChildren();
       }
       if (layerPaint) {
         canvas.restore();
@@ -401,6 +433,143 @@ export class SceneRenderer {
   private drawNode(canvas: Canvas, node: LogoNode): void {
     if (node.type === "group") {
       return; // groups draw nothing themselves
+    }
+
+    const effects = node.effects?.filter((effect) => effect.enabled) ?? [];
+    if (effects.length > 0) {
+      this.drawWithEffects(canvas, effects, () => this.drawLeaf(canvas, node));
+      return;
+    }
+    this.drawLeaf(canvas, node);
+  }
+
+  /**
+   * Layer-effect orchestration around any draw callback. Shadows, glows
+   * and outlines re-render the content into an offscreen layer whose
+   * ImageFilter replaces it with the effect (DropShadowOnly / tinted
+   * Dilate), drawn BEHIND the real content. Bevels approximate an emboss:
+   * the content plus, clipped inside its alpha via SrcATop, a blurred
+   * light copy offset toward the top-left and a dark copy toward the
+   * bottom-right (fixed diagonal light — documented approximation, no
+   * real lighting model).
+   */
+  private drawWithEffects(
+    canvas: Canvas,
+    effects: Effect[],
+    content: () => void,
+  ): void {
+    const ck = this.canvasKit;
+
+    const layerWithFilter = (filter: ImageFilter, blendMode?: EmbindEnumEntity) => {
+      const paint = new ck.Paint();
+      paint.setImageFilter(filter);
+      if (blendMode) {
+        paint.setBlendMode(blendMode);
+      }
+      canvas.saveLayer(paint);
+      content();
+      canvas.restore();
+      paint.delete();
+      filter.delete();
+    };
+
+    // Under-effects, in stack order, behind the content.
+    for (const effect of effects) {
+      if (effect.type === "drop-shadow" || effect.type === "glow") {
+        const dx = effect.type === "drop-shadow" ? effect.dx : 0;
+        const dy = effect.type === "drop-shadow" ? effect.dy : 0;
+        const color = ck.parseColorString(effect.color);
+        color[3] = (color[3] ?? 1) * effect.opacity;
+        layerWithFilter(
+          ck.ImageFilter.MakeDropShadowOnly(
+            dx,
+            dy,
+            blurSigma(effect.blur),
+            blurSigma(effect.blur),
+            color,
+            null,
+          ),
+        );
+      } else if (effect.type === "outline" && effect.width > 0) {
+        const color = ck.parseColorString(effect.color);
+        color[3] = (color[3] ?? 1) * effect.opacity;
+        const colorFilter = ck.ColorFilter.MakeBlend(color, ck.BlendMode.SrcIn);
+        const tint = ck.ImageFilter.MakeColorFilter(colorFilter, null);
+        layerWithFilter(ck.ImageFilter.MakeDilate(effect.width, effect.width, tint));
+        tint.delete();
+        colorFilter.delete();
+      }
+    }
+
+    const bevels = effects.filter(
+      (effect): effect is Extract<Effect, { type: "bevel" }> =>
+        effect.type === "bevel",
+    );
+    if (bevels.length === 0) {
+      content();
+      return;
+    }
+
+    // Content + bevel overlays live in one layer so SrcATop clips the
+    // overlays to the content's alpha only (not to shadows below).
+    // Each bevel pass builds an edge RIM — the silhouette minus itself
+    // shifted away from the light — then tints, blurs and composites it
+    // inside the content: lit rim toward the top-left, shaded rim toward
+    // the bottom-right.
+    canvas.saveLayer();
+    content();
+    for (const bevel of bevels) {
+      const passes: Array<{ sign: number; color: string }> = [
+        { sign: -1, color: "#ffffff" },
+        { sign: 1, color: "#000000" },
+      ];
+      for (const pass of passes) {
+        const color = ck.parseColorString(pass.color);
+        color[3] = bevel.intensity;
+        const colorFilter = ck.ColorFilter.MakeBlend(color, ck.BlendMode.SrcIn);
+        let filter = ck.ImageFilter.MakeColorFilter(colorFilter, null);
+        const tint = filter;
+        if (bevel.soften > 0) {
+          filter = ck.ImageFilter.MakeBlur(
+            blurSigma(bevel.soften),
+            blurSigma(bevel.soften),
+            ck.TileMode.Decal,
+            filter,
+          );
+        }
+
+        const rimPaint = new ck.Paint();
+        rimPaint.setImageFilter(filter);
+        rimPaint.setBlendMode(ck.BlendMode.SrcATop);
+        canvas.saveLayer(rimPaint);
+        content();
+        // Erase the silhouette shifted away from the light; what's left
+        // is the rim facing it.
+        const erase = new ck.Paint();
+        erase.setBlendMode(ck.BlendMode.DstOut);
+        canvas.save();
+        canvas.translate(-pass.sign * bevel.size, -pass.sign * bevel.size);
+        canvas.saveLayer(erase);
+        content();
+        canvas.restore();
+        canvas.restore();
+        canvas.restore();
+
+        erase.delete();
+        rimPaint.delete();
+        if (filter !== tint) {
+          filter.delete();
+        }
+        tint.delete();
+        colorFilter.delete();
+      }
+    }
+    canvas.restore();
+  }
+
+  private drawLeaf(canvas: Canvas, node: LogoNode): void {
+    if (node.type === "group") {
+      return;
     }
 
     const ck = this.canvasKit;
@@ -475,6 +644,13 @@ export class SceneRenderer {
   }
 
   private drawText(canvas: Canvas, node: TextNode): void {
+    if (node.onPath && this.drawTextOnPath(canvas, node)) {
+      return;
+    }
+    // Not on a path (or fell back): drop any stale layout so the probe
+    // reflects what is actually drawn.
+    this.textPathLayouts.delete(node.id);
+
     const paragraph = this.getParagraph(node);
     if (paragraph) {
       canvas.drawParagraph(paragraph, node.x, node.y);
@@ -492,6 +668,159 @@ export class SceneRenderer {
       paint,
     );
     paint.delete();
+  }
+
+  /**
+   * Type on a path: arc-length parameterize the target path with Skia's
+   * ContourMeasure, advance the pen by per-glyph widths (+ tracking) and
+   * place each glyph as an RSXform (position + baseline rotation) in one
+   * TextBlob. Layout is fully derived at draw time — moving or editing
+   * the path re-flows the text on the next frame. Returns false when the
+   * attachment can't render (path/typeface missing) so the caller falls
+   * back to the normal paragraph.
+   *
+   * `flip` walks the path from its end with glyphs rotated 180° — the
+   * layout you would get on the reversed path, matching the SVG export.
+   *
+   * Limitations (v1): no kerning/shaping (plain advances), node.align is
+   * ignored (use the offset), glyphs past the path's end are hidden like
+   * SVG <textPath> overflow.
+   */
+  private drawTextOnPath(canvas: Canvas, node: TextNode): boolean {
+    const attachment = node.onPath;
+    const document = this.scene?.document;
+    if (!attachment || !document) {
+      return false;
+    }
+
+    const pathNode = document.nodes[attachment.pathId];
+    if (!pathNode || pathNode.type !== "path") {
+      return false;
+    }
+
+    const typeface = this.fonts.getTypeface(node.fontFamily, node.fontWeight);
+    if (!typeface) {
+      return false;
+    }
+
+    const base = this.getPath(pathNode.d);
+    if (!base) {
+      return false;
+    }
+
+    const ck = this.canvasKit;
+
+    // Intrinsic path → artboard space: scale + translate, then the path
+    // node's rotation about its box centre (same order drawLeaf uses).
+    const path = base.copy();
+    const sx = pathNode.width / pathNode.intrinsicWidth;
+    const sy = pathNode.height / pathNode.intrinsicHeight;
+    path.transform([sx, 0, pathNode.x, 0, sy, pathNode.y, 0, 0, 1]);
+    if (pathNode.rotation !== 0) {
+      const cx = pathNode.x + pathNode.width / 2;
+      const cy = pathNode.y + pathNode.height / 2;
+      const rad = (pathNode.rotation * Math.PI) / 180;
+      const cos = Math.cos(rad);
+      const sin = Math.sin(rad);
+      path.transform([
+        cos,
+        -sin,
+        cx - cos * cx + sin * cy,
+        sin,
+        cos,
+        cy - sin * cx - cos * cy,
+        0,
+        0,
+        1,
+      ]);
+    }
+
+    const contours: Array<{ measure: ContourMeasure; start: number }> = [];
+    let total = 0;
+    const iter = new ck.ContourMeasureIter(path, false, 1);
+    for (let measure = iter.next(); measure; measure = iter.next()) {
+      contours.push({ measure, start: total });
+      total += measure.length();
+    }
+    iter.delete();
+    path.delete();
+
+    if (contours.length === 0 || total <= 0) {
+      return false;
+    }
+
+    const font = new ck.Font(typeface, node.fontSize);
+    const glyphs = font.getGlyphIDs(node.content);
+    const widths = font.getGlyphWidths(glyphs);
+
+    const placedGlyphs: number[] = [];
+    const xforms: number[] = [];
+    const layout: TextPathGlyph[] = [];
+    let pen = attachment.startOffset;
+
+    for (let i = 0; i < glyphs.length; i += 1) {
+      const width = widths[i] ?? 0;
+      const mid = pen + width / 2;
+      pen += width + node.letterSpacing;
+      if (mid < 0) {
+        continue;
+      }
+      if (mid > total) {
+        break; // overflow past the path's end is hidden
+      }
+
+      const distance = attachment.flip ? total - mid : mid;
+      const contour =
+        contours.find(
+          (item) => distance <= item.start + item.measure.length(),
+        ) ?? contours[contours.length - 1]!;
+      const [px, py, tx, ty] = contour.measure.getPosTan(
+        distance - contour.start,
+      );
+      const cos = attachment.flip ? -tx! : tx!;
+      const sin = attachment.flip ? -ty! : ty!;
+
+      placedGlyphs.push(glyphs[i]!);
+      xforms.push(cos, sin, px! - cos * (width / 2), py! - sin * (width / 2));
+      layout.push({
+        x: px!,
+        y: py!,
+        angle: (Math.atan2(sin, cos) * 180) / Math.PI,
+      });
+    }
+
+    this.textPathLayouts.set(node.id, layout);
+
+    if (placedGlyphs.length > 0) {
+      const blob = ck.TextBlob.MakeFromRSXformGlyphs(
+        placedGlyphs,
+        xforms,
+        font,
+      );
+      if (blob) {
+        const paint = this.makePaint(node.fill, node, node.opacity);
+        if (node.blendMode) {
+          paint.setBlendMode(this.skBlendMode(node.blendMode));
+        }
+        canvas.drawTextBlob(blob, 0, 0, paint);
+        paint.delete();
+        blob.delete();
+      }
+    }
+
+    font.delete();
+    for (const contour of contours) {
+      contour.measure.delete();
+    }
+    return true;
+  }
+
+  /**
+   * Last rendered glyph layout for a text-on-path node, artboard-local.
+   * Automation/debug probe; null when the node never rendered on a path.
+   */
+  getTextPathLayout(nodeId: string): TextPathGlyph[] | null {
+    return this.textPathLayouts.get(nodeId) ?? null;
   }
 
   private getParagraph(node: TextNode): Paragraph | null {

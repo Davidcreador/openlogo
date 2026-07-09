@@ -33,6 +33,39 @@ const strokeSchema = z.object({
   align: z.enum(["center", "inside", "outside"]),
 });
 
+const effectSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("drop-shadow"),
+    enabled: z.boolean(),
+    dx: z.number(),
+    dy: z.number(),
+    blur: z.number().nonnegative(),
+    color: z.string(),
+    opacity: z.number().min(0).max(1),
+  }),
+  z.object({
+    type: z.literal("outline"),
+    enabled: z.boolean(),
+    width: z.number().nonnegative(),
+    color: z.string(),
+    opacity: z.number().min(0).max(1),
+  }),
+  z.object({
+    type: z.literal("bevel"),
+    enabled: z.boolean(),
+    size: z.number().nonnegative(),
+    soften: z.number().nonnegative(),
+    intensity: z.number().min(0).max(1),
+  }),
+  z.object({
+    type: z.literal("glow"),
+    enabled: z.boolean(),
+    blur: z.number().nonnegative(),
+    color: z.string(),
+    opacity: z.number().min(0).max(1),
+  }),
+]);
+
 const baseNodeShape = {
   id: z.string(),
   name: z.string(),
@@ -51,6 +84,7 @@ const baseNodeShape = {
   blendMode: z
     .enum(["multiply", "screen", "overlay", "darken", "lighten"])
     .optional(),
+  effects: z.array(effectSchema).optional(),
 };
 
 const nodeSchema = z.discriminatedUnion("type", [
@@ -108,6 +142,13 @@ const nodeSchema = z.discriminatedUnion("type", [
     letterSpacing: z.number(),
     lineHeight: z.number().positive(),
     align: z.enum(["left", "center", "right"]),
+    onPath: z
+      .object({
+        pathId: z.string(),
+        startOffset: z.number(),
+        flip: z.boolean(),
+      })
+      .optional(),
   }),
   z.object({
     ...baseNodeShape,
@@ -245,6 +286,19 @@ function sanitizeDocument(document: LogoDocument): LogoDocument {
   for (const id of Object.keys(nodes)) {
     if (!claimed.has(id)) {
       delete nodes[id];
+    }
+  }
+
+  // A text-on-path attachment must reference a surviving path node —
+  // otherwise the renderer would chase a dangling id forever.
+  for (const [id, node] of Object.entries(nodes)) {
+    if (
+      node.type === "text" &&
+      node.onPath &&
+      nodes[node.onPath.pathId]?.type !== "path"
+    ) {
+      const { onPath: _dangling, ...rest } = node;
+      nodes[id] = rest;
     }
   }
 

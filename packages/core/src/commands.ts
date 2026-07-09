@@ -2,10 +2,12 @@ import type { PathGeometry } from "./path-data";
 import { collectSubtreeIds, findContainerId } from "./queries";
 import type {
   Artboard,
+  Effect,
   GroupNode,
   LogoDocument,
   LogoNode,
   ShapeParams,
+  TextPathAttachment,
 } from "./types";
 
 /**
@@ -40,6 +42,8 @@ export type NodePatch = Partial<
       geometry: PathGeometry;
       /** undefined detaches a shape node from its params (bezier edit). */
       shape: ShapeParams | undefined;
+      /** undefined clears the node's effect stack. */
+      effects: Effect[] | undefined;
       content: string;
       fontFamily: string;
       fontSize: number;
@@ -47,6 +51,8 @@ export type NodePatch = Partial<
       letterSpacing: number;
       lineHeight: number;
       align: "left" | "center" | "right";
+      /** undefined detaches the text from its path. */
+      onPath: TextPathAttachment | undefined;
     },
     never
   >

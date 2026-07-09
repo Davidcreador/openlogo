@@ -649,6 +649,16 @@ export function CanvasStage() {
       rendererRef.current = renderer;
       fontStore.attach(fonts, renderer);
 
+      if (import.meta.env.DEV) {
+        // Automation/debug hook (see main.tsx): exposes the live renderer
+        // so scripts can probe derived state like text-on-path layouts.
+        const hook = (window as unknown as Record<string, unknown>)
+          .__openlogo as Record<string, unknown> | undefined;
+        if (hook) {
+          hook.renderer = renderer;
+        }
+      }
+
       const applySize = () => {
         const rect = container.getBoundingClientRect();
         canvas.style.width = `${rect.width}px`;

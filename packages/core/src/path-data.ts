@@ -400,6 +400,61 @@ export function commandsToGeometry(commands: PathCommand[]): PathGeometry {
   return { subpaths };
 }
 
+/**
+ * Reverse every subpath's direction: points in reverse order with
+ * handleIn/handleOut swapped. Walking the reversed path forward is
+ * identical to walking the original backward — this is what "flip" on
+ * text-on-a-path means, and what the SVG export uses so a flipped
+ * <textPath> renders without SVG2's poorly-supported side="right".
+ */
+export function reversePathGeometry(geometry: PathGeometry): PathGeometry {
+  return {
+    subpaths: geometry.subpaths.map((subpath) => ({
+      closed: subpath.closed,
+      points: [...subpath.points].reverse().map((point) => ({
+        x: point.x,
+        y: point.y,
+        ...(point.handleOut ? { handleIn: point.handleOut } : {}),
+        ...(point.handleIn ? { handleOut: point.handleIn } : {}),
+      })),
+    })),
+  };
+}
+
+const LENGTH_SAMPLES = 64;
+
+/**
+ * Approximate total arc length by sampling each segment. `sx`/`sy` scale
+ * the geometry first (a path node's intrinsic → rendered space), because
+ * non-uniform scaling has no closed-form effect on length.
+ */
+export function pathGeometryLength(
+  geometry: PathGeometry,
+  sx = 1,
+  sy = 1,
+): number {
+  let total = 0;
+
+  for (const subpath of geometry.subpaths) {
+    const count = subpath.points.length;
+    const segments = subpath.closed ? count : count - 1;
+
+    for (let i = 0; i < segments; i += 1) {
+      const from = subpath.points[i]!;
+      const to = subpath.points[(i + 1) % count]!;
+      let prev = { x: from.x * sx, y: from.y * sy };
+      for (let s = 1; s <= LENGTH_SAMPLES; s += 1) {
+        const point = segmentPointAt(from, to, s / LENGTH_SAMPLES);
+        const scaled = { x: point.x * sx, y: point.y * sy };
+        total += Math.hypot(scaled.x - prev.x, scaled.y - prev.y);
+        prev = scaled;
+      }
+    }
+  }
+
+  return total;
+}
+
 function mapPathGeometry(
   geometry: PathGeometry,
   transform: (point: Vec2) => Vec2,

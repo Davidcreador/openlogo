@@ -32,10 +32,12 @@ import {
   DEFAULT_POLYGON_SIDES,
   DEFAULT_STAR_INNER_RATIO,
   DEFAULT_STAR_POINTS,
+  type Effect,
   type GroupNode,
   type LogoDocument,
   type LogoNode,
   type NodePatch,
+  type TextNode,
   analyzeLogoDocument,
   collectLeafNodeIds,
   getContainerChildIds,
@@ -64,6 +66,12 @@ import {
 } from "../lib/object-ops";
 import { nodeToPreviewSvg } from "../lib/export";
 import { editSwatch } from "../lib/swatches";
+import {
+  attachTextToPath,
+  detachTextFromPath,
+  isTextPathPair,
+  pathNodeLength,
+} from "../lib/text-on-path";
 import { convertTextToPath } from "../lib/text-to-path";
 import { documentStore, useDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
@@ -714,10 +722,17 @@ function DesignSection({
             </div>
           </div>
 
+          {node.onPath && (
+            <TextPathControls node={node} patchSelection={patchSelection} />
+          )}
+
           <button
             type="button"
             className="outline-button"
-            disabled={node.content.length === 0}
+            disabled={node.content.length === 0 || Boolean(node.onPath)}
+            title={
+              node.onPath ? "Detach from path first" : "Convert to outlines"
+            }
             onClick={() => {
               void convertTextToPath(node.id).then((newId) => {
                 if (newId) {
@@ -728,6 +743,343 @@ function DesignSection({
           >
             Convert to outlines
           </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Controls for a text node attached to a path: start offset along the
+ * arc (slider + field), flip side, detach. Offset max derives from the
+ * path's arc length.
+ */
+function TextPathControls({
+  node,
+  patchSelection,
+}: {
+  node: TextNode;
+  patchSelection: (patch: NodePatch) => void;
+}) {
+  const document = useDocument();
+  const attachment = node.onPath!;
+  const length = Math.max(
+    1,
+    Math.round(pathNodeLength(document, attachment.pathId)),
+  );
+
+  return (
+    <div className="text-path-block">
+      <div className="stroke-head">
+        <span>On path</span>
+        <button
+          type="button"
+          className="stroke-toggle"
+          aria-label="Detach from path"
+          onClick={() => detachTextFromPath(node.id)}
+        >
+          Detach
+        </button>
+      </div>
+      <div className="fill-row">
+        <input
+          type="range"
+          min="0"
+          max={length}
+          step="1"
+          value={Math.min(attachment.startOffset, length)}
+          aria-label="Path offset"
+          onChange={(event) =>
+            patchSelection({
+              onPath: { ...attachment, startOffset: Number(event.target.value) },
+            })
+          }
+        />
+        <NumberField
+          label="Off"
+          unit="px"
+          value={attachment.startOffset}
+          onCommit={(startOffset) =>
+            patchSelection({
+              onPath: { ...attachment, startOffset: Math.max(0, startOffset) },
+            })
+          }
+        />
+      </div>
+      <button
+        type="button"
+        className={`stroke-toggle${attachment.flip ? " active" : ""}`}
+        aria-label="Flip side"
+        aria-pressed={attachment.flip}
+        onClick={() =>
+          patchSelection({ onPath: { ...attachment, flip: !attachment.flip } })
+        }
+      >
+        <FlipVertical2 size={12} /> Flip side
+      </button>
+    </div>
+  );
+}
+
+const EFFECT_LABELS: Record<Effect["type"], string> = {
+  "drop-shadow": "Drop shadow",
+  outline: "Outline",
+  bevel: "Bevel",
+  glow: "Glow",
+};
+
+function defaultEffect(type: Effect["type"]): Effect {
+  switch (type) {
+    case "drop-shadow":
+      return {
+        type,
+        enabled: true,
+        dx: 3,
+        dy: 4,
+        blur: 8,
+        color: "#0f172a",
+        opacity: 0.35,
+      };
+    case "outline":
+      return { type, enabled: true, width: 3, color: "#4f6bf6", opacity: 1 };
+    case "bevel":
+      return { type, enabled: true, size: 2, soften: 4, intensity: 0.55 };
+    case "glow":
+      return {
+        type,
+        enabled: true,
+        blur: 12,
+        color: "#f59e0b",
+        opacity: 0.85,
+      };
+  }
+}
+
+/**
+ * Layer-effect stack for the selected node (any type, groups included).
+ * Every change replaces the whole `effects` array in one update-nodes
+ * command, so add/remove/toggle/param edits are single undo entries.
+ */
+function EffectsSection({ node }: { node: LogoNode }) {
+  const effects = node.effects ?? [];
+
+  function setEffects(next: Effect[]) {
+    documentStore.apply({
+      type: "update-nodes",
+      updates: [
+        {
+          nodeId: node.id,
+          patch: { effects: next.length > 0 ? next : undefined },
+        },
+      ],
+    });
+  }
+
+  function updateAt(index: number, patch: Partial<Effect>) {
+    setEffects(
+      effects.map((effect, i) =>
+        i === index ? ({ ...effect, ...patch } as Effect) : effect,
+      ),
+    );
+  }
+
+  return (
+    <section className="inspector-section">
+      <header className="section-head">
+        <h2>Effects</h2>
+        <select
+          className="effect-add"
+          value=""
+          aria-label="Add effect"
+          onChange={(event) => {
+            const type = event.target.value as Effect["type"] | "";
+            if (type) {
+              setEffects([...effects, defaultEffect(type)]);
+            }
+          }}
+        >
+          <option value="">Add…</option>
+          <option value="drop-shadow">Drop shadow</option>
+          <option value="outline">Outline</option>
+          <option value="bevel">Bevel</option>
+          <option value="glow">Glow</option>
+        </select>
+      </header>
+
+      {effects.length === 0 ? (
+        <p className="muted">No effects. Add a shadow, outline, bevel or glow.</p>
+      ) : (
+        <div className="effect-rows">
+          {effects.map((effect, index) => (
+            <div
+              key={`${effect.type}-${index}`}
+              className={`effect-row${effect.enabled ? "" : " is-off"}`}
+            >
+              <div className="effect-head">
+                <label className="effect-toggle">
+                  <input
+                    type="checkbox"
+                    checked={effect.enabled}
+                    aria-label={`Toggle ${EFFECT_LABELS[effect.type]}`}
+                    onChange={(event) =>
+                      updateAt(index, { enabled: event.target.checked })
+                    }
+                  />
+                  <span>{EFFECT_LABELS[effect.type]}</span>
+                </label>
+                <button
+                  type="button"
+                  className="stroke-toggle"
+                  aria-label={`Remove ${EFFECT_LABELS[effect.type]}`}
+                  onClick={() =>
+                    setEffects(effects.filter((_, i) => i !== index))
+                  }
+                >
+                  Remove
+                </button>
+              </div>
+
+              {effect.type === "drop-shadow" && (
+                <div className="fill-row effect-params">
+                  <NumberField
+                    label="X"
+                    value={effect.dx}
+                    onCommit={(dx) => updateAt(index, { dx })}
+                  />
+                  <NumberField
+                    label="Y"
+                    value={effect.dy}
+                    onCommit={(dy) => updateAt(index, { dy })}
+                  />
+                  <NumberField
+                    label="Blur"
+                    value={effect.blur}
+                    onCommit={(blur) =>
+                      updateAt(index, { blur: Math.max(0, blur) })
+                    }
+                  />
+                  <input
+                    type="color"
+                    className="fill-swatch"
+                    value={effect.color}
+                    aria-label="Shadow color"
+                    onChange={(event) =>
+                      updateAt(index, { color: event.target.value })
+                    }
+                  />
+                  <NumberField
+                    label="Op"
+                    unit="%"
+                    step={5}
+                    value={Math.round(effect.opacity * 100)}
+                    onCommit={(percent) =>
+                      updateAt(index, {
+                        opacity: Math.min(1, Math.max(0, percent / 100)),
+                      })
+                    }
+                  />
+                </div>
+              )}
+
+              {effect.type === "outline" && (
+                <div className="fill-row effect-params">
+                  <NumberField
+                    label="W"
+                    unit="px"
+                    step={0.5}
+                    value={effect.width}
+                    onCommit={(width) =>
+                      updateAt(index, { width: Math.max(0, width) })
+                    }
+                  />
+                  <input
+                    type="color"
+                    className="fill-swatch"
+                    value={effect.color}
+                    aria-label="Outline color"
+                    onChange={(event) =>
+                      updateAt(index, { color: event.target.value })
+                    }
+                  />
+                  <NumberField
+                    label="Op"
+                    unit="%"
+                    step={5}
+                    value={Math.round(effect.opacity * 100)}
+                    onCommit={(percent) =>
+                      updateAt(index, {
+                        opacity: Math.min(1, Math.max(0, percent / 100)),
+                      })
+                    }
+                  />
+                </div>
+              )}
+
+              {effect.type === "bevel" && (
+                <div className="fill-row effect-params">
+                  <NumberField
+                    label="Size"
+                    unit="px"
+                    value={effect.size}
+                    onCommit={(size) =>
+                      updateAt(index, { size: Math.max(0, size) })
+                    }
+                  />
+                  <NumberField
+                    label="Soft"
+                    unit="px"
+                    value={effect.soften}
+                    onCommit={(soften) =>
+                      updateAt(index, { soften: Math.max(0, soften) })
+                    }
+                  />
+                  <NumberField
+                    label="Amt"
+                    unit="%"
+                    step={5}
+                    value={Math.round(effect.intensity * 100)}
+                    onCommit={(percent) =>
+                      updateAt(index, {
+                        intensity: Math.min(1, Math.max(0, percent / 100)),
+                      })
+                    }
+                  />
+                </div>
+              )}
+
+              {effect.type === "glow" && (
+                <div className="fill-row effect-params">
+                  <NumberField
+                    label="Blur"
+                    value={effect.blur}
+                    onCommit={(blur) =>
+                      updateAt(index, { blur: Math.max(0, blur) })
+                    }
+                  />
+                  <input
+                    type="color"
+                    className="fill-swatch"
+                    value={effect.color}
+                    aria-label="Glow color"
+                    onChange={(event) =>
+                      updateAt(index, { color: event.target.value })
+                    }
+                  />
+                  <NumberField
+                    label="Op"
+                    unit="%"
+                    step={5}
+                    value={Math.round(effect.opacity * 100)}
+                    onCommit={(percent) =>
+                      updateAt(index, {
+                        opacity: Math.min(1, Math.max(0, percent / 100)),
+                      })
+                    }
+                  />
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </section>
@@ -1359,6 +1711,7 @@ function MultiDesignSection({
   patchSelection: (patch: NodePatch) => void;
 }) {
   const document = useDocument();
+  const setSelection = useEditorStore((state) => state.setSelection);
   // Show the first drawable leaf's paint (a group's fill is a placeholder).
   const firstLeafId = collectLeafNodeIds(
     document,
@@ -1366,6 +1719,10 @@ function MultiDesignSection({
   )[0];
   const first = (firstLeafId && document.nodes[firstLeafId]) || nodes[0]!;
   const fillColor = first.fill.type === "solid" ? first.fill.color : "#000000";
+  const textPathPair = isTextPathPair(
+    document,
+    nodes.map((node) => node.id),
+  );
 
   return (
     <section className="inspector-section">
@@ -1374,6 +1731,19 @@ function MultiDesignSection({
         <span className="section-meta">{nodes.length} selected</span>
       </header>
       <AlignPanel nodeIds={nodes.map((node) => node.id)} />
+      {textPathPair && (
+        <button
+          type="button"
+          className="outline-button"
+          title="Lay the text out along the selected path"
+          onClick={() => {
+            attachTextToPath(textPathPair.text.id, textPathPair.path.id);
+            setSelection([textPathPair.text.id]);
+          }}
+        >
+          Put on path
+        </button>
+      )}
       <div className="fill-row">
         <input
           type="color"
@@ -1450,9 +1820,18 @@ export function Inspector() {
           patchSelection={patchSelection}
         />
       ) : selectedNodes.length === 1 && selectedNodes[0]!.type === "group" ? (
-        <GroupSection group={selectedNodes[0] as GroupNode} />
+        <>
+          <GroupSection group={selectedNodes[0] as GroupNode} />
+          <EffectsSection node={selectedNodes[0]!} />
+        </>
       ) : selectedNodes.length === 1 ? (
-        <DesignSection node={selectedNodes[0]!} patchSelection={patchSelection} />
+        <>
+          <DesignSection
+            node={selectedNodes[0]!}
+            patchSelection={patchSelection}
+          />
+          <EffectsSection node={selectedNodes[0]!} />
+        </>
       ) : (
         <section className="inspector-section empty-state">
           <span className="empty-state-mark">

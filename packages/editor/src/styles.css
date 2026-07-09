@@ -1108,6 +1108,74 @@ kbd {
   color: var(--accent);
 }
 
+/* Layer effects card */
+.effect-add {
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-s);
+  background: var(--panel-card);
+  color: var(--panel-text-dim);
+  padding: 3px 6px;
+  font-size: 11px;
+}
+
+.effect-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.effect-row {
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-s);
+  padding: 7px 8px 5px;
+  transition: opacity 140ms var(--ease);
+}
+
+.effect-row.is-off .effect-params {
+  opacity: 0.45;
+}
+
+.effect-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.effect-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--panel-text);
+  cursor: pointer;
+}
+
+.effect-params {
+  flex-wrap: wrap;
+}
+
+.effect-params .number-field {
+  min-width: 62px;
+  flex: 1 1 62px;
+}
+
+/* Text on a path */
+.text-path-block {
+  margin-top: 10px;
+}
+
+.text-path-block input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.text-path-block .stroke-toggle.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .rotate-copies {
   display: flex;
   gap: 6px;

@@ -44,6 +44,55 @@ export type Stroke = {
   align: "center" | "inside" | "outside";
 };
 
+export type DropShadowEffect = {
+  type: "drop-shadow";
+  enabled: boolean;
+  dx: number;
+  dy: number;
+  blur: number;
+  color: string;
+  opacity: number;
+};
+
+/** Outer stroke: the node's silhouette dilated and tinted, drawn behind. */
+export type OutlineEffect = {
+  type: "outline";
+  enabled: boolean;
+  width: number;
+  color: string;
+  opacity: number;
+};
+
+/**
+ * Emboss approximation: two blurred silhouette copies clipped inside the
+ * node's alpha — a light one offset toward the top-left and a dark one
+ * toward the bottom-right (fixed diagonal light). No real lighting model.
+ */
+export type BevelEffect = {
+  type: "bevel";
+  enabled: boolean;
+  /** Offset of the highlight/shade copies, px. */
+  size: number;
+  /** Blur applied to both copies, px. */
+  soften: number;
+  /** Strength of the highlight/shade, 0–1. */
+  intensity: number;
+};
+
+export type GlowEffect = {
+  type: "glow";
+  enabled: boolean;
+  blur: number;
+  color: string;
+  opacity: number;
+};
+
+export type Effect =
+  | DropShadowEffect
+  | OutlineEffect
+  | BevelEffect
+  | GlowEffect;
+
 export type BaseNode = {
   id: string;
   name: string;
@@ -61,6 +110,12 @@ export type BaseNode = {
   stroke?: Stroke;
   /** Compositing mode; normal when absent. */
   blendMode?: BlendMode;
+  /**
+   * Layer-effect stack, drawn in array order: shadows/glows/outlines
+   * render behind the node, bevels overlay inside its alpha. Disabled
+   * entries stay in the stack but don't draw.
+   */
+  effects?: Effect[];
 };
 
 export type BlendMode =
@@ -110,6 +165,26 @@ export type PathNode = BaseNode & {
   shape?: ShapeParams;
 };
 
+/**
+ * Attachment of a text node to a path node ("type on a path"). While
+ * present, glyphs are laid out along the referenced path — the text
+ * node's own x/y is not used for layout (its box is only a selection
+ * target, synced to the path on attach). Layout is derived at render
+ * time, so moving/editing the path re-flows the text automatically.
+ */
+export type TextPathAttachment = {
+  /** Id of the path node the text flows along. */
+  pathId: string;
+  /** Distance along the path where the first glyph starts, px. */
+  startOffset: number;
+  /**
+   * Flip to the other side of the path: glyphs traverse the path from
+   * its end and are rotated 180°, i.e. the layout you get by reversing
+   * the path's direction.
+   */
+  flip: boolean;
+};
+
 export type TextNode = BaseNode & {
   type: "text";
   content: string;
@@ -119,6 +194,8 @@ export type TextNode = BaseNode & {
   letterSpacing: number;
   lineHeight: number;
   align: "left" | "center" | "right";
+  /** Present while the text is attached to a path. */
+  onPath?: TextPathAttachment;
 };
 
 /**

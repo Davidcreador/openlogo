@@ -96,8 +96,9 @@ class FontStore {
         }
         const bytes = await response.arrayBuffer();
         this.cache.set(key, bytes);
-        // Registry consumes the buffer; hand it a copy.
-        this.registry?.register(family.name, bytes.slice(0));
+        // Registry consumes the buffer; hand it a copy. The weight keys
+        // the per-weight Typeface used by text-on-a-path glyph layout.
+        this.registry?.register(family.name, bytes.slice(0), resolvedWeight);
         this.renderer?.invalidate();
 
         // Also register as a CSS FontFace so DOM surfaces (inline text

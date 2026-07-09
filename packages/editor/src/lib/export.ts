@@ -3,7 +3,11 @@ import {
   type LogoDocument,
   type LogoNode,
   type Paint,
+  type PathNode,
+  type TextNode,
   getActiveArtboard,
+  pathGeometryToSvg,
+  reversePathGeometry,
   unitBounds,
 } from "@openlogo/core";
 
@@ -16,6 +20,158 @@ function escapeXml(value: string): string {
 }
 
 let gradientCounter = 0;
+let filterCounter = 0;
+let textPathCounter = 0;
+
+/**
+ * Layer effects → an SVG <filter>. Faithful pieces: drop shadow and glow
+ * (feDropShadow / blur+offset+flood chains), outline (feMorphology
+ * dilate). Bevel exports the same approximation the renderer draws — two
+ * blurred offset silhouette copies clipped inside the source alpha —
+ * not a real lighting model. Known degradations vs the canvas: stacked
+ * shadows are built from SourceAlpha (they don't shadow each other),
+ * and feMorphology's square kernel rounds corners slightly differently
+ * from Skia's dilate.
+ */
+function effectsAttr(node: LogoNode, defs: string[]): string {
+  const effects = node.effects?.filter((effect) => effect.enabled) ?? [];
+  if (effects.length === 0) {
+    return "";
+  }
+
+  filterCounter += 1;
+  const id = `fx-${filterCounter}`;
+  const region = `x="-60%" y="-60%" width="220%" height="220%"`;
+
+  // Single drop shadow / glow: the native primitive, nothing else.
+  if (
+    effects.length === 1 &&
+    (effects[0]!.type === "drop-shadow" || effects[0]!.type === "glow")
+  ) {
+    const effect = effects[0]!;
+    const dx = effect.type === "drop-shadow" ? effect.dx : 0;
+    const dy = effect.type === "drop-shadow" ? effect.dy : 0;
+    defs.push(
+      `<filter id="${id}" ${region}><feDropShadow dx="${dx}" dy="${dy}" stdDeviation="${
+        effect.blur / 2
+      }" flood-color="${effect.color}" flood-opacity="${effect.opacity}" /></filter>`,
+    );
+    return ` filter="url(#${id})"`;
+  }
+
+  const primitives: string[] = [];
+  const under: string[] = [];
+  const over: string[] = [];
+  let step = 0;
+
+  for (const effect of effects) {
+    step += 1;
+    if (effect.type === "drop-shadow" || effect.type === "glow") {
+      const dx = effect.type === "drop-shadow" ? effect.dx : 0;
+      const dy = effect.type === "drop-shadow" ? effect.dy : 0;
+      primitives.push(
+        `<feGaussianBlur in="SourceAlpha" stdDeviation="${effect.blur / 2}" result="b${step}" />`,
+        `<feOffset in="b${step}" dx="${dx}" dy="${dy}" result="o${step}" />`,
+        `<feFlood flood-color="${effect.color}" flood-opacity="${effect.opacity}" result="c${step}" />`,
+        `<feComposite in="c${step}" in2="o${step}" operator="in" result="u${step}" />`,
+      );
+      under.push(`u${step}`);
+    } else if (effect.type === "outline") {
+      if (effect.width <= 0) {
+        continue;
+      }
+      primitives.push(
+        `<feMorphology in="SourceAlpha" operator="dilate" radius="${effect.width}" result="m${step}" />`,
+        `<feFlood flood-color="${effect.color}" flood-opacity="${effect.opacity}" result="c${step}" />`,
+        `<feComposite in="c${step}" in2="m${step}" operator="in" result="u${step}" />`,
+      );
+      under.push(`u${step}`);
+    } else {
+      // Bevel: edge rims — the silhouette minus itself shifted away from
+      // the light — lit toward the top-left, shaded toward the
+      // bottom-right, blurred and clipped inside the source. Mirrors the
+      // renderer's DstOut construction.
+      const passes = [
+        { sign: -1, color: "#ffffff", key: "h" },
+        { sign: 1, color: "#000000", key: "s" },
+      ];
+      for (const pass of passes) {
+        const p = `${pass.key}${step}`;
+        primitives.push(
+          `<feOffset in="SourceAlpha" dx="${-pass.sign * effect.size}" dy="${-pass.sign * effect.size}" result="${p}o" />`,
+          `<feComposite in="SourceAlpha" in2="${p}o" operator="out" result="${p}r" />`,
+          `<feGaussianBlur in="${p}r" stdDeviation="${effect.soften / 2}" result="${p}b" />`,
+          `<feFlood flood-color="${pass.color}" flood-opacity="${effect.intensity}" result="${p}c" />`,
+          `<feComposite in="${p}c" in2="${p}b" operator="in" result="${p}i" />`,
+          `<feComposite in="${p}i" in2="SourceAlpha" operator="in" result="${p}" />`,
+        );
+        over.push(p);
+      }
+    }
+  }
+
+  if (primitives.length === 0) {
+    return "";
+  }
+
+  const merge = [
+    ...under.map((result) => `<feMergeNode in="${result}" />`),
+    `<feMergeNode in="SourceGraphic" />`,
+    ...over.map((result) => `<feMergeNode in="${result}" />`),
+  ].join("");
+  primitives.push(`<feMerge>${merge}</feMerge>`);
+  defs.push(`<filter id="${id}" ${region}>${primitives.join("")}</filter>`);
+  return ` filter="url(#${id})"`;
+}
+
+/**
+ * Text on a path exports as a real <textPath> (editable text, faithful
+ * startOffset). Flip uses the REVERSED path in defs — same layout the
+ * renderer draws — when structured geometry exists; imported `d`-only
+ * paths degrade to SVG2's side="right", which some renderers ignore.
+ * Fonts are referenced by family name, like every text export here.
+ */
+function textOnPathMarkup(
+  node: TextNode,
+  path: PathNode,
+  base: string,
+  defs: string[],
+): string {
+  const attachment = node.onPath!;
+  textPathCounter += 1;
+  const id = `tp-${textPathCounter}`;
+
+  let d = path.d;
+  let side = "";
+  if (attachment.flip) {
+    if (path.geometry) {
+      d = pathGeometryToSvg(reversePathGeometry(path.geometry));
+    } else {
+      side = ' side="right"';
+    }
+  }
+
+  const rotate =
+    path.rotation === 0
+      ? ""
+      : `rotate(${path.rotation} ${path.x + path.width / 2} ${
+          path.y + path.height / 2
+        }) `;
+  const transform = `${rotate}translate(${path.x} ${path.y}) scale(${
+    path.width / path.intrinsicWidth
+  } ${path.height / path.intrinsicHeight})`;
+  defs.push(
+    `<path id="${id}" d="${escapeXml(d)}" transform="${transform}" fill="none" />`,
+  );
+
+  return `<text ${base} font-family="${escapeXml(node.fontFamily)}" font-size="${
+    node.fontSize
+  }" font-weight="${node.fontWeight}" letter-spacing="${
+    node.letterSpacing
+  }"><textPath href="#${id}"${side} startOffset="${
+    attachment.startOffset
+  }">${escapeXml(node.content)}</textPath></text>`;
+}
 
 function paintAttr(paint: Paint, defs: string[]): string {
   if (paint.type === "solid") {
@@ -39,7 +195,11 @@ function paintAttr(paint: Paint, defs: string[]): string {
   return `url(#${id})`;
 }
 
-function renderNode(node: LogoNode, defs: string[]): string {
+function renderNode(
+  document: LogoDocument,
+  node: LogoNode,
+  defs: string[],
+): string {
   if (node.type === "group") {
     return ""; // handled by renderTree
   }
@@ -57,7 +217,8 @@ function renderNode(node: LogoNode, defs: string[]): string {
   const blend = node.blendMode
     ? ` style="mix-blend-mode:${node.blendMode}"`
     : "";
-  const base = `opacity="${node.opacity}" fill="${fill}"${stroke}${blend}${rotate}`;
+  const filter = effectsAttr(node, defs);
+  const base = `opacity="${node.opacity}" fill="${fill}"${stroke}${blend}${filter}${rotate}`;
 
   if (node.type === "rectangle") {
     return `<rect ${base} x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" rx="${node.cornerRadius}" />`;
@@ -70,6 +231,13 @@ function renderNode(node: LogoNode, defs: string[]): string {
   }
 
   if (node.type === "text") {
+    const pathTarget = node.onPath
+      ? document.nodes[node.onPath.pathId]
+      : undefined;
+    if (node.onPath && pathTarget?.type === "path") {
+      return textOnPathMarkup(node, pathTarget, base, defs);
+    }
+
     const anchor =
       node.align === "center"
         ? ' text-anchor="middle"'
@@ -103,7 +271,7 @@ function renderNode(node: LogoNode, defs: string[]): string {
           node.y + node.height / 2
         }) `;
 
-  return `<g opacity="${node.opacity}" fill="${fill}"${stroke} transform="${pathRotate}${transform}"><path d="${escapeXml(
+  return `<g opacity="${node.opacity}" fill="${fill}"${stroke}${filter} transform="${pathRotate}${transform}"><path d="${escapeXml(
     node.d,
   )}" /></g>`;
 }
@@ -133,10 +301,11 @@ function renderTree(
     const blend = node.blendMode
       ? ` style="mix-blend-mode:${node.blendMode}"`
       : "";
-    return `<g${opacity}${blend} data-name="${escapeXml(node.name)}">\n  ${inner}\n  </g>`;
+    const filter = effectsAttr(node, defs);
+    return `<g${opacity}${blend}${filter} data-name="${escapeXml(node.name)}">\n  ${inner}\n  </g>`;
   }
 
-  return renderNode(node, defs);
+  return renderNode(document, node, defs);
 }
 
 export function documentToSvg(
