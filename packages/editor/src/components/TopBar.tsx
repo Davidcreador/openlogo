@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Effect } from "effect";
 import {
   Check,
   ChevronDown,
@@ -472,11 +473,13 @@ function ExportMenu() {
             type="button"
             className="menu-item"
             onClick={() => {
-              void downloadPngFromSvg(
-                documentToSvg(documentStore.document),
-                `${baseName}@2x.png`,
-                artboard.width,
-                artboard.height,
+              void Effect.runPromise(
+                downloadPngFromSvg(
+                  documentToSvg(documentStore.document),
+                  `${baseName}@2x.png`,
+                  artboard.width,
+                  artboard.height,
+                ),
               );
               setOpen(false);
             }}
@@ -488,7 +491,7 @@ function ExportMenu() {
             type="button"
             className="menu-item"
             onClick={() => {
-              void exportPack();
+              void Effect.runPromise(exportPack);
               setOpen(false);
             }}
           >
@@ -532,7 +535,7 @@ export function TopBar() {
     if (!file) {
       return;
     }
-    const ids = await importSvg(await file.text());
+    const ids = await Effect.runPromise(importSvg(await file.text()));
     if (ids.length > 0) {
       setSelection(ids);
     }

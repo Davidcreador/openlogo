@@ -1,4 +1,11 @@
-import { type Command, type NodePatch, applyCommand } from "./commands";
+import * as Exit from "effect/Exit";
+import * as Fx from "effect/Effect";
+import {
+  type ApplyResult,
+  type Command,
+  type NodePatch,
+  applyCommandEffect,
+} from "./commands";
 import type { LogoDocument } from "./types";
 
 export type DocumentListener = (document: LogoDocument) => void;
@@ -49,10 +56,28 @@ export class DocumentStore {
     return () => this.listeners.delete(listener);
   }
 
+  /**
+   * Run a command through the Effect wrapper so a throwing command (bad
+   * input, model bug) is isolated as a typed failure instead of unwinding
+   * mid-mutation: the document and both history stacks stay exactly as
+   * they were, the defect is logged, and the caller sees a null result.
+   */
+  private runCommand(command: Command): ApplyResult | null {
+    const exit = Fx.runSyncExit(applyCommandEffect(this.committed, command));
+    if (Exit.isFailure(exit)) {
+      console.error("Command failed; document left unchanged.", exit.cause);
+      return null;
+    }
+    return exit.value;
+  }
+
   /** Persistent edit. Pushes exactly one history entry. */
   apply(command: Command): void {
     this.cancelPreview();
-    const result = applyCommand(this.committed, command);
+    const result = this.runCommand(command);
+    if (!result) {
+      return;
+    }
     this.committed = result.document;
     this.current = result.document;
     this.undoStack.push({ inverse: result.inverse, redo: command });
@@ -93,7 +118,12 @@ export class DocumentStore {
     if (!entry) {
       return;
     }
-    const result = applyCommand(this.committed, entry.inverse);
+    const result = this.runCommand(entry.inverse);
+    if (!result) {
+      // Put the entry back: a failed inverse must not silently drop history.
+      this.undoStack.push(entry);
+      return;
+    }
     this.committed = result.document;
     this.current = result.document;
     this.redoStack.push(entry);
@@ -106,7 +136,11 @@ export class DocumentStore {
     if (!entry) {
       return;
     }
-    const result = applyCommand(this.committed, entry.redo);
+    const result = this.runCommand(entry.redo);
+    if (!result) {
+      this.redoStack.push(entry);
+      return;
+    }
     this.committed = result.document;
     this.current = result.document;
     this.undoStack.push({ inverse: result.inverse, redo: entry.redo });

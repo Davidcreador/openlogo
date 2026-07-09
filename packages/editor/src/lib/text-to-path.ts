@@ -1,3 +1,4 @@
+import { Data, Effect } from "effect";
 import type opentype from "opentype.js";
 import {
   type PathCommand,
@@ -15,29 +16,69 @@ import {
 import { documentStore } from "../state/document";
 import { catalogEntry, fontStore } from "./font-store";
 
+/** Outline conversion failure: module load or glyph outlining threw. */
+export class TextOutlineError extends Data.TaggedError("TextOutlineError")<{
+  readonly stage: "load-opentype" | "outline";
+  readonly cause: unknown;
+}> {}
+
+/**
+ * opentype.js is heavy, so it loads lazily on first conversion and the
+ * module stays memoized (`Effect.cached`). A module import has no release
+ * side, so this is a cache, not an acquireRelease scope.
+ */
+const opentypeModule: Effect.Effect<typeof opentype, TextOutlineError> =
+  Effect.runSync(
+    Effect.cached(
+      Effect.tryPromise({
+        try: () => import("opentype.js").then((module) => module.default),
+        catch: (cause) => new TextOutlineError({ stage: "load-opentype", cause }),
+      }),
+    ),
+  );
+
 /**
  * Convert a text node into an editable path node with real glyph
  * outlines. Uses opentype.js on the same TTF bytes Skia renders with,
  * so shapes match. Latin-only shaping (kerning yes, ligatures/complex
  * scripts no) — fine for logo work, v1.
+ *
+ * Succeeds with the new node id, or null when the node isn't convertible
+ * (missing, not text, empty, font unavailable).
  */
-export async function convertTextToPath(nodeId: string): Promise<string | null> {
+export const convertTextToPath = (
+  nodeId: string,
+): Effect.Effect<string | null, TextOutlineError> =>
+  Effect.gen(function* () {
+    const document = documentStore.document;
+    const node = document.nodes[nodeId];
+
+    if (!node || node.type !== "text" || node.content.length === 0) {
+      return null;
+    }
+
+    const family = catalogEntry(node.fontFamily) ?? catalogEntry("Inter")!;
+    const [bytes, ot] = yield* Effect.all(
+      [fontStore.ensureEffect(family.name, node.fontWeight), opentypeModule],
+      { concurrency: "unbounded" },
+    );
+    if (!bytes) {
+      return null;
+    }
+
+    return yield* Effect.try({
+      try: () => outlineNode(ot, bytes, node),
+      catch: (cause) => new TextOutlineError({ stage: "outline", cause }),
+    });
+  });
+
+/** Pure-ish core: parse, outline, and swap the node in one batch command. */
+function outlineNode(
+  ot: typeof opentype,
+  bytes: ArrayBuffer,
+  node: TextNode,
+): string | null {
   const document = documentStore.document;
-  const node = document.nodes[nodeId];
-
-  if (!node || node.type !== "text" || node.content.length === 0) {
-    return null;
-  }
-
-  const family = catalogEntry(node.fontFamily) ?? catalogEntry("Inter")!;
-  const [bytes, { default: ot }] = await Promise.all([
-    fontStore.ensure(family.name, node.fontWeight),
-    import("opentype.js"), // heavy; only loaded when converting
-  ]);
-  if (!bytes) {
-    return null;
-  }
-
   const font = ot.parse(bytes);
   const options: opentype.RenderOptions = {
     kerning: true,

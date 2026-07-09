@@ -1,7 +1,13 @@
+import { Effect } from "effect";
 import type { LogoDocument, LogoNode, Paint } from "@openlogo/core";
 import { getActiveArtboard } from "@openlogo/core";
 import { documentStore } from "../state/document";
-import { documentToSvg, downloadPngFromSvg, downloadTextFile } from "./export";
+import {
+  type ExportError,
+  documentToSvg,
+  downloadPngFromSvg,
+  downloadTextFile,
+} from "./export";
 
 /**
  * Production export pack from the active artboard:
@@ -36,41 +42,48 @@ function recolorDocument(
   };
 }
 
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+export const exportPack: Effect.Effect<void, ExportError> = Effect.gen(
+  function* () {
+    const document = documentStore.document;
+    const artboard = getActiveArtboard(document);
+    const base = artboard.name.toLowerCase().replaceAll(" ", "-");
 
-export async function exportPack(): Promise<void> {
-  const document = documentStore.document;
-  const artboard = getActiveArtboard(document);
-  const base = artboard.name.toLowerCase().replaceAll(" ", "-");
+    const original = documentToSvg(document);
+    const mono = documentToSvg(recolorDocument(document, "#111827", "#ffffff"));
+    const reversed = documentToSvg(
+      recolorDocument(document, "#ffffff", "transparent"),
+    );
 
-  const original = documentToSvg(document);
-  const mono = documentToSvg(recolorDocument(document, "#111827", "#ffffff"));
-  const reversed = documentToSvg(
-    recolorDocument(document, "#ffffff", "transparent"),
-  );
+    // The pauses keep browsers from coalescing/blocking rapid downloads.
+    yield* Effect.sync(() =>
+      downloadTextFile(original, `${base}.svg`, "image/svg+xml"),
+    );
+    yield* Effect.sleep("300 millis");
+    yield* Effect.sync(() =>
+      downloadTextFile(mono, `${base}-mono.svg`, "image/svg+xml"),
+    );
+    yield* Effect.sleep("300 millis");
+    yield* Effect.sync(() =>
+      downloadTextFile(reversed, `${base}-reversed.svg`, "image/svg+xml"),
+    );
 
-  downloadTextFile(original, `${base}.svg`, "image/svg+xml");
-  await wait(300);
-  downloadTextFile(mono, `${base}-mono.svg`, "image/svg+xml");
-  await wait(300);
-  downloadTextFile(reversed, `${base}-reversed.svg`, "image/svg+xml");
-
-  for (const size of [16, 32, 48]) {
-    await wait(300);
-    await downloadPngFromSvg(
+    for (const size of [16, 32, 48]) {
+      yield* Effect.sleep("300 millis");
+      yield* downloadPngFromSvg(
+        original,
+        `favicon-${size}.png`,
+        artboard.width,
+        artboard.height,
+        size / Math.max(artboard.width, artboard.height),
+      );
+    }
+    yield* Effect.sleep("300 millis");
+    yield* downloadPngFromSvg(
       original,
-      `favicon-${size}.png`,
+      "icon-512.png",
       artboard.width,
       artboard.height,
-      size / Math.max(artboard.width, artboard.height),
+      512 / Math.max(artboard.width, artboard.height),
     );
-  }
-  await wait(300);
-  await downloadPngFromSvg(
-    original,
-    "icon-512.png",
-    artboard.width,
-    artboard.height,
-    512 / Math.max(artboard.width, artboard.height),
-  );
-}
+  },
+);

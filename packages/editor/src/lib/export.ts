@@ -1,3 +1,4 @@
+import { Data, Effect } from "effect";
 import {
   type Artboard,
   type LogoDocument,
@@ -386,38 +387,60 @@ export function downloadTextFile(
   URL.revokeObjectURL(url);
 }
 
-export async function downloadPngFromSvg(
+/** PNG rasterization failure (SVG didn't render, or no 2D canvas). */
+export class ExportError extends Data.TaggedError("ExportError")<{
+  readonly reason: string;
+}> {}
+
+/**
+ * Rasterize an SVG string to a PNG download. The object URL is an acquired
+ * resource: it is revoked on every exit path, including the image failing
+ * to load (which previously leaked it).
+ */
+export const downloadPngFromSvg = (
   svg: string,
   filename: string,
   width: number,
   height: number,
   scale = 2,
-): Promise<void> {
-  const svgBlob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
-  const url = URL.createObjectURL(svgBlob);
-  const image = new Image();
+): Effect.Effect<void, ExportError> =>
+  Effect.acquireUseRelease(
+    Effect.sync(() =>
+      URL.createObjectURL(
+        new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
+      ),
+    ),
+    (url) =>
+      Effect.gen(function* () {
+        const image = new Image();
+        yield* Effect.async<void, ExportError>((resume) => {
+          image.onload = () => resume(Effect.void);
+          image.onerror = () =>
+            resume(
+              Effect.fail(
+                new ExportError({ reason: "Unable to render SVG for export." }),
+              ),
+            );
+          image.src = url;
+        });
 
-  await new Promise<void>((resolve, reject) => {
-    image.onload = () => resolve();
-    image.onerror = () => reject(new Error("Unable to render SVG for export."));
-    image.src = url;
-  });
+        const canvas = window.document.createElement("canvas");
+        canvas.width = width * scale;
+        canvas.height = height * scale;
+        const context = canvas.getContext("2d");
 
-  const canvas = window.document.createElement("canvas");
-  canvas.width = width * scale;
-  canvas.height = height * scale;
-  const context = canvas.getContext("2d");
+        if (!context) {
+          return yield* Effect.fail(
+            new ExportError({ reason: "Canvas is unavailable in this browser." }),
+          );
+        }
 
-  if (!context) {
-    URL.revokeObjectURL(url);
-    throw new Error("Canvas is unavailable in this browser.");
-  }
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
 
-  context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  URL.revokeObjectURL(url);
-
-  const anchor = window.document.createElement("a");
-  anchor.href = canvas.toDataURL("image/png");
-  anchor.download = filename;
-  anchor.click();
-}
+        const anchor = window.document.createElement("a");
+        anchor.href = canvas.toDataURL("image/png");
+        anchor.download = filename;
+        anchor.click();
+      }),
+    (url) => Effect.sync(() => URL.revokeObjectURL(url)),
+  );

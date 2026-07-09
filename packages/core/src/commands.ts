@@ -1,3 +1,7 @@
+// The domain already owns the name `Effect` (layer effects), so the
+// effect-ts modules come in under aliases here.
+import * as Data from "effect/Data";
+import * as Fx from "effect/Effect";
 import type { PathGeometry } from "./path-data";
 import { collectSubtreeIds, findContainerId } from "./queries";
 import type {
@@ -238,6 +242,27 @@ function containerListOf(
   const node = document.nodes[containerId];
   return node?.type === "group" ? node.children : null;
 }
+
+/** A command whose application threw — a malformed command or a model bug. */
+export class CommandApplyError extends Data.TaggedError("CommandApplyError")<{
+  readonly command: Command;
+  readonly cause: unknown;
+}> {}
+
+/**
+ * Effect wrapper over `applyCommand` for callers that must not let a
+ * throwing command corrupt state (DocumentStore history). `applyCommand`
+ * itself stays the pure, synchronous primitive — fuzz suites and per-frame
+ * callers use it directly.
+ */
+export const applyCommandEffect = (
+  document: LogoDocument,
+  command: Command,
+): Fx.Effect<ApplyResult, CommandApplyError> =>
+  Fx.try({
+    try: () => applyCommand(document, command),
+    catch: (cause) => new CommandApplyError({ command, cause }),
+  });
 
 export function applyCommand(
   document: LogoDocument,

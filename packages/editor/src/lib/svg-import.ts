@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import type { CanvasKit } from "canvaskit-wasm";
 import {
   type LogoNode,
@@ -6,7 +7,7 @@ import {
   createId,
   getActiveArtboard,
 } from "@openlogo/core";
-import { getCanvasKit } from "./canvaskit";
+import { type CanvasKitLoadError, canvasKit } from "./canvaskit";
 import { documentStore } from "../state/document";
 
 /**
@@ -231,16 +232,29 @@ function walk(
   });
 }
 
+/**
+ * The Skia path is an acquired WASM resource: it is deleted on every exit,
+ * including a throw mid-transform (which previously leaked it).
+ */
 function buildNode(
   ck: CanvasKit,
   shape: FlatShape,
   index: number,
-): PathNode | null {
-  const path = ck.Path.MakeFromSVGString(shape.d);
-  if (!path) {
-    return null;
-  }
+): Effect.Effect<PathNode | null> {
+  return Effect.acquireUseRelease(
+    Effect.sync(() => ck.Path.MakeFromSVGString(shape.d)),
+    (path) => Effect.sync(() => (path ? nodeFromPath(path, shape, index) : null)),
+    (path) => Effect.sync(() => path?.delete()),
+  );
+}
 
+type SkiaPath = NonNullable<ReturnType<CanvasKit["Path"]["MakeFromSVGString"]>>;
+
+function nodeFromPath(
+  path: SkiaPath,
+  shape: FlatShape,
+  index: number,
+): PathNode {
   const [a, b, c, d2, e, f] = shape.matrix;
   path.transform([a, c, e, b, d2, f, 0, 0, 1]);
 
@@ -250,7 +264,6 @@ function buildNode(
   const height = Math.max(0.5, bottom - top);
   path.transform([1, 0, -left, 0, 1, -top, 0, 0, 1]);
   const normalized = path.toSVGString();
-  path.delete();
 
   return {
     id: createId("node"),
@@ -280,71 +293,78 @@ function buildNode(
   };
 }
 
-/** Import an SVG string as one group of path nodes. Returns [groupId]. */
-export async function importSvg(svgText: string): Promise<string[]> {
-  const parsed = new DOMParser().parseFromString(svgText, "image/svg+xml");
-  const root = parsed.querySelector("svg");
-  if (!root || parsed.querySelector("parsererror")) {
-    return [];
-  }
+/**
+ * Import an SVG string as one group of path nodes. Succeeds with [groupId]
+ * ([] when nothing importable); unparseable input is an empty result, not
+ * an error — only a CanvasKit load failure lands in the error channel.
+ */
+export const importSvg = (
+  svgText: string,
+): Effect.Effect<string[], CanvasKitLoadError> =>
+  Effect.gen(function* () {
+    const parsed = new DOMParser().parseFromString(svgText, "image/svg+xml");
+    const root = parsed.querySelector("svg");
+    if (!root || parsed.querySelector("parsererror")) {
+      return [];
+    }
 
-  const shapes: FlatShape[] = [];
-  walk(root, IDENTITY, { fill: "#000000", opacity: 1 }, shapes);
-  if (shapes.length === 0) {
-    return [];
-  }
+    const shapes: FlatShape[] = [];
+    walk(root, IDENTITY, { fill: "#000000", opacity: 1 }, shapes);
+    if (shapes.length === 0) {
+      return [];
+    }
 
-  const ck = await getCanvasKit();
-  const nodes = shapes
-    .map((shape, index) => buildNode(ck, shape, index))
-    .filter((node): node is PathNode => node !== null);
-  if (nodes.length === 0) {
-    return [];
-  }
+    const ck = yield* canvasKit;
+    const nodes = (yield* Effect.all(
+      shapes.map((shape, index) => buildNode(ck, shape, index)),
+    )).filter((node): node is PathNode => node !== null);
+    if (nodes.length === 0) {
+      return [];
+    }
 
-  // Fit and centre on the artboard.
-  const artboard = getActiveArtboard(documentStore.document);
-  const minX = Math.min(...nodes.map((n) => n.x));
-  const minY = Math.min(...nodes.map((n) => n.y));
-  const maxX = Math.max(...nodes.map((n) => n.x + n.width));
-  const maxY = Math.max(...nodes.map((n) => n.y + n.height));
-  const spanW = maxX - minX;
-  const spanH = maxY - minY;
-  const scale = Math.min(
-    1,
-    (artboard.width * 0.8) / spanW,
-    (artboard.height * 0.8) / spanH,
-  );
-  const offsetX = (artboard.width - spanW * scale) / 2 - minX * scale;
-  const offsetY = (artboard.height - spanH * scale) / 2 - minY * scale;
+    // Fit and centre on the artboard.
+    const artboard = getActiveArtboard(documentStore.document);
+    const minX = Math.min(...nodes.map((n) => n.x));
+    const minY = Math.min(...nodes.map((n) => n.y));
+    const maxX = Math.max(...nodes.map((n) => n.x + n.width));
+    const maxY = Math.max(...nodes.map((n) => n.y + n.height));
+    const spanW = maxX - minX;
+    const spanH = maxY - minY;
+    const scale = Math.min(
+      1,
+      (artboard.width * 0.8) / spanW,
+      (artboard.height * 0.8) / spanH,
+    );
+    const offsetX = (artboard.width - spanW * scale) / 2 - minX * scale;
+    const offsetY = (artboard.height - spanH * scale) / 2 - minY * scale;
 
-  const placed: LogoNode[] = nodes.map((node) => ({
-    ...node,
-    x: node.x * scale + offsetX,
-    y: node.y * scale + offsetY,
-    width: node.width * scale,
-    height: node.height * scale,
-    // Path data stays in intrinsic space; only the box scales.
-  }));
+    const placed: LogoNode[] = nodes.map((node) => ({
+      ...node,
+      x: node.x * scale + offsetX,
+      y: node.y * scale + offsetY,
+      width: node.width * scale,
+      height: node.height * scale,
+      // Path data stays in intrinsic space; only the box scales.
+    }));
 
-  // Multi-shape imports arrive as one real group; a single shape stays flat.
-  if (placed.length === 1) {
+    // Multi-shape imports arrive as one real group; a single shape stays flat.
+    if (placed.length === 1) {
+      documentStore.apply({
+        type: "insert-nodes",
+        artboardId: artboard.id,
+        nodes: placed,
+      });
+      return [placed[0]!.id];
+    }
+
+    const group = createGroup(placed.map((node) => node.id));
+    group.name = "Imported SVG";
+
     documentStore.apply({
       type: "insert-nodes",
       artboardId: artboard.id,
-      nodes: placed,
+      nodes: [...placed, group],
     });
-    return [placed[0]!.id];
-  }
 
-  const group = createGroup(placed.map((node) => node.id));
-  group.name = "Imported SVG";
-
-  documentStore.apply({
-    type: "insert-nodes",
-    artboardId: artboard.id,
-    nodes: [...placed, group],
+    return [group.id];
   });
-
-  return [group.id];
-}

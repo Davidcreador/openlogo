@@ -1,3 +1,4 @@
+import { Data, Effect } from "effect";
 import { z } from "zod";
 import { boundsUnion } from "./geometry";
 import { createGroup } from "./factory";
@@ -327,3 +328,33 @@ export function parseDocument(data: unknown): LogoDocument {
 
   return sanitizeDocument({ ...document, schemaVersion: DOCUMENT_SCHEMA_VERSION });
 }
+
+/** Decode failure for untrusted document payloads (zod issues, version gate). */
+export class DocumentDecodeError extends Data.TaggedError("DocumentDecodeError")<{
+  readonly cause: unknown;
+}> {}
+
+/**
+ * Effect entry point for untrusted data. Same semantics as `parseDocument`
+ * (which stays the throwing primitive — its contract is test-asserted and
+ * zod remains the validator; see the module note below), but failures land
+ * in the typed error channel instead of an exception.
+ */
+export const parseDocumentEffect = (
+  data: unknown,
+): Effect.Effect<LogoDocument, DocumentDecodeError> =>
+  Effect.try({
+    try: () => parseDocument(data),
+    catch: (cause) => new DocumentDecodeError({ cause }),
+  });
+
+/*
+ * Why the validator is still zod and not effect/Schema: parseDocument is the
+ * durability boundary for every stored document, and the two libraries differ
+ * in load-bearing details (discriminated-union issue shapes, unknown-key
+ * stripping, optional-property semantics under exactOptionalPropertyTypes).
+ * Porting would have to prove byte-identical round-trips across the fuzz
+ * corpus and every schema test before zod could be deleted; that proof burden
+ * buys no new capability here, so the Effect adoption wraps the boundary
+ * (typed DecodeError) rather than replacing the validator.
+ */

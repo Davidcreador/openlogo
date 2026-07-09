@@ -1,4 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+// Aliased: this file already imports the domain `Effect` (layer effect) type.
+import { Effect as Fx } from "effect";
 import {
   AlignCenter,
   AlignCenterHorizontal,
@@ -797,7 +799,7 @@ function DesignSection({
               node.onPath ? "Detach from path first" : "Convert to outlines"
             }
             onClick={() => {
-              void convertTextToPath(node.id).then((newId) => {
+              void Fx.runPromise(convertTextToPath(node.id)).then((newId) => {
                 if (newId) {
                   setSelection([newId]);
                 }

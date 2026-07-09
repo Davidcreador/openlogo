@@ -15,6 +15,7 @@
     "@openlogo/core": "workspace:*",
     "@openlogo/renderer": "workspace:*",
     "canvaskit-wasm": "^0.40.0",
+    "effect": "^3.21.4",
     "lucide-react": "^1.23.0",
     "opentype.js": "^2.0.0",
     "react": "^19.2.7",

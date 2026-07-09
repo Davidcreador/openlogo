@@ -1,88 +1,139 @@
-import { type LogoDocument, parseDocument } from "@openlogo/core";
+import { Data, Effect, Schedule } from "effect";
+import { type LogoDocument, parseDocumentEffect } from "@openlogo/core";
 
 const DB_NAME = "openlogo";
 const STORE_NAME = "documents";
 const CURRENT_KEY = "current";
 
-function openDatabase(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
-    request.onupgradeneeded = () => {
-      request.result.createObjectStore(STORE_NAME);
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
+/** IndexedDB failure, tagged by which operation broke. */
+export class PersistenceError extends Data.TaggedError("PersistenceError")<{
+  readonly op: "open" | "get" | "put";
+  readonly cause: unknown;
+}> {}
 
-export async function saveDocument(document: LogoDocument): Promise<void> {
-  const db = await openDatabase();
-  await new Promise<void>((resolve, reject) => {
+const openDatabase = Effect.async<IDBDatabase, PersistenceError>((resume) => {
+  const request = indexedDB.open(DB_NAME, 1);
+  request.onupgradeneeded = () => {
+    request.result.createObjectStore(STORE_NAME);
+  };
+  request.onsuccess = () => resume(Effect.succeed(request.result));
+  request.onerror = () =>
+    resume(Effect.fail(new PersistenceError({ op: "open", cause: request.error })));
+});
+
+/** Every operation runs inside acquire/use/release so the handle always closes. */
+const withDatabase = <A, E>(
+  use: (db: IDBDatabase) => Effect.Effect<A, E>,
+): Effect.Effect<A, E | PersistenceError> =>
+  Effect.acquireUseRelease(openDatabase, use, (db) =>
+    Effect.sync(() => db.close()),
+  );
+
+const putValue = (
+  db: IDBDatabase,
+  key: string,
+  value: unknown,
+): Effect.Effect<void, PersistenceError> =>
+  Effect.async<void, PersistenceError>((resume) => {
     const tx = db.transaction(STORE_NAME, "readwrite");
-    tx.objectStore(STORE_NAME).put(
-      JSON.parse(JSON.stringify(document)),
-      CURRENT_KEY,
-    );
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    tx.objectStore(STORE_NAME).put(value, key);
+    tx.oncomplete = () => resume(Effect.void);
+    tx.onerror = () =>
+      resume(Effect.fail(new PersistenceError({ op: "put", cause: tx.error })));
   });
-  db.close();
-}
 
-export async function loadDocument(): Promise<LogoDocument | null> {
-  const db = await openDatabase();
-  const data = await new Promise<unknown>((resolve, reject) => {
+const getValue = (
+  db: IDBDatabase,
+  key: string,
+): Effect.Effect<unknown, PersistenceError> =>
+  Effect.async<unknown, PersistenceError>((resume) => {
     const tx = db.transaction(STORE_NAME, "readonly");
-    const request = tx.objectStore(STORE_NAME).get(CURRENT_KEY);
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    const request = tx.objectStore(STORE_NAME).get(key);
+    request.onsuccess = () => resume(Effect.succeed(request.result));
+    request.onerror = () =>
+      resume(Effect.fail(new PersistenceError({ op: "get", cause: request.error })));
   });
 
-  if (!data) {
-    db.close();
-    return null;
-  }
+export const saveDocument = (
+  document: LogoDocument,
+): Effect.Effect<void, PersistenceError> =>
+  withDatabase((db) =>
+    putValue(db, CURRENT_KEY, JSON.parse(JSON.stringify(document))),
+  );
 
-  try {
-    return parseDocument(data);
-  } catch (error) {
-    // Never destroy the user's data: the very next autosave overwrites
-    // CURRENT_KEY, so park the rejected payload under a backup key first.
-    const backupKey = `backup-${new Date().toISOString()}`;
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, "readwrite");
-        tx.objectStore(STORE_NAME).put(data, backupKey);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-      });
-      console.warn(
-        `Stored document failed validation; it was preserved in IndexedDB ("${DB_NAME}" › "${STORE_NAME}" › "${backupKey}") and a fresh document was started.`,
-        error,
-      );
-    } catch (backupError) {
-      console.warn("Stored document failed validation AND could not be backed up.", error, backupError);
-    }
-    return null;
-  } finally {
-    db.close();
-  }
-}
+/**
+ * Rejected payloads are never destroyed: the very next autosave overwrites
+ * CURRENT_KEY, so park them under a backup key first, then start fresh.
+ */
+const backupRejected = (
+  db: IDBDatabase,
+  data: unknown,
+  error: unknown,
+): Effect.Effect<null> => {
+  const backupKey = `backup-${new Date().toISOString()}`;
+  return putValue(db, backupKey, data).pipe(
+    Effect.tap(() =>
+      Effect.sync(() =>
+        console.warn(
+          `Stored document failed validation; it was preserved in IndexedDB ("${DB_NAME}" › "${STORE_NAME}" › "${backupKey}") and a fresh document was started.`,
+          error,
+        ),
+      ),
+    ),
+    Effect.catchAll((backupError) =>
+      Effect.sync(() =>
+        console.warn(
+          "Stored document failed validation AND could not be backed up.",
+          error,
+          backupError,
+        ),
+      ),
+    ),
+    Effect.as(null),
+  );
+};
 
+export const loadDocument: Effect.Effect<LogoDocument | null, PersistenceError> =
+  withDatabase((db) =>
+    getValue(db, CURRENT_KEY).pipe(
+      Effect.flatMap((data) => {
+        if (!data) {
+          return Effect.succeed(null);
+        }
+        return parseDocumentEffect(data).pipe(
+          Effect.catchTag("DocumentDecodeError", (decodeError) =>
+            backupRejected(db, data, decodeError.cause),
+          ),
+        );
+      }),
+    ),
+  );
+
+/**
+ * Debounced autosave. Each save retries with exponential backoff before
+ * giving up (transient IndexedDB failures — tab freeze, quota pressure —
+ * usually clear); the final failure is logged, never thrown.
+ */
 export function createAutosave(
   getDocument: () => LogoDocument,
   delayMs = 800,
 ): () => void {
   let timer: ReturnType<typeof setTimeout> | null = null;
 
+  const save = (document: LogoDocument) =>
+    saveDocument(document).pipe(
+      Effect.retry({ schedule: Schedule.exponential("250 millis"), times: 3 }),
+      Effect.catchAll((error) =>
+        Effect.sync(() => console.warn("Autosave failed", error)),
+      ),
+    );
+
   return () => {
     if (timer) {
       clearTimeout(timer);
     }
     timer = setTimeout(() => {
-      void saveDocument(getDocument()).catch((error) => {
-        console.warn("Autosave failed", error);
-      });
+      Effect.runFork(save(getDocument()));
     }, delayMs);
   };
 }

@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { Effect } from "effect";
 import { CanvasStage } from "./canvas/CanvasStage";
 import { Inspector } from "./components/Inspector";
 import { PreviewStrip } from "./components/PreviewStrip";
@@ -55,7 +56,7 @@ export default function App() {
   useEffect(() => {
     let disposed = false;
 
-    void loadDocument().then((stored) => {
+    void Effect.runPromise(loadDocument).then((stored) => {
       if (stored && !disposed) {
         documentStore.reset(stored);
       }
