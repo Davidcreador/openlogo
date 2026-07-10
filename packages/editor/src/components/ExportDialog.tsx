@@ -186,11 +186,9 @@ export function ExportDialog() {
       Effect.catchAll((error) =>
         Effect.sync(() => {
           console.warn("Export failed", error);
-          return error._tag === "ExportSelectionError"
+          return "reason" in error && typeof error.reason === "string"
             ? error.reason
-            : error._tag === "ExportError"
-              ? error.reason
-              : "Export failed — see the console for details.";
+            : "Export failed — see the console for details.";
         }),
       ),
     );

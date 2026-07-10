@@ -298,50 +298,57 @@ export function cloneArtboardForVariant(
     throw new Error(`Artboard ${sourceArtboardId} not found.`);
   }
 
-  const nodes: LogoNode[] = [];
-  const nodeIds: string[] = [];
-
-  // Clone whole subtrees with fresh ids — a cloned group must reference
-  // cloned children, never the source artboard's nodes.
-  const cloneSubtree = (nodeId: string, seen: Set<string>): string | null => {
+  const sourceIds: string[] = [];
+  const seen = new Set<string>();
+  const collectSubtree = (nodeId: string): void => {
     const node = document.nodes[nodeId];
     if (!node || seen.has(nodeId)) {
-      return null;
+      return;
     }
     seen.add(nodeId);
-    const clone: LogoNode = structuredClone(node);
-    clone.id = createId(node.type === "group" ? "group" : "node");
+    if (node.type === "group") {
+      node.children.forEach(collectSubtree);
+    }
+    sourceIds.push(nodeId);
+  };
+  source.nodeIds.forEach(collectSubtree);
+
+  const idMap = new Map(
+    sourceIds.map((id) => {
+      const node = document.nodes[id]!;
+      return [id, createId(node.type === "group" ? "group" : "node")] as const;
+    }),
+  );
+  const nodes = sourceIds.map((id) => {
+    const clone: LogoNode = structuredClone(document.nodes[id]!);
+    clone.id = idMap.get(id)!;
     if (clone.type === "group") {
-      const sourceChildren = [...clone.children];
-      const clonedChildren = sourceChildren.map((childId) => ({
-        sourceId: childId,
-        cloneId: cloneSubtree(childId, seen),
-      }));
-      clone.children = clonedChildren
-        .map((item) => item.cloneId)
-        .filter((id): id is string => id !== null);
+      clone.children = clone.children.flatMap((childId) => {
+        const mapped = idMap.get(childId);
+        return mapped ? [mapped] : [];
+      });
       if (clone.clippingMaskId) {
-        const clonedMaskId = clonedChildren.find(
-          (item) => item.sourceId === clone.clippingMaskId,
-        )?.cloneId;
-        if (clonedMaskId) {
-          clone.clippingMaskId = clonedMaskId;
+        const mappedMask = idMap.get(clone.clippingMaskId);
+        if (mappedMask) {
+          clone.clippingMaskId = mappedMask;
         } else {
           delete clone.clippingMaskId;
         }
       }
+    } else if (clone.type === "text" && clone.onPath) {
+      const mappedPath = idMap.get(clone.onPath.pathId);
+      if (mappedPath) {
+        clone.onPath = { ...clone.onPath, pathId: mappedPath };
+      } else {
+        delete clone.onPath;
+      }
     }
-    nodes.push(clone);
-    return clone.id;
-  };
-
-  const seen = new Set<string>();
-  for (const nodeId of source.nodeIds) {
-    const cloneId = cloneSubtree(nodeId, seen);
-    if (cloneId) {
-      nodeIds.push(cloneId);
-    }
-  }
+    return clone;
+  });
+  const nodeIds = source.nodeIds.flatMap((id) => {
+    const mapped = idMap.get(id);
+    return mapped ? [mapped] : [];
+  });
 
   const artboard = createArtboard(purpose, {
     name: `${purpose[0]?.toUpperCase()}${purpose.slice(1)} variant`,

@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Data, Effect } from "effect";
 import type { CanvasKit } from "canvaskit-wasm";
 import {
   type GroupNode,
@@ -23,9 +23,25 @@ import { documentStore } from "../state/document";
  * objectBoundingBox clips, and clip paths made from multiple elements.
  */
 
-type Mat = [number, number, number, number, number, number]; // a b c d e f
+export type SvgTransformMatrix = [
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+]; // a b c d e f
+type Mat = SvgTransformMatrix;
 
 const IDENTITY: Mat = [1, 0, 0, 1, 0, 0];
+export const MAX_SVG_IMPORT_BYTES = 5 * 1024 * 1024;
+export const MAX_SVG_IMPORT_ELEMENTS = 2_000;
+export const MAX_SVG_IMPORT_PATH_CHARS = 1_000_000;
+const MAX_SVG_IMPORT_DEPTH = 128;
+
+export class SvgImportError extends Data.TaggedError("SvgImportError")<{
+  readonly reason: string;
+}> {}
 
 function multiply(m1: Mat, m2: Mat): Mat {
   return [
@@ -53,6 +69,9 @@ function parseTransform(value: string | null): Mat {
       .split(/[\s,]+/)
       .filter(Boolean)
       .map(Number);
+    if (args.length === 0 || args.some((value) => !Number.isFinite(value))) {
+      continue;
+    }
     const [a = 0, b = 0, c = 0, d = 0, e = 0, f = 0] = args;
 
     switch (match[1]) {
@@ -192,11 +211,13 @@ type FlatClipGroup = {
 };
 
 type WalkState = {
-  root: Element;
+  clipDefinitions: ReadonlyMap<string, Element>;
   shapes: FlatShape[];
   clips: FlatClipGroup[];
   nextId: number;
   nextOrder: number;
+  pathChars: number;
+  limitExceeded: boolean;
 };
 
 function nextFlatId(state: WalkState, prefix: string): string {
@@ -220,9 +241,7 @@ function captureClipGroup(
   if (!referenceId) {
     return null;
   }
-  const definition = Array.from(state.root.querySelectorAll("clipPath")).find(
-    (candidate) => candidate.getAttribute("id") === referenceId,
-  );
+  const definition = state.clipDefinitions.get(referenceId);
   if (
     !definition ||
     (definition.getAttribute("clipPathUnits") ?? "userSpaceOnUse") !==
@@ -240,6 +259,11 @@ function captureClipGroup(
   const maskElement = maskElements[0]!;
   const d = shapeToPathData(maskElement);
   if (!d) {
+    return null;
+  }
+  state.pathChars += d.length;
+  if (state.pathChars > MAX_SVG_IMPORT_PATH_CHARS) {
+    state.limitExceeded = true;
     return null;
   }
   const rule = (
@@ -281,7 +305,12 @@ function walk(
   inherited: { fill: string; fillRule: PathFillRule; opacity: number },
   ownerClipId: string | null,
   state: WalkState,
+  depth = 0,
 ): void {
+  if (state.limitExceeded || depth > MAX_SVG_IMPORT_DEPTH) {
+    state.limitExceeded = true;
+    return;
+  }
   const localMatrix = multiply(
     matrix,
     parseTransform(element.getAttribute("transform")),
@@ -295,8 +324,10 @@ function walk(
       : fillRuleRaw === "evenodd" || fillRuleRaw === "nonzero"
         ? fillRuleRaw
         : inherited.fillRule;
+  const ownOpacity = Number(styleValue(element, "opacity") ?? 1);
   const opacity =
-    inherited.opacity * Number(styleValue(element, "opacity") ?? 1);
+    inherited.opacity *
+    (Number.isFinite(ownOpacity) ? Math.min(1, Math.max(0, ownOpacity)) : 1);
 
   const tag = element.tagName.toLowerCase();
   if (tag === "g" || tag === "svg") {
@@ -312,6 +343,7 @@ function walk(
         { fill, fillRule, opacity },
         nextOwner,
         state,
+        depth + 1,
       );
     }
     return;
@@ -324,9 +356,17 @@ function walk(
   if (!d) {
     return;
   }
+  state.pathChars += d.length;
+  if (state.pathChars > MAX_SVG_IMPORT_PATH_CHARS) {
+    state.limitExceeded = true;
+    return;
+  }
 
   const strokeColor = styleValue(element, "stroke");
-  const strokeWidth = Number(styleValue(element, "stroke-width") ?? 1);
+  const rawStrokeWidth = Number(styleValue(element, "stroke-width") ?? 1);
+  const strokeWidth = Number.isFinite(rawStrokeWidth)
+    ? Math.max(0, rawStrokeWidth)
+    : 1;
   const resolvedFill =
     !fill || fill === "none"
       ? "#00000000"
@@ -378,6 +418,9 @@ function nodeFromPath(
   index: number,
 ): PathNode | null {
   const [a, b, c, d2, e, f] = shape.matrix;
+  const strokeWidth = shape.stroke
+    ? transformedStrokeWidth(shape.stroke.width, shape.matrix)
+    : 0;
   path.transform([a, c, e, b, d2, f, 0, 0, 1]);
 
   const bounds = path.computeTightBounds();
@@ -400,7 +443,9 @@ function nodeFromPath(
     width,
     height,
     rotation: 0,
-    opacity: Math.max(0.01, Math.min(1, shape.opacity)),
+    opacity: Number.isFinite(shape.opacity)
+      ? Math.max(0.01, Math.min(1, shape.opacity))
+      : 1,
     visible: true,
     locked: false,
     fill: { type: "solid", color: shape.fill },
@@ -409,7 +454,7 @@ function nodeFromPath(
       ? {
           stroke: {
             color: shape.stroke.color,
-            width: shape.stroke.width,
+            width: strokeWidth,
             align: "center" as const,
           },
         }
@@ -421,6 +466,19 @@ function nodeFromPath(
   };
 }
 
+/** Scalar approximation for SVG strokes baked through an affine transform. */
+export function transformedStrokeWidth(
+  width: number,
+  matrix: SvgTransformMatrix,
+): number {
+  const [a, b, c, d] = matrix;
+  const scale = Math.max(Math.hypot(a, b), Math.hypot(c, d));
+  return Math.max(
+    0,
+    width * (Number.isFinite(scale) && scale > 0 ? scale : 1),
+  );
+}
+
 /**
  * Import an SVG string as one group of path nodes. Succeeds with [groupId]
  * ([] when nothing importable); unparseable input is an empty result, not
@@ -428,20 +486,48 @@ function nodeFromPath(
  */
 export const importSvg = (
   svgText: string,
-): Effect.Effect<string[], CanvasKitLoadError> =>
+): Effect.Effect<string[], CanvasKitLoadError | SvgImportError> =>
   Effect.gen(function* () {
+    if (svgText.length > MAX_SVG_IMPORT_BYTES) {
+      return yield* Effect.fail(
+        new SvgImportError({
+          reason: "SVG import is limited to 5 MB for reliable local editing.",
+        }),
+      );
+    }
+    const sourceDocument = documentStore.committedDocument;
+    const generation = documentStore.documentGeneration;
     const parsed = new DOMParser().parseFromString(svgText, "image/svg+xml");
     const root = parsed.querySelector("svg");
     if (!root || parsed.querySelector("parsererror")) {
       return [];
     }
+    const allElements = Array.from(root.querySelectorAll("*"));
+    if (allElements.length > MAX_SVG_IMPORT_ELEMENTS) {
+      return yield* Effect.fail(
+        new SvgImportError({
+          reason: `SVG import is limited to ${MAX_SVG_IMPORT_ELEMENTS.toLocaleString()} elements.`,
+        }),
+      );
+    }
+    const clipDefinitions = new Map<string, Element>();
+    for (const element of allElements) {
+      if (element.tagName.toLowerCase() === "clippath") {
+        const id = element.getAttribute("id");
+        if (id) {
+          clipDefinitions.set(id, element);
+        }
+      }
+    }
 
     const state: WalkState = {
-      root,
+      clipDefinitions,
       shapes: [],
       clips: [],
       nextId: 0,
       nextOrder: 0,
+      pathChars: 0,
+      limitExceeded: false,
     };
     walk(
       root,
@@ -450,6 +536,14 @@ export const importSvg = (
       null,
       state,
     );
+    if (state.limitExceeded) {
+      return yield* Effect.fail(
+        new SvgImportError({
+          reason:
+            "This SVG is too complex to import safely. Simplify its paths or group depth and try again.",
+        }),
+      );
+    }
     if (state.shapes.length === 0) {
       return [];
     }
@@ -473,7 +567,14 @@ export const importSvg = (
     }
 
     // Fit and centre on the artboard.
-    const artboard = getActiveArtboard(documentStore.document);
+    const currentDocument = documentStore.committedDocument;
+    if (
+      documentStore.documentGeneration !== generation ||
+      currentDocument.activeArtboardId !== sourceDocument.activeArtboardId
+    ) {
+      return [];
+    }
+    const artboard = getActiveArtboard(currentDocument);
     const minX = Math.min(...built.map(({ node }) => node.x));
     const minY = Math.min(...built.map(({ node }) => node.y));
     const maxX = Math.max(...built.map(({ node }) => node.x + node.width));

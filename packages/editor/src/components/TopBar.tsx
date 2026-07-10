@@ -33,6 +33,7 @@ import {
 } from "@openlogo/core";
 import { type BooleanOp, fitBounds } from "@openlogo/renderer";
 import { applyBooleanOp, combinableNodes } from "../lib/boolean-ops";
+import { cancelActiveCanvasSessions } from "../lib/canvas-sessions";
 import {
   canMakeCompoundPath,
   canReleaseCompoundPath,
@@ -45,7 +46,7 @@ import {
 } from "../lib/document-file";
 import { exportPack } from "../lib/export-pack";
 import { deleteSelection as deleteSelectedUnits } from "../lib/group-ops";
-import { importSvg } from "../lib/svg-import";
+import { MAX_SVG_IMPORT_BYTES, importSvg } from "../lib/svg-import";
 import { documentStore, useDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
 
@@ -123,7 +124,6 @@ const ARTBOARD_PRESETS = [
 ];
 
 const MAX_ARTBOARD_DIMENSION = 16_384;
-const MAX_SVG_IMPORT_BYTES = 5 * 1024 * 1024;
 
 function normalizeArtboardDimension(value: number): number | null {
   if (!Number.isFinite(value)) {
@@ -719,7 +719,14 @@ export function TopBar() {
       }
     } catch (error) {
       console.warn("SVG import failed", error);
-      setToast("SVG import failed. The current document was not changed.");
+      setToast(
+        error &&
+          typeof error === "object" &&
+          "reason" in error &&
+          typeof error.reason === "string"
+          ? error.reason
+          : "SVG import failed. The current document was not changed.",
+      );
     }
   }
 
@@ -815,6 +822,7 @@ export function TopBar() {
           type="button"
           className={ICON_BUTTON}
           onClick={() => {
+            cancelActiveCanvasSessions();
             documentStore.undo();
             setSelection([]);
           }}
@@ -828,6 +836,7 @@ export function TopBar() {
           type="button"
           className={ICON_BUTTON}
           onClick={() => {
+            cancelActiveCanvasSessions();
             documentStore.redo();
             setSelection([]);
           }}

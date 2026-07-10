@@ -209,4 +209,88 @@ describe("applyCommand", () => {
       getActiveArtboard(doc).nodeIds,
     );
   });
+
+  it("rejects inserts that would create orphans, overwrite ids, or dual parents", () => {
+    const doc = createInitialDocument();
+    const existing = doc.nodes[getActiveArtboard(doc).nodeIds[0]!]!;
+
+    expect(
+      applyCommand(doc, {
+        type: "insert-nodes",
+        artboardId: "missing-artboard",
+        nodes: [createRectangle({ x: 0, y: 0 })],
+      }).document,
+    ).toBe(doc);
+    expect(
+      applyCommand(doc, {
+        type: "insert-nodes",
+        artboardId: doc.activeArtboardId,
+        nodes: [{ ...createRectangle({ x: 0, y: 0 }), id: existing.id }],
+      }).document,
+    ).toBe(doc);
+
+    const duplicate = createRectangle({ x: 0, y: 0 });
+    expect(
+      applyCommand(doc, {
+        type: "insert-nodes",
+        artboardId: doc.activeArtboardId,
+        nodes: [duplicate, { ...duplicate }],
+      }).document,
+    ).toBe(doc);
+  });
+
+  it("rejects an unknown active artboard without poisoning queries", () => {
+    const doc = createInitialDocument();
+    const next = applyCommand(doc, {
+      type: "set-active-artboard",
+      artboardId: "missing-artboard",
+    }).document;
+    expect(next).toBe(doc);
+    expect(getActiveArtboard(next).id).toBe(doc.activeArtboardId);
+  });
+
+  it("rejects restore entries whose destination container no longer exists", () => {
+    const doc = createInitialDocument();
+    const node = createRectangle({ x: 0, y: 0 });
+    const next = applyCommand(doc, {
+      type: "restore-nodes",
+      entries: [{ node, containerId: "missing-container", index: 0 }],
+    }).document;
+    expect(next).toBe(doc);
+    expect(next.nodes[node.id]).toBeUndefined();
+  });
+
+  it("clamps unsafe runtime patches and gradient stops", () => {
+    const doc = createInitialDocument();
+    const nodeId = getActiveArtboard(doc).nodeIds[0]!;
+    const next = applyCommand(doc, {
+      type: "update-nodes",
+      updates: [
+        {
+          nodeId,
+          patch: {
+            x: Number.NaN,
+            width: 0,
+            opacity: 4,
+            fill: {
+              type: "linear-gradient",
+              angle: 0,
+              stops: [
+                { offset: 2, color: "#fff" },
+                { offset: -1, color: "#000" },
+              ],
+            },
+          },
+        },
+      ],
+    }).document;
+    expect(next.nodes[nodeId]!.x).toBe(doc.nodes[nodeId]!.x);
+    expect(next.nodes[nodeId]!.width).toBe(0.01);
+    expect(next.nodes[nodeId]!.opacity).toBe(1);
+    const fill = next.nodes[nodeId]!.fill;
+    expect(fill.type).toBe("linear-gradient");
+    if (fill.type === "linear-gradient") {
+      expect(fill.stops.map((stop) => stop.offset)).toEqual([0, 1]);
+    }
+  });
 });

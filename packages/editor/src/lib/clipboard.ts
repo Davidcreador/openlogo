@@ -1,6 +1,7 @@
 import { type LogoNode, createId } from "@openlogo/core";
 import { cloneUnits, deleteSelection, sortBySceneOrder } from "./group-ops";
 import { documentStore } from "../state/document";
+import { useEditorStore } from "../state/editor-store";
 
 /**
  * Internal clipboard for logo nodes. App-local (not the OS clipboard):
@@ -14,7 +15,7 @@ const PASTE_OFFSET = 12;
 
 /** Copy unit subtrees in scene z-order so paste preserves stacking. */
 export function copyNodes(nodeIds: readonly string[]): number {
-  const document = documentStore.document;
+  const document = documentStore.committedDocument;
   const ordered = sortBySceneOrder(
     document,
     nodeIds.filter((id) => document.nodes[id]),
@@ -51,16 +52,29 @@ function remapForInsert(
     const clone = structuredClone(node) as LogoNode;
     clone.id = idMap.get(node.id)!;
     if (clone.type === "group") {
-      clone.children = clone.children.map(
-        (childId) => idMap.get(childId) ?? childId,
-      );
+      clone.children = clone.children.flatMap((childId) => {
+        const mapped = idMap.get(childId);
+        return mapped ? [mapped] : [];
+      });
       if (clone.clippingMaskId) {
-        clone.clippingMaskId =
-          idMap.get(clone.clippingMaskId) ?? clone.clippingMaskId;
+        const mappedMask = idMap.get(clone.clippingMaskId);
+        if (mappedMask) {
+          clone.clippingMaskId = mappedMask;
+        } else {
+          delete clone.clippingMaskId;
+        }
       }
     } else {
       clone.x += offset;
       clone.y += offset;
+      if (clone.type === "text" && clone.onPath) {
+        const mappedPath = idMap.get(clone.onPath.pathId);
+        if (mappedPath) {
+          clone.onPath = { ...clone.onPath, pathId: mappedPath };
+        } else {
+          delete clone.onPath;
+        }
+      }
     }
     return clone;
   });
@@ -83,9 +97,13 @@ export function pasteNodes(): string[] {
     PASTE_OFFSET * pasteCount,
   );
 
+  const document = documentStore.committedDocument;
+  const activeGroupId = useEditorStore.getState().activeGroupId;
+  const activeGroup = activeGroupId ? document.nodes[activeGroupId] : undefined;
   documentStore.apply({
     type: "insert-nodes",
-    artboardId: documentStore.document.activeArtboardId,
+    artboardId: document.activeArtboardId,
+    ...(activeGroup?.type === "group" ? { containerId: activeGroup.id } : {}),
     nodes,
   });
 

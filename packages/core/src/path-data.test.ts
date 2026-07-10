@@ -187,6 +187,18 @@ describe("insertAnchor", () => {
     expect(inserted.x).toBeCloseTo(before.point.x, 5);
     expect(inserted.y).toBeCloseTo(before.point.y, 5);
   });
+
+  it("clamps out-of-range and non-finite segment parameters", () => {
+    expect(
+      insertAnchor(triangle, 0, 0, -10)!.geometry.subpaths[0]!.points[1],
+    ).toMatchObject({ x: 0, y: 0 });
+    expect(
+      insertAnchor(triangle, 0, 0, 10)!.geometry.subpaths[0]!.points[1],
+    ).toMatchObject({ x: 100, y: 0 });
+    const fallback =
+      insertAnchor(triangle, 0, 0, Number.NaN)!.geometry.subpaths[0]!.points[1]!;
+    expect(fallback).toMatchObject({ x: 50, y: 0 });
+  });
 });
 
 describe("removeAnchor", () => {

@@ -16,7 +16,7 @@ import { useEditorStore } from "../state/editor-store";
 export const OPENLOGO_EXTENSION = ".openlogo";
 
 export function saveDocumentFile(): void {
-  const document = documentStore.document;
+  const document = documentStore.committedDocument;
   const base =
     document.name.trim().toLowerCase().replaceAll(" ", "-") || "logo";
   downloadTextFile(
@@ -118,7 +118,7 @@ export function promptOpenDocument(): void {
  * design tools paste fine.
  */
 export async function copyAsSvg(): Promise<boolean> {
-  const document = documentStore.document;
+  const document = documentStore.committedDocument;
   const selection = useEditorStore.getState().selectedNodeIds;
   const svg =
     selection.length > 0

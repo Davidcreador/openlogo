@@ -21,7 +21,8 @@ export async function offsetPathOp(
   nodeId: string,
   amount: number,
 ): Promise<string | null> {
-  const document = documentStore.document;
+  const document = documentStore.committedDocument;
+  const generation = documentStore.documentGeneration;
   const node = document.nodes[nodeId];
   if (
     !node ||
@@ -36,7 +37,16 @@ export async function offsetPathOp(
     return null;
   }
 
-  const artboard = getActiveArtboard(documentStore.document);
+  const current = documentStore.committedDocument;
+  if (
+    documentStore.documentGeneration !== generation ||
+    current.activeArtboardId !== document.activeArtboardId ||
+    current.nodes[nodeId] !== node
+  ) {
+    return null;
+  }
+
+  const artboard = getActiveArtboard(current);
   const containerId = findContainerId(document, node.id) ?? artboard.id;
   const index = getContainerChildIds(document, containerId).indexOf(node.id);
 

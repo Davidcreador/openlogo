@@ -381,7 +381,12 @@ function runFuzz(seed: number, steps: number, artboardOps: boolean) {
   for (let i = 0; i < steps; i += 1) {
     const command = randomCommand(rng, store.document, { artboardOps });
     if (!command) continue;
+    const before = store.document;
     store.apply(command);
+    // Rejected/no-op commands deliberately create no history entry.
+    if (store.document === before) {
+      continue;
+    }
     applied.push(command);
     snapshots.push(fingerprint(store.document));
     integrityProblems.push(

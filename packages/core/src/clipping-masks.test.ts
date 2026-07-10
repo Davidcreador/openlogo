@@ -163,4 +163,33 @@ describe("clipping-group model", () => {
     expect(clonedGroup.children).toContain(clonedGroup.clippingMaskId);
     expect(clonedGroup.clippingMaskId).not.toBe(group.clippingMaskId);
   });
+
+  it("clears a deleted mask reference and restores it on undo", () => {
+    const { document, artboard, mask, group } = fixture();
+    const clipped = applyCommand(document, {
+      type: "group-nodes",
+      containerId: artboard.id,
+      group,
+      index: 0,
+    }).document;
+
+    const deletion = applyCommand(clipped, {
+      type: "delete-nodes",
+      nodeIds: [mask.id],
+    });
+    const survivingGroup = deletion.document.nodes[group.id];
+    expect(survivingGroup?.type).toBe("group");
+    if (survivingGroup?.type === "group") {
+      expect(survivingGroup.children).not.toContain(mask.id);
+      expect(survivingGroup.clippingMaskId).toBeUndefined();
+    }
+
+    const restored = applyCommand(deletion.document, deletion.inverse).document;
+    const restoredGroup = restored.nodes[group.id];
+    expect(restoredGroup?.type).toBe("group");
+    if (restoredGroup?.type === "group") {
+      expect(restoredGroup.children).toContain(mask.id);
+      expect(restoredGroup.clippingMaskId).toBe(mask.id);
+    }
+  });
 });
