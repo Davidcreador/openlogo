@@ -20,6 +20,7 @@ import {
 } from "./identity";
 import {
   heuristicDesignMateProvider,
+  isDesignMateProviderError,
   makeDesignMateProviderError,
 } from "./provider";
 import { structuredCloneAndDeepFreeze } from "./snapshot";
@@ -65,26 +66,11 @@ export function prepareDesignMateReviewRequest(
   };
 }
 
-function isProviderError(value: unknown): value is DesignMateProviderError {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const candidate = value as Partial<DesignMateProviderError>;
-  return (
-    candidate._tag === "DesignMateProviderError" &&
-    (candidate.code === "provider-failed" ||
-      candidate.code === "invalid-review") &&
-    typeof candidate.providerId === "string" &&
-    typeof candidate.message === "string" &&
-    typeof candidate.retryable === "boolean"
-  );
-}
-
 function normalizeProviderFailure(
   providerId: string,
   cause: unknown,
 ): DesignMateProviderError {
-  if (isProviderError(cause)) {
+  if (isDesignMateProviderError(cause)) {
     return cause;
   }
   return makeDesignMateProviderError(

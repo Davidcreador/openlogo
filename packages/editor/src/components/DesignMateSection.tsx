@@ -39,10 +39,21 @@ import {
   createDesignMateRequestSignature,
   designMateRequestSignaturesEqual,
   isDesignMateReviewStale,
+  resolveEffectiveDesignMateScope,
   resolveDesignMateFocus,
 } from "../lib/design-mate-review";
+import {
+  DESIGN_MATE_CHAT_ENDPOINT,
+  designMateChatHeaderLabel,
+} from "../lib/design-mate-chat";
 import { documentStore, useDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
+
+const DesignMateChatPanel = lazy(() =>
+  import("./DesignMateChatPanel").then((module) => ({
+    default: module.DesignMateChatPanel,
+  })),
+);
 
 const DesignMateProposalPanel = lazy(() =>
   import("./DesignMateProposalPanel").then((module) => ({
@@ -86,6 +97,52 @@ class DesignMateProposalErrorBoundary extends Component<
   }
 }
 
+class DesignMateChatErrorBoundary extends Component<
+  { children: ReactNode; resetKey: string },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("Design Mate chat failed to load.", error, info);
+  }
+
+  componentDidUpdate(previous: { children: ReactNode; resetKey: string }) {
+    if (this.state.failed && previous.resetKey !== this.props.resetKey) {
+      this.setState({ failed: false });
+    }
+  }
+
+  render() {
+    if (this.state.failed) {
+      return (
+        <div
+          role="alert"
+          className="rounded-[7px] border border-[rgb(194_70_62/0.28)] bg-[#fdf1f0] px-9 py-7 text-[10.5px] leading-[1.45] text-danger"
+        >
+          <p className="m-0">
+            Conversation is unavailable. The brief, review, and suggested
+            changes are still available.
+          </p>
+          <button
+            type="button"
+            className={`${SECONDARY} mt-6`}
+            onClick={() => window.location.reload()}
+          >
+            <RefreshCw size={11} aria-hidden="true" />
+            Reload editor
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const SECTION =
   "inspector-section shrink-0 rounded-card border border-panel-hairline bg-card p-12 shadow-[0_1px_2px_rgb(28_25_33/0.04)]";
 const HEADING =
@@ -100,17 +157,6 @@ const SECONDARY =
 const PRIMARY =
   "inline-flex items-center justify-center gap-6 rounded-field bg-accent px-10 py-7 text-[11.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.2),0_1px_3px_rgb(79_107_246/0.3)] transition-[filter] duration-140 ease-studio hover:enabled:brightness-[1.08] disabled:cursor-not-allowed disabled:opacity-45";
 
-function effectiveReviewScope(
-  requested: ReviewScope,
-  document: LogoDocument,
-  selectedNodeIds: readonly string[],
-): ReviewScope {
-  return requested === "selection" &&
-    collectLeafNodeIds(document, selectedNodeIds).length === 0
-    ? "active-artboard"
-    : requested;
-}
-
 const SCOPES: ReadonlyArray<{
   id: ReviewScope;
   label: string;
@@ -119,17 +165,17 @@ const SCOPES: ReadonlyArray<{
   {
     id: "selection",
     label: "Selection",
-    title: "Review only the selected logo objects",
+    title: "Use the selected logo objects for conversation and review",
   },
   {
     id: "active-artboard",
     label: "Artboard",
-    title: "Review the active logo artboard",
+    title: "Use the active logo artboard for conversation and review",
   },
   {
     id: "document",
     label: "System",
-    title: "Review every logo variant in this document",
+    title: "Use the full logo system for conversation and review",
   },
 ];
 
@@ -288,7 +334,7 @@ export function DesignMateSection() {
 
   const hasSelection =
     collectLeafNodeIds(document, selectedNodeIds).length > 0;
-  const effectiveScope = effectiveReviewScope(
+  const effectiveScope = resolveEffectiveDesignMateScope(
     scope,
     document,
     selectedNodeIds,
@@ -371,7 +417,7 @@ export function DesignMateSection() {
       }
       const currentState = useEditorStore.getState();
       const currentDocument = documentStore.committedDocument;
-      const currentScope = effectiveReviewScope(
+      const currentScope = resolveEffectiveDesignMateScope(
         currentState.designMateScope,
         currentDocument,
         currentState.selectedNodeIds,
@@ -549,12 +595,15 @@ export function DesignMateSection() {
           </button>
         </h2>
         <span className="rounded-full border border-panel-hairline bg-field px-6 py-2 text-[8.5px] font-[650] uppercase tracking-[0.06em] text-ink-dim">
-          Local expert
+          {designMateChatHeaderLabel(DESIGN_MATE_CHAT_ENDPOINT)}
         </span>
       </header>
 
-      {expanded && (
-        <div id={contentId} className="mt-10 grid gap-10">
+      <div
+        id={contentId}
+        hidden={!expanded}
+        className={`mt-10 grid gap-10 ${expanded ? "" : "hidden"}`}
+      >
           <div className="rounded-[8px] border border-panel-hairline bg-field p-8">
             <div className="flex items-start justify-between gap-8">
               <div>
@@ -562,7 +611,7 @@ export function DesignMateSection() {
                   Brand brief
                 </strong>
                 <p className="m-0 mt-2 text-[10px] leading-[1.4] text-ink-dim">
-                  Design Mate uses this context in every review.
+                  Design Mate uses this context in conversation and review.
                 </p>
               </div>
               <button
@@ -703,7 +752,7 @@ export function DesignMateSection() {
             <div
               className="flex rounded-[8px] border border-field-border bg-field p-3"
               role="group"
-              aria-label="Design review scope"
+              aria-label="Design Mate conversation and review scope"
             >
               {SCOPES.map((item) => {
                 const disabled = item.id === "selection" && !hasSelection;
@@ -731,6 +780,9 @@ export function DesignMateSection() {
                 );
               })}
             </div>
+            <p className="mx-0 mb-0 mt-4 text-[9px] leading-[1.4] text-ink-dim">
+              This scope applies to both conversation and design review.
+            </p>
             <button
               type="button"
               className={`${PRIMARY} mt-7 w-full`}
@@ -753,6 +805,24 @@ export function DesignMateSection() {
                   : "Run design review"}
             </button>
           </div>
+
+          <DesignMateChatErrorBoundary
+            resetKey={`${document.id}\u0000${documentGeneration}`}
+          >
+            <Suspense
+              fallback={
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="rounded-[7px] border border-panel-hairline bg-field px-9 py-7 text-[10.5px] text-ink-dim"
+                >
+                  Loading conversation…
+                </div>
+              }
+            >
+              <DesignMateChatPanel />
+            </Suspense>
+          </DesignMateChatErrorBoundary>
 
           {stale && (
             <div
@@ -837,8 +907,7 @@ export function DesignMateSection() {
                 </Suspense>
               </DesignMateProposalErrorBoundary>
             )}
-        </div>
-      )}
+      </div>
     </section>
   );
 }

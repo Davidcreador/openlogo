@@ -36,6 +36,21 @@ export type DesignMateFocusTarget =
       bounds: { x: number; y: number; width: number; height: number };
     };
 
+/**
+ * Match core review semantics for an explicitly requested selection: stale,
+ * missing, or empty selection units fall back to the active artboard.
+ */
+export function resolveEffectiveDesignMateScope(
+  requested: ReviewScope,
+  document: LogoDocument,
+  selectedNodeIds: readonly string[],
+): ReviewScope {
+  return requested === "selection" &&
+    collectLeafNodeIds(document, selectedNodeIds).length === 0
+    ? "active-artboard"
+    : requested;
+}
+
 export function isDesignMateReviewStale(
   identity: DocumentIdentity,
   current: CurrentDocumentHead,
