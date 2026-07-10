@@ -34,10 +34,12 @@ import {
   FlipHorizontal2,
   FlipVertical2,
   Folder,
+  Layers3,
   Lock,
   PenTool,
   RotateCw,
   Shapes,
+  SlidersHorizontal,
   Spline,
   Square,
   Type,
@@ -67,7 +69,7 @@ import {
 import { catalogEntry, nearestWeight } from "../lib/font-catalog";
 import { fontStore } from "../lib/font-store";
 import { FontPicker } from "./FontPicker";
-import { PaintEditor } from "./PaintEditor";
+import { PaintEditor, paintPreviewBackground } from "./PaintEditor";
 import {
   moveUnitToContainer,
   rotateUnitBy,
@@ -124,20 +126,18 @@ const NODE_ICONS = {
    paper background; fields share the warm sunken look with an accent
    focus ring. */
 const SECTION =
-  "inspector-section shrink-0 rounded-card border border-panel-hairline bg-card p-12 shadow-[0_1px_2px_rgb(28_25_33/0.04)]";
-const SECTION_HEAD = "section-head mb-10 flex items-baseline justify-between gap-8";
+  "inspector-section shrink-0 rounded-[12px] border border-panel-hairline bg-card p-14 shadow-[0_1px_2px_rgb(28_25_33/0.04)]";
+const SECTION_HEAD = "section-head mb-12 flex min-h-22 items-center justify-between gap-8";
 const SECTION_H2 =
-  "m-0 text-[10.5px] font-[650] uppercase tracking-[0.08em] text-ink-dim";
+  "m-0 text-[11px] font-[680] uppercase tracking-[0.075em] text-ink-dim";
 const SECTION_META = "section-meta truncate text-[11px] tabular-nums text-ink-dim";
 const MUTED = "m-0 text-[12px] leading-[1.5] text-ink-dim";
-const FIELD_GRID = "mb-10 grid grid-cols-2 gap-6";
+const FIELD_GRID = "grid grid-cols-2 gap-7";
 const FIELD_ROW = "flex gap-6";
 const FILL_ROW = "mb-10 flex items-center gap-6";
 const FILL_SWATCH =
   "fill-swatch h-28 w-28 flex-none cursor-pointer rounded-field border border-field-border bg-transparent p-2";
 const OPACITY_FIELD = "flex min-w-0 flex-1 items-center gap-6";
-const OPACITY_PCT =
-  "w-30 flex-none text-right text-[10.5px] tabular-nums text-ink-dim";
 const SWATCH =
   "h-24 w-24 cursor-pointer rounded-[7px] border border-[rgb(28_25_33/0.1)] shadow-[inset_0_1px_0_rgb(255_255_255/0.12)] transition-[transform,box-shadow] duration-140 ease-studio hover:-translate-y-1 hover:scale-[1.08] hover:shadow-[0_2px_6px_rgb(28_25_33/0.18)]";
 const STROKE_HEAD =
@@ -176,11 +176,56 @@ class DesignMateErrorBoundary extends Component<
 const STROKE_TOGGLE = `${STROKE_TOGGLE_BASE} border-field-border text-ink-dim hover:border-accent hover:text-accent`;
 const STROKE_TOGGLE_ACTIVE = `${STROKE_TOGGLE_BASE} border-accent text-accent`;
 const SELECT =
-  "h-28 rounded-field border border-field-border bg-field px-6 text-[12px] text-ink outline-none transition-[border-color,box-shadow] duration-140 ease-studio focus:border-accent focus:bg-card focus:shadow-ring";
+  "h-32 rounded-field border border-field-border bg-field px-8 text-[12px] text-ink outline-none transition-[border-color,box-shadow] duration-140 ease-studio focus:border-accent focus:bg-card focus:shadow-ring";
 const TEXT_INPUT =
-  "h-28 rounded-field border border-field-border bg-field px-8 text-[12.5px] text-ink outline-none transition-[border-color,box-shadow] duration-140 ease-studio focus:border-accent focus:bg-card focus:shadow-ring";
+  "h-32 rounded-field border border-field-border bg-field px-8 text-[12.5px] text-ink outline-none transition-[border-color,box-shadow] duration-140 ease-studio focus:border-accent focus:bg-card focus:shadow-ring";
 const OUTLINE_BUTTON =
   "w-full rounded-field border border-dashed border-[rgb(28_25_33/0.22)] bg-transparent px-10 py-7 text-[12px] text-ink-dim transition-[border-color,color] duration-140 ease-studio hover:enabled:border-accent hover:enabled:text-accent disabled:cursor-not-allowed disabled:opacity-50";
+
+function PanelSection({
+  title,
+  meta,
+  action,
+  defaultOpen = true,
+  children,
+}: {
+  title: string;
+  meta?: ReactNode;
+  action?: ReactNode;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const contentId = useId();
+
+  return (
+    <section className={SECTION}>
+      <header className={`${SECTION_HEAD}${open ? "" : " mb-0"}`}>
+        <button
+          type="button"
+          className="group flex min-w-0 flex-1 items-center gap-7 text-left"
+          aria-expanded={open}
+          aria-controls={contentId}
+          onClick={() => setOpen((value) => !value)}
+        >
+          <span
+            className={`grid h-18 w-18 flex-none place-items-center rounded-[5px] text-ink-dim transition-[transform,background-color,color] duration-140 ease-studio group-hover:bg-field group-hover:text-ink ${
+              open ? "rotate-90" : ""
+            }`}
+            aria-hidden="true"
+          >
+            <ChevronRight size={12} strokeWidth={2} />
+          </span>
+          <h2 className={SECTION_H2}>{title}</h2>
+        </button>
+        {action ?? (meta ? <span className={SECTION_META}>{meta}</span> : null)}
+      </header>
+      <div id={contentId} hidden={!open}>
+        {children}
+      </div>
+    </section>
+  );
+}
 
 /**
  * Numeric field that commits on blur/Enter and follows external changes.
@@ -294,6 +339,9 @@ function OpacityField({
   onCancel: () => void;
 }) {
   const [draft, setDraft] = useState(value);
+  const [percentDraft, setPercentDraft] = useState(
+    String(Math.round(value * 100)),
+  );
   const draftRef = useRef(value);
   const activeRef = useRef(false);
 
@@ -301,6 +349,7 @@ function OpacityField({
     if (!activeRef.current) {
       draftRef.current = value;
       setDraft(value);
+      setPercentDraft(String(Math.round(value * 100)));
     }
   }, [value]);
   useEffect(
@@ -319,6 +368,7 @@ function OpacityField({
     activeRef.current = true;
     draftRef.current = bounded;
     setDraft(bounded);
+    setPercentDraft(String(Math.round(bounded * 100)));
     onPreview(bounded);
   };
 
@@ -332,6 +382,7 @@ function OpacityField({
     } else {
       draftRef.current = value;
       setDraft(value);
+      setPercentDraft(String(Math.round(value * 100)));
       onCancel();
     }
   };
@@ -343,8 +394,9 @@ function OpacityField({
         min="0"
         max="1"
         step="0.01"
-        className="min-w-0 flex-1 accent-accent"
+        className="inspector-range min-w-0 flex-1"
         value={draft}
+        style={{ "--range-progress": draft } as React.CSSProperties}
         onPointerDown={(event) => {
           activeRef.current = true;
           event.currentTarget.setPointerCapture(event.pointerId);
@@ -364,7 +416,43 @@ function OpacityField({
         }}
         aria-label={ariaLabel}
       />
-      <span className={OPACITY_PCT}>{Math.round(draft * 100)}%</span>
+      <label className="flex h-28 w-58 flex-none items-center rounded-field border border-field-border bg-field px-6 text-[10.5px] text-ink-dim transition-[border-color,background-color,box-shadow] focus-within:border-accent focus-within:bg-card focus-within:shadow-ring">
+        <input
+          type="number"
+          min="0"
+          max="100"
+          step="1"
+          className="w-full min-w-0 border-0 bg-transparent p-0 text-right text-[11.5px] tabular-nums text-ink outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          value={percentDraft}
+          aria-label={`${ariaLabel} percent`}
+          onChange={(event) => {
+            const next = event.target.value;
+            setPercentDraft(next);
+            if (next.trim() !== "") {
+              const parsed = Number(next);
+              if (Number.isFinite(parsed)) {
+                preview(parsed / 100);
+              }
+            }
+          }}
+          onBlur={() => {
+            if (percentDraft.trim() === "") {
+              setPercentDraft(String(Math.round(value * 100)));
+            }
+            finish(true);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.currentTarget.blur();
+            } else if (event.key === "Escape") {
+              event.preventDefault();
+              finish(false);
+              event.currentTarget.blur();
+            }
+          }}
+        />
+        <span aria-hidden="true">%</span>
+      </label>
     </>
   );
 }
@@ -603,13 +691,16 @@ function FillEditor({
         onPreview={(fill) => previewSelection({ fill })}
         onCancelPreview={cancelPreview}
       />
-      <div className={`${OPACITY_FIELD} mb-10`}>
-        <OpacityField
-          value={node.opacity}
-          onPreview={(opacity) => previewSelection({ opacity })}
-          onCommit={(opacity) => patchSelection({ opacity })}
-          onCancel={cancelPreview}
-        />
+      <div className="mt-12 grid grid-cols-[54px_minmax(0,1fr)] items-center gap-8">
+        <span className="text-[11px] font-[600] text-ink-dim">Opacity</span>
+        <div className={OPACITY_FIELD}>
+          <OpacityField
+            value={node.opacity}
+            onPreview={(opacity) => previewSelection({ opacity })}
+            onCommit={(opacity) => patchSelection({ opacity })}
+            onCancel={cancelPreview}
+          />
+        </div>
       </div>
     </>
   );
@@ -630,6 +721,10 @@ function StrokeEditor({
   const [showPaint, setShowPaint] = useState(false);
   const paintEditorId = useId();
   const strokeIsGradient = Boolean(stroke?.paint && stroke.paint.type !== "solid");
+  const strokePaint: Paint = stroke?.paint ?? {
+    type: "solid",
+    color: stroke?.color ?? "#111827",
+  };
 
   // A gradient stroke edits through the shared PaintEditor; `color`
   // stays in sync with the first stop as the legacy/solid fallback.
@@ -647,9 +742,9 @@ function StrokeEditor({
   };
 
   return (
-    <div className="mb-10">
-      <div className={STROKE_HEAD}>
-        <span>Stroke</span>
+    <PanelSection
+      title="Stroke"
+      action={
         <button
           type="button"
           className={STROKE_TOGGLE}
@@ -665,34 +760,35 @@ function StrokeEditor({
         >
           {stroke ? "Remove" : "Add"}
         </button>
-      </div>
+      }
+    >
       {stroke && (
         <>
           <div className={FILL_ROW}>
             <button
               type="button"
-              className="h-28 w-28 flex-none cursor-pointer rounded-field border border-field-border p-0"
-              style={{
-                background: strokeIsGradient
-                  ? "linear-gradient(135deg, #f59e0b, #4f6bf6)"
-                  : stroke.color,
-              }}
+              className="h-32 w-32 flex-none cursor-pointer rounded-field border border-field-border p-0 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.15)]"
+              style={{ background: paintPreviewBackground(strokePaint) }}
               title="Stroke paint"
               aria-label="Stroke paint"
               aria-expanded={showPaint}
               aria-controls={paintEditorId}
               onClick={() => setShowPaint((value) => !value)}
             />
-            <NumberField
-              label="W"
-              ariaLabel="Stroke width"
-              unit="px"
-              value={stroke.width}
-              step={0.5}
-              onCommit={(width) =>
-                patchSelection({ stroke: { ...stroke, width: Math.max(0, width) } })
-              }
-            />
+            <div className="min-w-0 flex-1">
+              <NumberField
+                label="W"
+                ariaLabel="Stroke width"
+                unit="px"
+                value={stroke.width}
+                step={0.5}
+                onCommit={(width) =>
+                  patchSelection({
+                    stroke: { ...stroke, width: Math.max(0, width) },
+                  })
+                }
+              />
+            </div>
             {node.type !== "text" && (
               <button
                 type="button"
@@ -704,10 +800,39 @@ function StrokeEditor({
               </button>
             )}
           </div>
+          <div className="mb-10 grid grid-cols-[54px_minmax(0,1fr)] items-center gap-8">
+            <span className="text-[11px] font-[600] text-ink-dim">Align</span>
+            <div
+              className="grid h-30 grid-cols-3 gap-2 rounded-m border border-field-border bg-field p-2"
+              role="group"
+              aria-label="Stroke alignment"
+            >
+              {(["inside", "center", "outside"] as const).map((align) => (
+                <button
+                  key={align}
+                  type="button"
+                  className={`rounded-[5px] px-4 text-[10.5px] capitalize transition-[background-color,color,box-shadow] duration-120 ease-studio ${
+                    stroke.align === align
+                      ? "bg-card font-semibold text-ink shadow-[0_1px_2px_rgb(28_25_33/0.1)]"
+                      : "text-ink-dim hover:text-ink"
+                  }`}
+                  aria-pressed={stroke.align === align}
+                  onClick={() =>
+                    patchSelection({ stroke: { ...stroke, align } })
+                  }
+                >
+                  {align}
+                </button>
+              ))}
+            </div>
+          </div>
           {(showPaint || strokeIsGradient) && (
-            <div id={paintEditorId} className="stroke-paint mt-8">
+            <div
+              id={paintEditorId}
+              className="stroke-paint border-t border-panel-hairline pt-12"
+            >
               <PaintEditor
-                paint={stroke.paint ?? { type: "solid", color: stroke.color }}
+                paint={strokePaint}
                 label="Stroke"
                 onCommit={commitStrokePaint}
                 onPreview={(paint) =>
@@ -719,7 +844,7 @@ function StrokeEditor({
           )}
         </>
       )}
-    </div>
+    </PanelSection>
   );
 }
 
@@ -741,68 +866,66 @@ function DesignSection({
   const [offsetAmount, setOffsetAmount] = useState(10);
 
   return (
-    <section className={SECTION}>
-      <header className={SECTION_HEAD}>
-        <h2 className={SECTION_H2}>Design</h2>
-        <span className={SECTION_META}>
-          {node.type === "path"
+    <>
+      <PanelSection
+        title="Layout"
+        meta={
+          node.type === "path"
             ? node.shape
               ? shapeDisplayName(node.shape.kind)
               : "Path"
-            : node.type[0]!.toUpperCase() + node.type.slice(1)}
-        </span>
-      </header>
+            : node.type[0]!.toUpperCase() + node.type.slice(1)
+        }
+      >
+        <AlignPanel nodeIds={[node.id]} />
 
-      <AlignPanel nodeIds={[node.id]} />
-
-      <div className={FIELD_GRID}>
-        <NumberField label="X" unit="px" value={node.x} onCommit={(x) => patchSelection({ x })} />
-        <NumberField label="Y" unit="px" value={node.y} onCommit={(y) => patchSelection({ y })} />
-        <NumberField
-          label="W"
-          unit="px"
-          value={node.width}
-          onCommit={(width) => patchSelection({ width: Math.max(1, width) })}
-        />
-        <NumberField
-          label="H"
-          unit="px"
-          value={node.height}
-          onCommit={(height) => patchSelection({ height: Math.max(1, height) })}
-        />
-        <NumberField
-          label="∠"
-          unit="°"
-          value={node.rotation}
-          onCommit={(rotation) => patchSelection({ rotation })}
-        />
-        {node.type === "rectangle" && (
+        <div className={FIELD_GRID}>
           <NumberField
-            label="◜"
+            label="X"
             unit="px"
-            value={node.cornerRadius}
-            onCommit={(cornerRadius) =>
-              patchSelection({ cornerRadius: Math.max(0, cornerRadius) })
+            value={node.x}
+            onCommit={(x) => patchSelection({ x })}
+          />
+          <NumberField
+            label="Y"
+            unit="px"
+            value={node.y}
+            onCommit={(y) => patchSelection({ y })}
+          />
+          <NumberField
+            label="W"
+            unit="px"
+            value={node.width}
+            onCommit={(width) => patchSelection({ width: Math.max(1, width) })}
+          />
+          <NumberField
+            label="H"
+            unit="px"
+            value={node.height}
+            onCommit={(height) =>
+              patchSelection({ height: Math.max(1, height) })
             }
           />
-        )}
-        {node.type === "path" && node.shape?.kind === "polygon" && (
           <NumberField
-            label="Sides"
-            value={node.shape.sides ?? DEFAULT_POLYGON_SIDES}
-            onCommit={(sides) => {
-              const patch = shapeParamsPatch(node, { ...node.shape!, sides });
-              if (patch) {
-                patchSelection(patch);
-              }
-            }}
+            label="∠"
+            unit="°"
+            value={node.rotation}
+            onCommit={(rotation) => patchSelection({ rotation })}
           />
-        )}
-        {node.type === "path" && node.shape?.kind === "star" && (
-          <>
+          {node.type === "rectangle" && (
             <NumberField
-              label="Points"
-              value={node.shape.sides ?? DEFAULT_STAR_POINTS}
+              label="◜"
+              unit="px"
+              value={node.cornerRadius}
+              onCommit={(cornerRadius) =>
+                patchSelection({ cornerRadius: Math.max(0, cornerRadius) })
+              }
+            />
+          )}
+          {node.type === "path" && node.shape?.kind === "polygon" && (
+            <NumberField
+              label="Sides"
+              value={node.shape.sides ?? DEFAULT_POLYGON_SIDES}
               onCommit={(sides) => {
                 const patch = shapeParamsPatch(node, { ...node.shape!, sides });
                 if (patch) {
@@ -810,33 +933,80 @@ function DesignSection({
                 }
               }}
             />
-            <NumberField
-              label="Inner"
-              unit="%"
-              step={5}
-              value={Math.round(
-                (node.shape.innerRatio ?? DEFAULT_STAR_INNER_RATIO) * 100,
-              )}
-              onCommit={(percent) => {
-                const patch = shapeParamsPatch(node, {
-                  ...node.shape!,
-                  innerRatio: percent / 100,
-                });
-                if (patch) {
-                  patchSelection(patch);
-                }
-              }}
-            />
-          </>
-        )}
-      </div>
+          )}
+          {node.type === "path" && node.shape?.kind === "star" && (
+            <>
+              <NumberField
+                label="Points"
+                value={node.shape.sides ?? DEFAULT_STAR_POINTS}
+                onCommit={(sides) => {
+                  const patch = shapeParamsPatch(node, { ...node.shape!, sides });
+                  if (patch) {
+                    patchSelection(patch);
+                  }
+                }}
+              />
+              <NumberField
+                label="Inner"
+                unit="%"
+                step={5}
+                value={Math.round(
+                  (node.shape.innerRatio ?? DEFAULT_STAR_INNER_RATIO) * 100,
+                )}
+                onCommit={(percent) => {
+                  const patch = shapeParamsPatch(node, {
+                    ...node.shape!,
+                    innerRatio: percent / 100,
+                  });
+                  if (patch) {
+                    patchSelection(patch);
+                  }
+                }}
+              />
+            </>
+          )}
+        </div>
+      </PanelSection>
 
-      <FillEditor
-        node={node}
-        patchSelection={patchSelection}
-        previewSelection={previewSelection}
-        cancelPreview={cancelPreview}
-      />
+      <PanelSection
+        title="Fill"
+        meta={
+          node.fill.type === "solid"
+            ? node.fill.color.toUpperCase()
+            : node.fill.type === "linear-gradient"
+              ? "Linear gradient"
+              : "Radial gradient"
+        }
+      >
+        <FillEditor
+          node={node}
+          patchSelection={patchSelection}
+          previewSelection={previewSelection}
+          cancelPreview={cancelPreview}
+        />
+        <div className="mt-14 border-t border-panel-hairline pt-12">
+          <div className={`${STROKE_HEAD} mb-8`}>
+            <span>Palette</span>
+            <span className="font-normal normal-case tracking-normal">
+              Click to apply
+            </span>
+          </div>
+          <div className={FIELD_ROW}>
+            {document.palettes[0]?.colors.map((color) => (
+              <button
+                key={color}
+                type="button"
+                className={SWATCH}
+                style={{ background: color }}
+                aria-label={`Use ${color}`}
+                onClick={() =>
+                  patchSelection({ fill: { type: "solid", color } })
+                }
+              />
+            ))}
+          </div>
+        </div>
+      </PanelSection>
       <StrokeEditor
         node={node}
         patchSelection={patchSelection}
@@ -844,133 +1014,129 @@ function DesignSection({
         cancelPreview={cancelPreview}
       />
 
-      {node.type === "path" && (
-        <>
-          <div className={STROKE_HEAD}>
-            <span>Fill rule</span>
-          </div>
-          <div className={`${FIELD_ROW} mb-10`}>
-            <select
-              className={`${SELECT} min-w-0 flex-1`}
-              value={node.fillRule}
-              aria-label="Path fill rule"
-              onChange={(event) =>
-                patchSelection({
-                  fillRule: event.target.value as typeof node.fillRule,
-                })
-              }
-            >
-              <option value="nonzero">Non-zero winding</option>
-              <option value="evenodd">Even-odd holes</option>
-            </select>
-          </div>
-        </>
-      )}
+      <PanelSection
+        title="Appearance"
+        meta={
+          node.blendMode
+            ? node.blendMode[0]!.toUpperCase() + node.blendMode.slice(1)
+            : "Normal"
+        }
+      >
+        {node.type === "path" && (
+          <>
+            <div className={STROKE_HEAD}>
+              <span>Fill rule</span>
+            </div>
+            <div className={`${FIELD_ROW} mb-12`}>
+              <select
+                className={`${SELECT} min-w-0 flex-1`}
+                value={node.fillRule}
+                aria-label="Path fill rule"
+                onChange={(event) =>
+                  patchSelection({
+                    fillRule: event.target.value as typeof node.fillRule,
+                  })
+                }
+              >
+                <option value="nonzero">Non-zero winding</option>
+                <option value="evenodd">Even-odd holes</option>
+              </select>
+            </div>
+          </>
+        )}
 
-      <div className={STROKE_HEAD}>
-        <span>Blend</span>
-      </div>
-      <div className={`${FIELD_ROW} mb-10`}>
-        <select
-          className={`${SELECT} min-w-0 flex-1`}
-          value={node.blendMode ?? "normal"}
-          aria-label="Blend mode"
-          onChange={(event) =>
-            patchSelection({
-              blendMode:
-                event.target.value === "normal"
-                  ? undefined
-                  : (event.target.value as LogoNode["blendMode"]),
-            })
-          }
-        >
-          <option value="normal">Normal</option>
-          <option value="multiply">Multiply</option>
-          <option value="screen">Screen</option>
-          <option value="overlay">Overlay</option>
-          <option value="darken">Darken</option>
-          <option value="lighten">Lighten</option>
-        </select>
-      </div>
-
-      <div className="rotate-copies mb-10 flex items-center gap-6">
-        <NumberField
-          label="×"
-          ariaLabel="Rotated copy count"
-          value={copiesCount}
-          onCommit={(value) =>
-            setCopiesCount(Math.max(2, Math.min(64, Math.round(value))))
-          }
-        />
-        <button
-          type="button"
-          className={STROKE_TOGGLE}
-          title="Repeat rotated copies around the artboard centre"
-          onClick={() => {
-            const ids = rotateCopies(node.id, copiesCount);
-            if (ids.length > 0) {
-              setSelection([node.id, ...ids]);
+        <div className={STROKE_HEAD}>
+          <span>Blend mode</span>
+        </div>
+        <div className={FIELD_ROW}>
+          <select
+            className={`${SELECT} min-w-0 flex-1`}
+            value={node.blendMode ?? "normal"}
+            aria-label="Blend mode"
+            onChange={(event) =>
+              patchSelection({
+                blendMode:
+                  event.target.value === "normal"
+                    ? undefined
+                    : (event.target.value as LogoNode["blendMode"]),
+              })
             }
-          }}
-        >
-          <RotateCw size={12} /> Rotate copies
-        </button>
-      </div>
+          >
+            <option value="normal">Normal</option>
+            <option value="multiply">Multiply</option>
+            <option value="screen">Screen</option>
+            <option value="overlay">Overlay</option>
+            <option value="darken">Darken</option>
+            <option value="lighten">Lighten</option>
+          </select>
+        </div>
+      </PanelSection>
 
-      {(node.type === "path" ||
-        node.type === "rectangle" ||
-        node.type === "ellipse") && (
-        <div className="offset-path mb-10 flex items-center gap-6">
+      <PanelSection title="Create" defaultOpen={false}>
+        <div className="rotate-copies mb-10 flex items-center gap-6">
           <NumberField
-            label="±"
-            ariaLabel="Path offset amount"
-            unit="px"
-            value={offsetAmount}
-            onCommit={(value) => setOffsetAmount(Math.round(value * 10) / 10)}
+            label="×"
+            ariaLabel="Rotated copy count"
+            value={copiesCount}
+            onCommit={(value) =>
+              setCopiesCount(Math.max(2, Math.min(64, Math.round(value))))
+            }
           />
           <button
             type="button"
             className={STROKE_TOGGLE}
-            title="New path offset outward (+) or inward (−) from this one"
-            aria-label="Offset path"
+            title="Repeat rotated copies around the artboard centre"
             onClick={() => {
-              void offsetPathOp(node.id, offsetAmount)
-                .then((newId) => {
-                  if (newId) {
-                    setSelection([newId]);
-                  }
-                })
-                .catch((error: unknown) => {
-                  console.warn("Offset path failed", error);
-                  setToast(
-                    "Offset path failed. The original shape was preserved.",
-                  );
-                });
+              const ids = rotateCopies(node.id, copiesCount);
+              if (ids.length > 0) {
+                setSelection([node.id, ...ids]);
+              }
             }}
           >
-            <Spline size={12} /> Offset path
+            <RotateCw size={12} /> Rotate copies
           </button>
         </div>
-      )}
 
-      <div className={STROKE_HEAD}>
-        <span>Quick fill</span>
-      </div>
-      <div className={FIELD_ROW}>
-        {document.palettes[0]?.colors.map((color) => (
-          <button
-            key={color}
-            type="button"
-            className={SWATCH}
-            style={{ background: color }}
-            aria-label={`Use ${color}`}
-            onClick={() => patchSelection({ fill: { type: "solid", color } })}
-          />
-        ))}
-      </div>
+        {(node.type === "path" ||
+          node.type === "rectangle" ||
+          node.type === "ellipse") && (
+          <div className="offset-path flex items-center gap-6">
+            <NumberField
+              label="±"
+              ariaLabel="Path offset amount"
+              unit="px"
+              value={offsetAmount}
+              onCommit={(value) => setOffsetAmount(Math.round(value * 10) / 10)}
+            />
+            <button
+              type="button"
+              className={STROKE_TOGGLE}
+              title="New path offset outward (+) or inward (−) from this one"
+              aria-label="Offset path"
+              onClick={() => {
+                void offsetPathOp(node.id, offsetAmount)
+                  .then((newId) => {
+                    if (newId) {
+                      setSelection([newId]);
+                    }
+                  })
+                  .catch((error: unknown) => {
+                    console.warn("Offset path failed", error);
+                    setToast(
+                      "Offset path failed. The original shape was preserved.",
+                    );
+                  });
+              }}
+            >
+              <Spline size={12} /> Offset path
+            </button>
+          </div>
+        )}
+      </PanelSection>
 
       {node.type === "text" && (
-        <div className="mt-12 grid gap-8">
+        <PanelSection title="Typography" meta={node.fontFamily}>
+        <div className="grid gap-10">
           <label className="grid gap-4 text-[11px] text-ink-dim">
             <span>Text</span>
             <TextContentField
@@ -1134,8 +1300,9 @@ function DesignSection({
             Convert to outlines
           </button>
         </div>
+        </PanelSection>
       )}
-    </section>
+    </>
   );
 }
 
@@ -1365,11 +1532,11 @@ function EffectsSection({ node }: { node: LogoNode }) {
   }
 
   return (
-    <section className={SECTION}>
-      <header className={SECTION_HEAD}>
-        <h2 className={SECTION_H2}>Effects</h2>
+    <PanelSection
+      title="Effects"
+      action={
         <select
-          className="rounded-field border border-field-border bg-card px-6 py-3 text-[11px] text-ink-dim"
+          className="h-26 rounded-field border border-field-border bg-card px-7 text-[11px] text-ink-dim"
           value=""
           aria-label="Add effect"
           onChange={(event) => {
@@ -1385,10 +1552,13 @@ function EffectsSection({ node }: { node: LogoNode }) {
           <option value="bevel">Bevel</option>
           <option value="glow">Glow</option>
         </select>
-      </header>
+      }
+    >
 
       {effects.length === 0 ? (
-        <p className={MUTED}>No effects. Add a shadow, outline, bevel or glow.</p>
+        <p className={MUTED}>
+          Add depth or emphasis with a shadow, outline, bevel, or glow.
+        </p>
       ) : (
         <div className="flex flex-col gap-8">
           {effects.map((effect, index) => (
@@ -1583,7 +1753,7 @@ function EffectsSection({ node }: { node: LogoNode }) {
           ))}
         </div>
       )}
-    </section>
+    </PanelSection>
   );
 }
 
@@ -1791,11 +1961,11 @@ function SwatchesSection() {
   const info = inspected ? colorInfo(inspected) : null;
 
   return (
-    <section className={SECTION}>
-      <header className={SECTION_HEAD}>
-        <h2 className={SECTION_H2}>Brand colors</h2>
-        <span className={SECTION_META}>{palette.colors.length}</span>
-      </header>
+    <PanelSection
+      title="Brand palette"
+      meta={`${palette.colors.length} colors`}
+      defaultOpen={false}
+    >
       <div className={FIELD_ROW}>
         {palette.colors.map((color, index) => (
           <input
@@ -1826,10 +1996,11 @@ function SwatchesSection() {
         </p>
       ) : (
         <p className={`${MUTED} mt-8`}>
-          Editing a swatch recolors every use. Focus or hover for print values.
+          Editing a brand color updates every use. Focus or hover for print
+          values.
         </p>
       )}
-    </section>
+    </PanelSection>
   );
 }
 
@@ -2423,80 +2594,120 @@ function MultiDesignSection({
     nodes.map((node) => node.id),
   )[0];
   const first = (firstLeafId && document.nodes[firstLeafId]) || nodes[0]!;
-  const fillColor = first.fill.type === "solid" ? first.fill.color : "#000000";
   const textPathPair = isTextPathPair(
     document,
     nodes.map((node) => node.id),
   );
 
   return (
-    <section className={SECTION}>
-      <header className={SECTION_HEAD}>
-        <h2 className={SECTION_H2}>Design</h2>
-        <span className={SECTION_META}>{nodes.length} selected</span>
-      </header>
-      <AlignPanel nodeIds={nodes.map((node) => node.id)} />
-      {textPathPair && (
-        <button
-          type="button"
-          className={OUTLINE_BUTTON}
-          title="Lay the text out along the selected path"
-          onClick={() => {
-            attachTextToPath(textPathPair.text.id, textPathPair.path.id);
-            setSelection([textPathPair.text.id]);
-          }}
-        >
-          Put on path
-        </button>
-      )}
-      <div className={FILL_ROW}>
-        <input
-          type="color"
-          className={FILL_SWATCH}
-          value={fillColor}
-          onChange={(event) =>
-            patchSelection({
-              fill: { type: "solid", color: event.target.value },
-            })
-          }
-          aria-label="Fill color"
-        />
-        <div className={OPACITY_FIELD}>
-          <OpacityField
-            value={first.opacity}
-            onPreview={(opacity) => previewSelection({ opacity })}
-            onCommit={(opacity) => patchSelection({ opacity })}
-            onCancel={cancelPreview}
-          />
-        </div>
-      </div>
-      <div className={FIELD_ROW}>
-        {document.palettes[0]?.colors.map((color) => (
+    <>
+      <PanelSection title="Layout" meta={`${nodes.length} selected`}>
+        <AlignPanel nodeIds={nodes.map((node) => node.id)} />
+        {textPathPair && (
           <button
-            key={color}
             type="button"
-            className={SWATCH}
-            style={{ background: color }}
-            aria-label={`Use ${color}`}
-            onClick={() => patchSelection({ fill: { type: "solid", color } })}
-          />
-        ))}
-      </div>
-    </section>
+            className={OUTLINE_BUTTON}
+            title="Lay the text out along the selected path"
+            onClick={() => {
+              attachTextToPath(textPathPair.text.id, textPathPair.path.id);
+              setSelection([textPathPair.text.id]);
+            }}
+          >
+            Put on path
+          </button>
+        )}
+      </PanelSection>
+      <PanelSection title="Fill" meta="Applies to selection">
+        <PaintEditor
+          paint={first.fill}
+          label="Fill"
+          onCommit={(fill) => patchSelection({ fill })}
+          onPreview={(fill) => previewSelection({ fill })}
+          onCancelPreview={cancelPreview}
+        />
+        <div className="mt-12 grid grid-cols-[54px_minmax(0,1fr)] items-center gap-8">
+          <span className="text-[11px] font-[600] text-ink-dim">Opacity</span>
+          <div className={OPACITY_FIELD}>
+            <OpacityField
+              value={first.opacity}
+              onPreview={(opacity) => previewSelection({ opacity })}
+              onCommit={(opacity) => patchSelection({ opacity })}
+              onCancel={cancelPreview}
+            />
+          </div>
+        </div>
+        <div className="mt-14 border-t border-panel-hairline pt-12">
+          <div className={`${STROKE_HEAD} mb-8`}>
+            <span>Palette</span>
+          </div>
+          <div className={FIELD_ROW}>
+            {document.palettes[0]?.colors.map((color) => (
+              <button
+                key={color}
+                type="button"
+                className={SWATCH}
+                style={{ background: color }}
+                aria-label={`Use ${color}`}
+                onClick={() =>
+                  patchSelection({ fill: { type: "solid", color } })
+                }
+              />
+            ))}
+          </div>
+        </div>
+      </PanelSection>
+    </>
   );
 }
 
 export function Inspector() {
   const document = useDocument();
+  const [activeView, setActiveView] = useState<"properties" | "layers">(
+    "properties",
+  );
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   // Selection may reach inside groups, so look nodes up directly.
   const selectedNodes = selectedNodeIds
     .map((id) => document.nodes[id])
     .filter((node): node is LogoNode => Boolean(node));
+  const selectedNode = selectedNodes.length === 1 ? selectedNodes[0]! : null;
   const selectedClippingOwnerId =
-    selectedNodes.length === 1
-      ? getClippingMaskOwnerId(document, selectedNodes[0]!.id)
+    selectedNode
+      ? getClippingMaskOwnerId(document, selectedNode.id)
       : null;
+  const activeArtboard = document.artboards.find(
+    (artboard) => artboard.id === document.activeArtboardId,
+  );
+  const layerObjectCount = activeArtboard
+    ? collectLeafNodeIds(document, activeArtboard.nodeIds).length
+    : 0;
+  const ContextIcon = selectedNode ? NODE_ICONS[selectedNode.type] : Shapes;
+  const contextTitle =
+    selectedNode
+      ? selectedNode.name
+      : selectedNodes.length > 1
+        ? `${selectedNodes.length} objects selected`
+        : "Nothing selected";
+  const contextMeta =
+    selectedNode
+      ? selectedNode.type === "path" && selectedNode.shape
+        ? shapeDisplayName(selectedNode.shape.kind)
+        : selectedNode.type[0]!.toUpperCase() + selectedNode.type.slice(1)
+      : selectedNodes.length > 1
+        ? "Selection"
+        : "Canvas";
+
+  function handleTabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+      return;
+    }
+    event.preventDefault();
+    const next = activeView === "properties" ? "layers" : "properties";
+    setActiveView(next);
+    requestAnimationFrame(() =>
+      window.document.getElementById(`inspector-${next}-tab`)?.focus(),
+    );
+  }
 
   // Paint/typography patches always land on drawable leaves; a selected
   // group fans the patch out to its descendants.
@@ -2521,15 +2732,97 @@ export function Inspector() {
     documentStore.preview(leafIds.map((nodeId) => ({ nodeId, patch })));
   }
 
-  // Two floating cards: design/swatches on top, layers bottom-anchored so
-  // selection-driven layout changes above never shift the layer rows
-  // (double-click rename needs rows that hold still between clicks).
+  // Properties and layers each get the full rail. This keeps long gradient
+  // controls readable and gives deep layer trees a stable, full-height target.
   return (
     <aside
-      className="inspector m-16 ml-0 flex min-h-0 flex-col gap-12 overflow-hidden"
+      className="inspector flex min-h-0 flex-col overflow-hidden border-l border-panel-border bg-panel shadow-[-10px_0_32px_rgb(28_25_33/0.055)]"
       aria-label="Inspector"
     >
-      <div className="inspector-card flex min-h-0 flex-initial flex-col gap-8 overflow-y-auto rounded-panel border border-panel-hairline bg-panel p-8 shadow-panel">
+      <header className="flex-none border-b border-panel-border bg-card/80 px-12 pb-10 pt-12 backdrop-blur-[10px]">
+        <div className="mb-11 flex min-w-0 items-center gap-9">
+          <span
+            className="grid h-34 w-34 flex-none place-items-center rounded-[10px] border border-[rgb(79_107_246/0.16)] bg-accent-soft text-accent"
+            aria-hidden="true"
+          >
+            <ContextIcon size={15} strokeWidth={1.8} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <span className="mb-2 block text-[9.5px] font-[680] uppercase tracking-[0.09em] text-ink-dim">
+              Inspector
+            </span>
+            <strong
+              className="block truncate text-[13px] font-[650] text-ink"
+              title={contextTitle}
+            >
+              {contextTitle}
+            </strong>
+          </div>
+          <span className="max-w-92 truncate rounded-full bg-field px-7 py-3 text-[10px] text-ink-dim">
+            {contextMeta}
+          </span>
+        </div>
+        <div
+          className="grid grid-cols-2 gap-3 rounded-m border border-field-border bg-field p-3"
+          role="tablist"
+          aria-label="Inspector views"
+        >
+          <button
+            id="inspector-properties-tab"
+            type="button"
+            role="tab"
+            className={`flex h-28 items-center justify-center gap-6 rounded-[6px] text-[11.5px] transition-[background-color,color,box-shadow] duration-140 ease-studio ${
+              activeView === "properties"
+                ? "bg-card font-semibold text-ink shadow-[0_1px_3px_rgb(28_25_33/0.12)]"
+                : "text-ink-dim hover:text-ink"
+            }`}
+            aria-selected={activeView === "properties"}
+            aria-controls="inspector-properties-panel"
+            tabIndex={activeView === "properties" ? 0 : -1}
+            onKeyDown={handleTabKeyDown}
+            onClick={() => setActiveView("properties")}
+          >
+            <SlidersHorizontal size={13} />
+            Properties
+          </button>
+          <button
+            id="inspector-layers-tab"
+            type="button"
+            role="tab"
+            className={`flex h-28 items-center justify-center gap-6 rounded-[6px] text-[11.5px] transition-[background-color,color,box-shadow] duration-140 ease-studio ${
+              activeView === "layers"
+                ? "bg-card font-semibold text-ink shadow-[0_1px_3px_rgb(28_25_33/0.12)]"
+                : "text-ink-dim hover:text-ink"
+            }`}
+            aria-selected={activeView === "layers"}
+            aria-controls="inspector-layers-panel"
+            tabIndex={activeView === "layers" ? 0 : -1}
+            onKeyDown={handleTabKeyDown}
+            onClick={() => setActiveView("layers")}
+          >
+            <Layers3 size={13} />
+            Layers
+            <span
+              className={`rounded-full px-5 py-1 text-[9.5px] tabular-nums ${
+                activeView === "layers"
+                  ? "bg-accent-soft text-accent-deep"
+                  : "bg-card text-ink-dim"
+              }`}
+            >
+              {layerObjectCount}
+            </span>
+          </button>
+        </div>
+      </header>
+
+      <div
+        id="inspector-properties-panel"
+        role="tabpanel"
+        aria-labelledby="inspector-properties-tab"
+        className={`inspector-card min-h-0 flex-1 flex-col gap-9 overflow-y-auto p-10 ${
+          activeView === "properties" ? "flex" : "hidden"
+        }`}
+      >
       {selectedNodes.length > 1 ? (
         <MultiDesignSection
           nodes={selectedNodes}
@@ -2607,10 +2900,14 @@ export function Inspector() {
         </Suspense>
       </DesignMateErrorBoundary>
       </div>
-      {/* Bottom-anchored and never squeezed by the card above: layout
-          changes there must not move the rows (double-click rename
-          relies on it). */}
-      <div className="inspector-card inspector-layers mt-auto flex max-h-[44%] flex-none flex-col gap-8 overflow-y-auto rounded-panel border border-panel-hairline bg-panel p-8 shadow-panel">
+      <div
+        id="inspector-layers-panel"
+        role="tabpanel"
+        aria-labelledby="inspector-layers-tab"
+        className={`inspector-card min-h-0 flex-1 flex-col overflow-y-auto p-10 ${
+          activeView === "layers" ? "flex" : "hidden"
+        }`}
+      >
         <LayersSection />
       </div>
     </aside>
