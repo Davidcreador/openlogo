@@ -312,6 +312,7 @@ export function DesignMateSection() {
     useState<DesignMateChatAnswerContext | null>(null);
   const [applyingProposal, setApplyingProposal] =
     useState<ApplyingProposal | null>(null);
+  const [chatRunning, setChatRunning] = useState(false);
 
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   const keyObjectId = useEditorStore((state) => state.keyObjectId);
@@ -350,6 +351,7 @@ export function DesignMateSection() {
       setChatProposalBaseDocument(null);
       setChatProposalContext(null);
       setApplyingProposal(null);
+      setChatRunning(false);
     }
   }, [
     document.designBrief,
@@ -541,6 +543,14 @@ export function DesignMateSection() {
     ) {
       return;
     }
+    const discardOutdatedBatch = (): void => {
+      clearChatProposals();
+      if (batch.proposals.length > 0 || batch.rejectedCount > 0) {
+        setToast(
+          "The canvas or request scope changed before these suggestions could be shown. Ask Design Mate again.",
+        );
+      }
+    };
     const currentScope = resolveEffectiveDesignMateScope(
       currentEditorState.designMateScope,
       currentDocument,
@@ -566,6 +576,7 @@ export function DesignMateSection() {
         latestRequest,
       )
     ) {
+      discardOutdatedBatch();
       return;
     }
     const options = {
@@ -580,6 +591,7 @@ export function DesignMateSection() {
         batch.answerContext.request,
       )
     ) {
+      discardOutdatedBatch();
       return;
     }
     const proposals = batch.proposals.filter(
@@ -610,7 +622,7 @@ export function DesignMateSection() {
     prepared: PreparedDesignMateProposal,
     source: ProposalSource,
   ): Promise<void> {
-    if (applyingProposalRef.current !== null) {
+    if (chatRunning || applyingProposalRef.current !== null) {
       return;
     }
 
@@ -935,7 +947,12 @@ export function DesignMateSection() {
               type="button"
               className={`${PRIMARY} mt-7 w-full`}
               onClick={() => void runReview()}
-              disabled={status === "reviewing"}
+              disabled={status === "reviewing" || chatRunning}
+              title={
+                chatRunning
+                  ? "Wait for the current Design Mate answer to finish"
+                  : undefined
+              }
             >
               {status === "reviewing" ? (
                 <RefreshCw
@@ -970,6 +987,7 @@ export function DesignMateSection() {
             >
               <DesignMateChatPanel
                 disabled={applyingProposal !== null}
+                onRunningChange={setChatRunning}
                 onProposalsClear={clearChatProposals}
                 onProposalsReady={receiveChatProposals}
               />
@@ -1003,7 +1021,7 @@ export function DesignMateSection() {
                         ? applyingProposal.id
                         : null
                     }
-                    busy={applyingProposal !== null}
+                    busy={applyingProposal !== null || chatRunning}
                     heading="Conversation suggestions"
                     description="Prepared from the latest completed Design Mate answer."
                     staleMessage="The canvas or conversation scope changed. Ask Design Mate again to refresh these suggestions."
@@ -1100,7 +1118,7 @@ export function DesignMateSection() {
                         ? applyingProposal.id
                         : null
                     }
-                    busy={applyingProposal !== null}
+                    busy={applyingProposal !== null || chatRunning}
                     onApply={(prepared) =>
                       applyProposal(prepared, "review")
                     }

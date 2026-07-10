@@ -82,6 +82,7 @@ export type DesignMateChatProposalBatch = {
 
 export type DesignMateChatPanelProps = {
   readonly disabled?: boolean;
+  readonly onRunningChange?: (running: boolean) => void;
   readonly onProposalsClear?: () => void;
   readonly onProposalsReady?: (batch: DesignMateChatProposalBatch) => void;
 };
@@ -105,6 +106,7 @@ function visualCaptureNote(
 
 export function DesignMateChatPanel({
   disabled = false,
+  onRunningChange,
   onProposalsClear,
   onProposalsReady,
 }: DesignMateChatPanelProps) {
@@ -229,6 +231,15 @@ export function DesignMateChatPanel({
           .find((entry) => entry.role === "user")?.text
       : undefined;
   const running = transcript.activeTurn !== null;
+
+  useEffect(() => {
+    onRunningChange?.(running);
+    return () => {
+      if (running) {
+        onRunningChange?.(false);
+      }
+    };
+  }, [onRunningChange, running]);
 
   function isCurrentRun(runId: number, controller: AbortController): boolean {
     return (
