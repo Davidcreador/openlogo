@@ -437,7 +437,9 @@ function validateDesignMateProposal(
   const declaredRisk = value.risk as DesignMateRisk;
   if (
     RISK_PRIORITY[declaredRisk] <
-    RISK_PRIORITY[designMateRiskForActions(value.actions)]
+    RISK_PRIORITY[
+      designMateRiskForActions(value.actions as DesignMateAction[])
+    ]
   ) {
     return false;
   }
