@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  DESIGN_MATE_MUTATION_TOOLS,
   DESIGN_MATE_CHAT_PROPOSAL_TOOL,
   DESIGN_MATE_CHAT_PROPOSAL_TOOL_LIMITS,
   DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
@@ -49,6 +50,14 @@ describe("Design Mate chat proposal tool", () => {
     expect(
       JSON.stringify(DESIGN_MATE_CHAT_PROPOSAL_TOOL),
     ).not.toContain('"command"');
+    const schemas =
+      DESIGN_MATE_CHAT_PROPOSAL_TOOL.parameters.properties.actions.items.anyOf;
+    const actionTypes = schemas.map(
+      (schema) => schema.properties.type.enum[0],
+    );
+    expect([...actionTypes].sort()).toEqual(
+      Object.keys(DESIGN_MATE_MUTATION_TOOLS).sort(),
+    );
   });
 
   it("assigns the caller-owned id and removes nullable optional fields", () => {
@@ -126,6 +135,66 @@ describe("Design Mate chat proposal tool", () => {
           ),
         },
         "service-owned",
+      ),
+    ).toBeNull();
+  });
+
+  it("accepts precision actions and enforces their cross-field rules", () => {
+    const actions = [
+      {
+        type: "align-nodes",
+        nodeIds: ["mark", "wordmark"],
+        edge: "centerY",
+        reference: "key-object",
+        keyObjectId: "mark",
+      },
+      {
+        type: "set-font-family",
+        nodeId: "wordmark",
+        fontFamily: "Space Grotesk",
+      },
+      {
+        type: "set-stroke-width",
+        nodeId: "mark",
+        width: 3,
+      },
+    ];
+    const result = snapshotDesignMateChatProposalToolArguments(
+      { ...validArguments(), actions },
+      "precision-id",
+    );
+    expect(result?.actions).toEqual(actions);
+
+    expect(
+      snapshotDesignMateChatProposalToolArguments(
+        {
+          ...validArguments(),
+          actions: [
+            {
+              type: "align-nodes",
+              nodeIds: ["mark", "wordmark"],
+              edge: "centerY",
+              reference: "key-object",
+              keyObjectId: "missing",
+            },
+          ],
+        },
+        "invalid-key-object",
+      ),
+    ).toBeNull();
+    expect(
+      snapshotDesignMateChatProposalToolArguments(
+        {
+          ...validArguments(),
+          actions: [
+            {
+              type: "set-opacity",
+              nodeId: "mark",
+              opacity: -0.1,
+            },
+          ],
+        },
+        "invalid-opacity",
       ),
     ).toBeNull();
   });

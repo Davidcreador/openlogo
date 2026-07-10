@@ -1,7 +1,9 @@
 import type {
+  AlignEdge,
   Command,
   DesignBrief,
   DesignReview,
+  LayoutAxis,
   LogoDocument,
   LogoVariant,
   NodeType,
@@ -32,6 +34,90 @@ export type SetLetterSpacingDesignMateAction = {
   readonly letterSpacing: number;
 };
 
+export type TranslateNodesDesignMateAction = {
+  readonly type: "translate-nodes";
+  /** Reachable selection units on one artboard; groups move as units. */
+  readonly nodeIds: readonly string[];
+  /** Artboard-local delta in pixels. */
+  readonly dx: number;
+  readonly dy: number;
+};
+
+export type ScaleNodesDesignMateAction = {
+  readonly type: "scale-nodes";
+  /** Reachable selection units on one artboard; groups scale as units. */
+  readonly nodeIds: readonly string[];
+  /** Positive scale factors applied around the current selection centre. */
+  readonly scaleX: number;
+  readonly scaleY: number;
+};
+
+export type RotateNodesDesignMateAction = {
+  readonly type: "rotate-nodes";
+  /** Reachable selection units on one artboard; groups rotate as units. */
+  readonly nodeIds: readonly string[];
+  /** Relative rotation around the current selection centre, in degrees. */
+  readonly degrees: number;
+};
+
+export type DesignMateAlignReference =
+  | "selection"
+  | "artboard"
+  | "key-object";
+
+export type AlignNodesDesignMateAction = {
+  readonly type: "align-nodes";
+  readonly nodeIds: readonly string[];
+  readonly edge: AlignEdge;
+  readonly reference: DesignMateAlignReference;
+  /** Required only for a key-object reference; otherwise null. */
+  readonly keyObjectId: string | null;
+};
+
+export type DistributeNodesDesignMateAction = {
+  readonly type: "distribute-nodes";
+  /** Three or more reachable selection units on one artboard. */
+  readonly nodeIds: readonly string[];
+  readonly axis: LayoutAxis;
+};
+
+export type SetFontFamilyDesignMateAction = {
+  readonly type: "set-font-family";
+  readonly nodeId: string;
+  readonly fontFamily: string;
+};
+
+export type SetFontSizeDesignMateAction = {
+  readonly type: "set-font-size";
+  readonly nodeId: string;
+  readonly fontSize: number;
+};
+
+export type SetFontWeightDesignMateAction = {
+  readonly type: "set-font-weight";
+  readonly nodeId: string;
+  readonly fontWeight: number;
+};
+
+export type SetOpacityDesignMateAction = {
+  readonly type: "set-opacity";
+  readonly nodeId: string;
+  readonly opacity: number;
+};
+
+export type SetStrokeColorDesignMateAction = {
+  readonly type: "set-stroke-color";
+  readonly nodeId: string;
+  /** Opaque solid color; gradient strokes are intentionally excluded. */
+  readonly color: string;
+};
+
+export type SetStrokeWidthDesignMateAction = {
+  readonly type: "set-stroke-width";
+  readonly nodeId: string;
+  readonly width: number;
+};
+
 export type CreateLogoVariantDesignMateAction = {
   readonly type: "create-logo-variant";
   readonly sourceArtboardId: string;
@@ -43,6 +129,17 @@ export type DesignMateAction =
   | SetTextContentDesignMateAction
   | SetFillColorDesignMateAction
   | SetLetterSpacingDesignMateAction
+  | TranslateNodesDesignMateAction
+  | ScaleNodesDesignMateAction
+  | RotateNodesDesignMateAction
+  | AlignNodesDesignMateAction
+  | DistributeNodesDesignMateAction
+  | SetFontFamilyDesignMateAction
+  | SetFontSizeDesignMateAction
+  | SetFontWeightDesignMateAction
+  | SetOpacityDesignMateAction
+  | SetStrokeColorDesignMateAction
+  | SetStrokeWidthDesignMateAction
   | CreateLogoVariantDesignMateAction;
 
 export type DesignMateProposal = {

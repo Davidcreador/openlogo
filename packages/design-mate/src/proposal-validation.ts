@@ -15,8 +15,25 @@ export const DESIGN_MATE_PROPOSAL_LIMITS = Object.freeze({
   artboards: 64,
   textContentLength: 4_000,
   colorLength: 32,
+  fontFamilyLength: 160,
+  nodeIdsPerAction: 64,
   minimumLetterSpacing: -100,
   maximumLetterSpacing: 100,
+  minimumTranslation: -10_000,
+  maximumTranslation: 10_000,
+  minimumScale: 0.1,
+  maximumScale: 10,
+  minimumRotation: -180,
+  maximumRotation: 180,
+  minimumFontSize: 1,
+  maximumFontSize: 512,
+  minimumFontWeight: 1,
+  maximumFontWeight: 1_000,
+  minimumOpacity: 0,
+  maximumOpacity: 1,
+  minimumStrokeWidth: 0,
+  maximumStrokeWidth: 1_000,
+  maximumGeometryMagnitude: 1_000_000,
   errorMessageLength: 240,
   impactSummaryLength: 240,
 } as const);
@@ -29,6 +46,16 @@ const LOGO_VARIANTS = new Set<LogoVariant>([
   "horizontal",
   "stacked",
 ]);
+const ALIGN_EDGES = new Set([
+  "left",
+  "centerX",
+  "right",
+  "top",
+  "centerY",
+  "bottom",
+]);
+const ALIGN_REFERENCES = new Set(["selection", "artboard", "key-object"]);
+const LAYOUT_AXES = new Set(["horizontal", "vertical"]);
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -110,6 +137,52 @@ function isUniqueReferenceIds(value: unknown): value is string[] {
   );
 }
 
+function isUniqueNodeIds(
+  value: unknown,
+  minimumLength = 1,
+): value is string[] {
+  const seen = new Set<string>();
+  return (
+    isDenseBoundedArray(
+      value,
+      DESIGN_MATE_PROPOSAL_LIMITS.nodeIdsPerAction,
+      (item) => {
+        if (
+          !isBoundedString(
+            item,
+            DESIGN_MATE_PROPOSAL_LIMITS.referenceIdLength,
+          ) ||
+          seen.has(item)
+        ) {
+          return false;
+        }
+        seen.add(item);
+        return true;
+      },
+    ) && value.length >= minimumLength
+  );
+}
+
+function isFiniteNumberInRange(
+  value: unknown,
+  minimum: number,
+  maximum: number,
+): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= minimum &&
+    value <= maximum
+  );
+}
+
+function isNodeReference(value: unknown): value is string {
+  return isBoundedString(
+    value,
+    DESIGN_MATE_PROPOSAL_LIMITS.referenceIdLength,
+  );
+}
+
 /**
  * Proposal colors are intentionally limited to opaque CSS hex colors. This
  * keeps model output deterministic and excludes gradients, URLs, and alpha
@@ -162,16 +235,145 @@ function isDesignMateAction(value: unknown): value is DesignMateAction {
     case "set-letter-spacing":
       return (
         hasExactKeys(value, ["type", "nodeId", "letterSpacing"]) &&
-        isBoundedString(
-          value.nodeId,
-          DESIGN_MATE_PROPOSAL_LIMITS.referenceIdLength,
+        isNodeReference(value.nodeId) &&
+        isFiniteNumberInRange(
+          value.letterSpacing,
+          DESIGN_MATE_PROPOSAL_LIMITS.minimumLetterSpacing,
+          DESIGN_MATE_PROPOSAL_LIMITS.maximumLetterSpacing,
+        )
+      );
+    case "translate-nodes":
+      return (
+        hasExactKeys(value, ["type", "nodeIds", "dx", "dy"]) &&
+        isUniqueNodeIds(value.nodeIds) &&
+        isFiniteNumberInRange(
+          value.dx,
+          DESIGN_MATE_PROPOSAL_LIMITS.minimumTranslation,
+          DESIGN_MATE_PROPOSAL_LIMITS.maximumTranslation,
         ) &&
-        typeof value.letterSpacing === "number" &&
-        Number.isFinite(value.letterSpacing) &&
-        value.letterSpacing >=
-          DESIGN_MATE_PROPOSAL_LIMITS.minimumLetterSpacing &&
-        value.letterSpacing <=
-          DESIGN_MATE_PROPOSAL_LIMITS.maximumLetterSpacing
+        isFiniteNumberInRange(
+          value.dy,
+          DESIGN_MATE_PROPOSAL_LIMITS.minimumTranslation,
+          DESIGN_MATE_PROPOSAL_LIMITS.maximumTranslation,
+        )
+      );
+    case "scale-nodes":
+      return (
+        hasExactKeys(value, ["type", "nodeIds", "scaleX", "scaleY"]) &&
+        isUniqueNodeIds(value.nodeIds) &&
+        isFiniteNumberInRange(
+          value.scaleX,
+          DESIGN_MATE_PROPOSAL_LIMITS.minimumScale,
+          DESIGN_MATE_PROPOSAL_LIMITS.maximumScale,
+        ) &&
+        isFiniteNumberInRange(
+          value.scaleY,
+          DESIGN_MATE_PROPOSAL_LIMITS.minimumScale,
+          DESIGN_MATE_PROPOSAL_LIMITS.maximumScale,
+        )
+      );
+    case "rotate-nodes":
+      return (
+        hasExactKeys(value, ["type", "nodeIds", "degrees"]) &&
+        isUniqueNodeIds(value.nodeIds) &&
+        isFiniteNumberInRange(
+          value.degrees,
+          DESIGN_MATE_PROPOSAL_LIMITS.minimumRotation,
+          DESIGN_MATE_PROPOSAL_LIMITS.maximumRotation,
+        )
+      );
+    case "align-nodes": {
+      if (
+        !hasExactKeys(value, [
+          "type",
+          "nodeIds",
+          "edge",
+          "reference",
+          "keyObjectId",
+        ]) ||
+        !isUniqueNodeIds(value.nodeIds) ||
+        typeof value.edge !== "string" ||
+        !ALIGN_EDGES.has(value.edge) ||
+        typeof value.reference !== "string" ||
+        !ALIGN_REFERENCES.has(value.reference) ||
+        (value.keyObjectId !== null &&
+          !isNodeReference(value.keyObjectId))
+      ) {
+        return false;
+      }
+      if (value.reference === "artboard") {
+        return value.keyObjectId === null;
+      }
+      if (value.nodeIds.length < 2) {
+        return false;
+      }
+      return value.reference === "key-object"
+        ? value.keyObjectId !== null &&
+            value.nodeIds.includes(value.keyObjectId)
+        : value.keyObjectId === null;
+    }
+    case "distribute-nodes":
+      return (
+        hasExactKeys(value, ["type", "nodeIds", "axis"]) &&
+        isUniqueNodeIds(value.nodeIds, 3) &&
+        typeof value.axis === "string" &&
+        LAYOUT_AXES.has(value.axis)
+      );
+    case "set-font-family":
+      return (
+        hasExactKeys(value, ["type", "nodeId", "fontFamily"]) &&
+        isNodeReference(value.nodeId) &&
+        isBoundedString(
+          value.fontFamily,
+          DESIGN_MATE_PROPOSAL_LIMITS.fontFamilyLength,
+        )
+      );
+    case "set-font-size":
+      return (
+        hasExactKeys(value, ["type", "nodeId", "fontSize"]) &&
+        isNodeReference(value.nodeId) &&
+        isFiniteNumberInRange(
+          value.fontSize,
+          DESIGN_MATE_PROPOSAL_LIMITS.minimumFontSize,
+          DESIGN_MATE_PROPOSAL_LIMITS.maximumFontSize,
+        )
+      );
+    case "set-font-weight":
+      return (
+        hasExactKeys(value, ["type", "nodeId", "fontWeight"]) &&
+        isNodeReference(value.nodeId) &&
+        isFiniteNumberInRange(
+          value.fontWeight,
+          DESIGN_MATE_PROPOSAL_LIMITS.minimumFontWeight,
+          DESIGN_MATE_PROPOSAL_LIMITS.maximumFontWeight,
+        ) &&
+        Number.isInteger(value.fontWeight)
+      );
+    case "set-opacity":
+      return (
+        hasExactKeys(value, ["type", "nodeId", "opacity"]) &&
+        isNodeReference(value.nodeId) &&
+        isFiniteNumberInRange(
+          value.opacity,
+          DESIGN_MATE_PROPOSAL_LIMITS.minimumOpacity,
+          DESIGN_MATE_PROPOSAL_LIMITS.maximumOpacity,
+        )
+      );
+    case "set-stroke-color":
+      return (
+        hasExactKeys(value, ["type", "nodeId", "color"]) &&
+        isNodeReference(value.nodeId) &&
+        isValidDesignMateSolidColor(value.color)
+      );
+    case "set-stroke-width":
+      return (
+        hasExactKeys(value, ["type", "nodeId", "width"]) &&
+        isNodeReference(value.nodeId) &&
+        isFiniteNumberInRange(
+          value.width,
+          DESIGN_MATE_PROPOSAL_LIMITS.minimumStrokeWidth,
+          DESIGN_MATE_PROPOSAL_LIMITS.maximumStrokeWidth,
+        )
       );
     case "create-logo-variant":
       return (

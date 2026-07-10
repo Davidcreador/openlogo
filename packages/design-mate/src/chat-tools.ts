@@ -63,6 +63,14 @@ const referenceId = {
   maxLength: DESIGN_MATE_PROPOSAL_LIMITS.referenceIdLength,
 } as const;
 
+const nodeIds = {
+  type: "array",
+  minItems: 1,
+  maxItems: DESIGN_MATE_PROPOSAL_LIMITS.nodeIdsPerAction,
+  uniqueItems: true,
+  items: referenceId,
+} as const;
+
 const actionSchemas = [
   {
     type: "object",
@@ -111,6 +119,181 @@ const actionSchemas = [
     type: "object",
     additionalProperties: false,
     properties: {
+      type: { type: "string", enum: ["translate-nodes"] },
+      nodeIds,
+      dx: {
+        type: "number",
+        minimum: DESIGN_MATE_PROPOSAL_LIMITS.minimumTranslation,
+        maximum: DESIGN_MATE_PROPOSAL_LIMITS.maximumTranslation,
+      },
+      dy: {
+        type: "number",
+        minimum: DESIGN_MATE_PROPOSAL_LIMITS.minimumTranslation,
+        maximum: DESIGN_MATE_PROPOSAL_LIMITS.maximumTranslation,
+      },
+    },
+    required: ["type", "nodeIds", "dx", "dy"],
+  },
+  {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      type: { type: "string", enum: ["scale-nodes"] },
+      nodeIds,
+      scaleX: {
+        type: "number",
+        minimum: DESIGN_MATE_PROPOSAL_LIMITS.minimumScale,
+        maximum: DESIGN_MATE_PROPOSAL_LIMITS.maximumScale,
+      },
+      scaleY: {
+        type: "number",
+        minimum: DESIGN_MATE_PROPOSAL_LIMITS.minimumScale,
+        maximum: DESIGN_MATE_PROPOSAL_LIMITS.maximumScale,
+      },
+    },
+    required: ["type", "nodeIds", "scaleX", "scaleY"],
+  },
+  {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      type: { type: "string", enum: ["rotate-nodes"] },
+      nodeIds,
+      degrees: {
+        type: "number",
+        minimum: DESIGN_MATE_PROPOSAL_LIMITS.minimumRotation,
+        maximum: DESIGN_MATE_PROPOSAL_LIMITS.maximumRotation,
+      },
+    },
+    required: ["type", "nodeIds", "degrees"],
+  },
+  {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      type: { type: "string", enum: ["align-nodes"] },
+      nodeIds,
+      edge: {
+        type: "string",
+        enum: ["left", "centerX", "right", "top", "centerY", "bottom"],
+      },
+      reference: {
+        type: "string",
+        enum: ["selection", "artboard", "key-object"],
+      },
+      keyObjectId: {
+        type: ["string", "null"],
+        minLength: 1,
+        maxLength: DESIGN_MATE_PROPOSAL_LIMITS.referenceIdLength,
+      },
+    },
+    required: ["type", "nodeIds", "edge", "reference", "keyObjectId"],
+  },
+  {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      type: { type: "string", enum: ["distribute-nodes"] },
+      nodeIds: {
+        ...nodeIds,
+        minItems: 3,
+      },
+      axis: {
+        type: "string",
+        enum: ["horizontal", "vertical"],
+      },
+    },
+    required: ["type", "nodeIds", "axis"],
+  },
+  {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      type: { type: "string", enum: ["set-font-family"] },
+      nodeId: referenceId,
+      fontFamily: {
+        type: "string",
+        minLength: 1,
+        maxLength: DESIGN_MATE_PROPOSAL_LIMITS.fontFamilyLength,
+      },
+    },
+    required: ["type", "nodeId", "fontFamily"],
+  },
+  {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      type: { type: "string", enum: ["set-font-size"] },
+      nodeId: referenceId,
+      fontSize: {
+        type: "number",
+        minimum: DESIGN_MATE_PROPOSAL_LIMITS.minimumFontSize,
+        maximum: DESIGN_MATE_PROPOSAL_LIMITS.maximumFontSize,
+      },
+    },
+    required: ["type", "nodeId", "fontSize"],
+  },
+  {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      type: { type: "string", enum: ["set-font-weight"] },
+      nodeId: referenceId,
+      fontWeight: {
+        type: "integer",
+        minimum: DESIGN_MATE_PROPOSAL_LIMITS.minimumFontWeight,
+        maximum: DESIGN_MATE_PROPOSAL_LIMITS.maximumFontWeight,
+      },
+    },
+    required: ["type", "nodeId", "fontWeight"],
+  },
+  {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      type: { type: "string", enum: ["set-opacity"] },
+      nodeId: referenceId,
+      opacity: {
+        type: "number",
+        minimum: DESIGN_MATE_PROPOSAL_LIMITS.minimumOpacity,
+        maximum: DESIGN_MATE_PROPOSAL_LIMITS.maximumOpacity,
+      },
+    },
+    required: ["type", "nodeId", "opacity"],
+  },
+  {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      type: { type: "string", enum: ["set-stroke-color"] },
+      nodeId: referenceId,
+      color: {
+        type: "string",
+        minLength: 4,
+        maxLength: DESIGN_MATE_PROPOSAL_LIMITS.colorLength,
+        pattern: "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$",
+      },
+    },
+    required: ["type", "nodeId", "color"],
+  },
+  {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      type: { type: "string", enum: ["set-stroke-width"] },
+      nodeId: referenceId,
+      width: {
+        type: "number",
+        minimum: DESIGN_MATE_PROPOSAL_LIMITS.minimumStrokeWidth,
+        maximum: DESIGN_MATE_PROPOSAL_LIMITS.maximumStrokeWidth,
+      },
+    },
+    required: ["type", "nodeId", "width"],
+  },
+  {
+    type: "object",
+    additionalProperties: false,
+    properties: {
       type: { type: "string", enum: ["create-logo-variant"] },
       sourceArtboardId: referenceId,
       purpose: {
@@ -133,10 +316,9 @@ export const DESIGN_MATE_CHAT_PROPOSAL_TOOL = deepFreeze({
   name: DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
   description: [
     "Submit one conservative logo change for explicit user preview and approval.",
-    `Text: ${DESIGN_MATE_MUTATION_TOOLS["set-text-content"].description}`,
-    `Fill: ${DESIGN_MATE_MUTATION_TOOLS["set-fill-color"].description}`,
-    `Spacing: ${DESIGN_MATE_MUTATION_TOOLS["set-letter-spacing"].description}`,
-    `Variant: ${DESIGN_MATE_MUTATION_TOOLS["create-logo-variant"].description}`,
+    ...Object.entries(DESIGN_MATE_MUTATION_TOOLS).map(
+      ([type, metadata]) => `${type}: ${metadata.description}`,
+    ),
     "Calling this tool never applies the change.",
   ].join(" "),
   strict: true,

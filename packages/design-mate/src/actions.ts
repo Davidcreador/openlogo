@@ -22,6 +22,61 @@ export const DESIGN_MATE_MUTATION_TOOLS = Object.freeze({
     description:
       "Set finite, bounded letter spacing on one existing, unlocked text node.",
   }),
+  "translate-nodes": Object.freeze({
+    risk: "medium",
+    description:
+      "Move visible, unlocked selection units on one artboard by a bounded pixel delta.",
+  }),
+  "scale-nodes": Object.freeze({
+    risk: "medium",
+    description:
+      "Resize visible, unlocked selection units around their current centre with bounded positive scale factors.",
+  }),
+  "rotate-nodes": Object.freeze({
+    risk: "medium",
+    description:
+      "Rotate visible, unlocked selection units around their current centre by a bounded relative angle.",
+  }),
+  "align-nodes": Object.freeze({
+    risk: "medium",
+    description:
+      "Align visible, unlocked units on one artboard to their selection, artboard, or an explicit key object.",
+  }),
+  "distribute-nodes": Object.freeze({
+    risk: "medium",
+    description:
+      "Distribute the gaps between at least three visible, unlocked units on one artboard.",
+  }),
+  "set-font-family": Object.freeze({
+    risk: "medium",
+    description:
+      "Set a bounded font-family name on one existing, unlocked text node.",
+  }),
+  "set-font-size": Object.freeze({
+    risk: "medium",
+    description:
+      "Set a bounded font size on one existing, unlocked text node.",
+  }),
+  "set-font-weight": Object.freeze({
+    risk: "medium",
+    description:
+      "Set a bounded numeric font weight on one existing, unlocked text node.",
+  }),
+  "set-opacity": Object.freeze({
+    risk: "medium",
+    description:
+      "Set opacity from zero to one on one existing, visible, unlocked node.",
+  }),
+  "set-stroke-color": Object.freeze({
+    risk: "medium",
+    description:
+      "Replace the solid color of an existing non-gradient stroke on one unlocked leaf node.",
+  }),
+  "set-stroke-width": Object.freeze({
+    risk: "medium",
+    description:
+      "Set the bounded width of an existing stroke on one unlocked leaf node.",
+  }),
   "create-logo-variant": Object.freeze({
     risk: "low",
     description:

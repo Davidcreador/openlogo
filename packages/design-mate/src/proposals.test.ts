@@ -220,12 +220,23 @@ describe("Design Mate proposal validation", () => {
     );
   });
 
-  it("publishes a deeply read-only registry for exactly four tools", () => {
+  it("publishes a deeply read-only registry for the closed action surface", () => {
     expect(Object.keys(DESIGN_MATE_MUTATION_TOOLS).sort()).toEqual([
+      "align-nodes",
       "create-logo-variant",
+      "distribute-nodes",
+      "rotate-nodes",
+      "scale-nodes",
       "set-fill-color",
+      "set-font-family",
+      "set-font-size",
+      "set-font-weight",
       "set-letter-spacing",
+      "set-opacity",
+      "set-stroke-color",
+      "set-stroke-width",
       "set-text-content",
+      "translate-nodes",
     ]);
     expectDeepFrozen(DESIGN_MATE_MUTATION_TOOLS);
     for (const metadata of Object.values(DESIGN_MATE_MUTATION_TOOLS)) {
