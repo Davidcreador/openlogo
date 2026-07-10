@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyCommand,
+  createArtboard,
   createInitialDocument,
+  createRectangle,
   type ReviewFinding,
 } from "@openlogo/core";
 import {
+  createDesignMateRequestSignature,
+  designMateRequestSignaturesEqual,
   isDesignMateReviewStale,
   resolveDesignMateFocus,
 } from "./design-mate-review";
@@ -56,6 +61,47 @@ describe("Design Mate review integration", () => {
     ).toBe(true);
   });
 
+  it("invalidates only request context that can change review output", () => {
+    const selectionA = createDesignMateRequestSignature("selection", {
+      selectedNodeIds: ["node-b", "node-a"],
+      keyObjectId: "node-a",
+    });
+    const selectionAReordered = createDesignMateRequestSignature("selection", {
+      selectedNodeIds: ["node-a", "node-b"],
+      keyObjectId: "node-a",
+    });
+    const selectionB = createDesignMateRequestSignature("selection", {
+      selectedNodeIds: ["node-c"],
+    });
+
+    expect(
+      designMateRequestSignaturesEqual(selectionA, selectionAReordered),
+    ).toBe(true);
+    expect(designMateRequestSignaturesEqual(selectionA, selectionB)).toBe(
+      false,
+    );
+    expect(
+      designMateRequestSignaturesEqual(
+        createDesignMateRequestSignature("active-artboard", {
+          selectedNodeIds: ["node-a"],
+        }),
+        createDesignMateRequestSignature("active-artboard", {
+          selectedNodeIds: ["node-b"],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      designMateRequestSignaturesEqual(
+        createDesignMateRequestSignature("active-artboard", {
+          selectedNodeIds: [],
+        }),
+        createDesignMateRequestSignature("document", {
+          selectedNodeIds: [],
+        }),
+      ),
+    ).toBe(false);
+  });
+
   it("prefers valid node references and falls back to an artboard target", () => {
     const document = createInitialDocument();
     const artboard = document.artboards[0]!;
@@ -84,6 +130,39 @@ describe("Design Mate review integration", () => {
         y: artboard.y,
         width: artboard.width,
         height: artboard.height,
+      },
+    });
+  });
+
+  it("converts secondary-artboard node bounds to world coordinates", () => {
+    const initial = createInitialDocument();
+    const node = createRectangle({ x: 24, y: 32 });
+    const artboard = createArtboard("icon", {
+      x: 900,
+      y: 120,
+      nodeIds: [node.id],
+    });
+    const document = applyCommand(initial, {
+      type: "add-artboard",
+      artboard,
+      nodes: [node],
+      activate: false,
+    }).document;
+
+    expect(
+      resolveDesignMateFocus(document, {
+        ...artboardOnlyFinding(artboard.id),
+        nodeIds: [node.id],
+      }),
+    ).toMatchObject({
+      type: "nodes",
+      nodeIds: [node.id],
+      artboardId: artboard.id,
+      bounds: {
+        x: artboard.x + node.x,
+        y: artboard.y + node.y,
+        width: node.width,
+        height: node.height,
       },
     });
   });

@@ -3,6 +3,7 @@ import type { DesignReview, ReviewScope } from "@openlogo/core";
 import type { DocumentIdentity } from "@openlogo/design-mate";
 import { type Camera, createCamera } from "@openlogo/renderer";
 import type { DocumentSessionState } from "../lib/document-session";
+import type { DesignMateRequestSignature } from "../lib/design-mate-review";
 import { loadPrefs, savePrefs } from "../lib/prefs";
 
 export type Tool =
@@ -25,6 +26,7 @@ export type DesignMateReviewSnapshot = {
   review: DesignReview;
   identity: DocumentIdentity;
   scope: ReviewScope;
+  request: DesignMateRequestSignature;
 };
 
 export type DesignMateStatus = "idle" | "reviewing" | "complete" | "error";

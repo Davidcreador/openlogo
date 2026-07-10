@@ -1,7 +1,10 @@
 import {
+  Component,
   lazy,
   memo,
   Suspense,
+  type ErrorInfo,
+  type ReactNode,
   useEffect,
   useId,
   useMemo,
@@ -141,6 +144,35 @@ const STROKE_HEAD =
   "mb-6 flex items-center justify-between text-[11px] font-[650] uppercase tracking-[0.06em] text-ink-dim";
 const STROKE_TOGGLE_BASE =
   "inline-flex items-center gap-5 rounded-field border bg-card px-9 py-4 text-[11.5px] transition-[border-color,color] duration-140 ease-studio";
+
+class DesignMateErrorBoundary extends Component<
+  { children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown, info: ErrorInfo): void {
+    console.error("Design Mate panel failed to load.", error, info);
+  }
+
+  render(): ReactNode {
+    if (this.state.failed) {
+      return (
+        <section className={SECTION} role="status">
+          <h2 className={SECTION_H2}>Design mate</h2>
+          <p className={`${MUTED} mt-7`}>
+            Design Mate is unavailable. The rest of the editor is still ready.
+          </p>
+        </section>
+      );
+    }
+    return this.props.children;
+  }
+}
 const STROKE_TOGGLE = `${STROKE_TOGGLE_BASE} border-field-border text-ink-dim hover:border-accent hover:text-accent`;
 const STROKE_TOGGLE_ACTIVE = `${STROKE_TOGGLE_BASE} border-accent text-accent`;
 const SELECT =
@@ -2563,15 +2595,17 @@ export function Inspector() {
         </section>
       )}
       <SwatchesSection />
-      <Suspense
-        fallback={
-          <section className={SECTION} aria-busy="true">
-            <h2 className={SECTION_H2}>Design mate</h2>
-          </section>
-        }
-      >
-        <DesignMateSection />
-      </Suspense>
+      <DesignMateErrorBoundary>
+        <Suspense
+          fallback={
+            <section className={SECTION} aria-busy="true">
+              <h2 className={SECTION_H2}>Design mate</h2>
+            </section>
+          }
+        >
+          <DesignMateSection />
+        </Suspense>
+      </DesignMateErrorBoundary>
       </div>
       {/* Bottom-anchored and never squeezed by the card above: layout
           changes there must not move the rows (double-click rename

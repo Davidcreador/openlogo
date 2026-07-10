@@ -7,7 +7,12 @@ import {
   Save,
   Sparkles,
 } from "lucide-react";
-import type { ReviewFinding, ReviewScope } from "@openlogo/core";
+import {
+  collectLeafNodeIds,
+  type LogoDocument,
+  type ReviewFinding,
+  type ReviewScope,
+} from "@openlogo/core";
 import { collectDesignMateReview } from "@openlogo/design-mate";
 import { fitBounds } from "@openlogo/renderer";
 import {
@@ -16,6 +21,8 @@ import {
   type DesignBriefDraft,
 } from "../lib/design-mate-form";
 import {
+  createDesignMateRequestSignature,
+  designMateRequestSignaturesEqual,
   isDesignMateReviewStale,
   resolveDesignMateFocus,
 } from "../lib/design-mate-review";
@@ -35,6 +42,17 @@ const SECONDARY =
   "inline-flex items-center justify-center gap-5 rounded-field border border-field-border bg-card px-9 py-6 text-[11px] font-[600] text-ink transition-[border-color,color] duration-140 ease-studio hover:enabled:border-accent hover:enabled:text-accent disabled:cursor-not-allowed disabled:opacity-40";
 const PRIMARY =
   "inline-flex items-center justify-center gap-6 rounded-field bg-accent px-10 py-7 text-[11.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.2),0_1px_3px_rgb(79_107_246/0.3)] transition-[filter] duration-140 ease-studio hover:enabled:brightness-[1.08] disabled:cursor-not-allowed disabled:opacity-45";
+
+function effectiveReviewScope(
+  requested: ReviewScope,
+  document: LogoDocument,
+  selectedNodeIds: readonly string[],
+): ReviewScope {
+  return requested === "selection" &&
+    collectLeafNodeIds(document, selectedNodeIds).length === 0
+    ? "active-artboard"
+    : requested;
+}
 
 const SCOPES: ReadonlyArray<{
   id: ReviewScope;
@@ -143,8 +161,12 @@ function FindingCard({
 
 export function DesignMateSection() {
   const document = useDocument();
+  const documentGeneration = documentStore.documentGeneration;
   const contentId = useId();
-  const previousDocumentId = useRef(document.id);
+  const previousDocumentHead = useRef({
+    documentId: document.id,
+    generation: documentGeneration,
+  });
   const latestRun = useRef(0);
   const [expanded, setExpanded] = useState(true);
   const [briefExpanded, setBriefExpanded] = useState(false);
@@ -169,8 +191,14 @@ export function DesignMateSection() {
     setDraft(designBriefToDraft(document.designBrief));
     setBriefDirty(false);
 
-    if (previousDocumentId.current !== document.id) {
-      previousDocumentId.current = document.id;
+    if (
+      previousDocumentHead.current.documentId !== document.id ||
+      previousDocumentHead.current.generation !== documentGeneration
+    ) {
+      previousDocumentHead.current = {
+        documentId: document.id,
+        generation: documentGeneration,
+      };
       latestRun.current += 1;
       setReview(null);
       setStatus("idle");
@@ -179,21 +207,35 @@ export function DesignMateSection() {
   }, [
     document.designBrief,
     document.id,
+    documentGeneration,
     setError,
     setReview,
     setStatus,
   ]);
 
-  const hasSelection = selectedNodeIds.length > 0;
-  const effectiveScope =
-    scope === "selection" && !hasSelection ? "active-artboard" : scope;
+  const hasSelection =
+    collectLeafNodeIds(document, selectedNodeIds).length > 0;
+  const effectiveScope = effectiveReviewScope(
+    scope,
+    document,
+    selectedNodeIds,
+  );
+  const currentRequest = createDesignMateRequestSignature(effectiveScope, {
+    selectedNodeIds,
+    ...(keyObjectId ? { keyObjectId } : {}),
+    ...(activeGroupId ? { activeGroupId } : {}),
+  });
   const stale =
     reviewSnapshot !== null &&
-    isDesignMateReviewStale(reviewSnapshot.identity, {
+    (isDesignMateReviewStale(reviewSnapshot.identity, {
       documentId: document.id,
-      generation: documentStore.documentGeneration,
+      generation: documentGeneration,
       revision: documentStore.committedRevision,
-    });
+    }) ||
+      !designMateRequestSignaturesEqual(
+        reviewSnapshot.request,
+        currentRequest,
+      ));
 
   function updateDraft(field: keyof DesignBriefDraft, value: string): void {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -223,17 +265,22 @@ export function DesignMateSection() {
     const committedDocument = documentStore.committedDocument;
     const generation = documentStore.documentGeneration;
     const revision = documentStore.committedRevision;
+    const requestSelection = {
+      selectedNodeIds: [...selectedNodeIds],
+      ...(keyObjectId ? { keyObjectId } : {}),
+      ...(activeGroupId ? { activeGroupId } : {}),
+    };
+    const requestSignature = createDesignMateRequestSignature(
+      effectiveScope,
+      requestSelection,
+    );
     setStatus("reviewing");
     setError(null);
 
     try {
       const result = await collectDesignMateReview(
         committedDocument,
-        {
-          selectedNodeIds,
-          ...(keyObjectId ? { keyObjectId } : {}),
-          ...(activeGroupId ? { activeGroupId } : {}),
-        },
+        requestSelection,
         {
           scope: effectiveScope,
           generation,
@@ -243,10 +290,39 @@ export function DesignMateSection() {
       if (latestRun.current !== runId) {
         return;
       }
+      const currentState = useEditorStore.getState();
+      const currentDocument = documentStore.committedDocument;
+      const currentScope = effectiveReviewScope(
+        currentState.designMateScope,
+        currentDocument,
+        currentState.selectedNodeIds,
+      );
+      const currentSignature = createDesignMateRequestSignature(currentScope, {
+        selectedNodeIds: currentState.selectedNodeIds,
+        ...(currentState.keyObjectId
+          ? { keyObjectId: currentState.keyObjectId }
+          : {}),
+        ...(currentState.activeGroupId
+          ? { activeGroupId: currentState.activeGroupId }
+          : {}),
+      });
+      if (
+        currentDocument.id !== committedDocument.id ||
+        documentStore.documentGeneration !== generation ||
+        documentStore.committedRevision !== revision ||
+        !designMateRequestSignaturesEqual(
+          requestSignature,
+          currentSignature,
+        )
+      ) {
+        setStatus("idle");
+        return;
+      }
       setReview({
         review: result.review,
         identity: result.identity,
         scope: result.scope,
+        request: requestSignature,
       });
       setStatus("complete");
     } catch (cause) {
@@ -268,7 +344,11 @@ export function DesignMateSection() {
     }
 
     const state = useEditorStore.getState();
-    if (target.type === "nodes") {
+    if (
+      target.type === "nodes" &&
+      (!target.artboardId ||
+        target.artboardId === documentStore.committedDocument.activeArtboardId)
+    ) {
       state.setSelection(target.nodeIds);
       state.setTool("select");
     } else {
@@ -291,21 +371,23 @@ export function DesignMateSection() {
   return (
     <section className={SECTION}>
       <header className="flex items-center justify-between gap-8">
-        <button
-          type="button"
-          className="flex min-w-0 flex-1 items-center gap-6 text-left"
-          onClick={() => setExpanded((value) => !value)}
-          aria-expanded={expanded}
-          aria-controls={contentId}
-        >
-          {expanded ? (
-            <ChevronDown size={13} aria-hidden="true" />
-          ) : (
-            <ChevronRight size={13} aria-hidden="true" />
-          )}
-          <Sparkles size={13} className="text-accent" aria-hidden="true" />
-          <h2 className={HEADING}>Design mate</h2>
-        </button>
+        <h2 className={`${HEADING} min-w-0 flex-1`}>
+          <button
+            type="button"
+            className="flex w-full items-center gap-6 text-left"
+            onClick={() => setExpanded((value) => !value)}
+            aria-expanded={expanded}
+            aria-controls={contentId}
+          >
+            {expanded ? (
+              <ChevronDown size={13} aria-hidden="true" />
+            ) : (
+              <ChevronRight size={13} aria-hidden="true" />
+            )}
+            <Sparkles size={13} className="text-accent" aria-hidden="true" />
+            <span>Design mate</span>
+          </button>
+        </h2>
         <span className="rounded-full border border-panel-hairline bg-field px-6 py-2 text-[8.5px] font-[650] uppercase tracking-[0.06em] text-ink-dim">
           Local expert
         </span>
