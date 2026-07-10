@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { RefreshCw, TriangleAlert } from "lucide-react";
 import { getCanvasKit } from "../lib/canvaskit";
 import { fontStore } from "../lib/font-store";
+import { markRendererReady } from "../lib/performance";
 import {
   KERN_STEP,
   KERN_STEP_LARGE,
@@ -63,7 +65,11 @@ import {
   worldToScreen,
   zoomAt,
 } from "@openlogo/renderer";
-import { cloneUnits, resolveUnit } from "../lib/group-ops";
+import {
+  cloneUnits,
+  deleteSelection as deleteUnits,
+  resolveUnit,
+} from "../lib/group-ops";
 import {
   type GradientHandlePart,
   gradientDefinePaint,
@@ -72,7 +78,10 @@ import {
   localToFraction,
 } from "./gradient-annotator";
 import { GradientAnnotator } from "./GradientAnnotator";
-import { patchFromLocalGeometry } from "../lib/path-node-geometry";
+import {
+  materializePathGeometry,
+  patchFromLocalGeometry,
+} from "../lib/path-node-geometry";
 import { recordTransform } from "../lib/transform-again";
 import {
   type ShapeBuilderSession,
@@ -590,6 +599,7 @@ function buildDraftShape(drag: Extract<DragState, { kind: "draw" }>): LogoNode |
 export function CanvasStage() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const canvasKitRef = useRef<Awaited<ReturnType<typeof getCanvasKit>> | null>(null);
   const rendererRef = useRef<SceneRenderer | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const penRef = useRef<PenSession | null>(null);
@@ -607,8 +617,8 @@ export function CanvasStage() {
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   /** Transient status line (handle symmetry mode, shape builder help). */
   const [handleHint, setHandleHint] = useState<string | null>(null);
+  const [rendererFailure, setRendererFailure] = useState(false);
 
-  const document = useDocument();
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   const keyObjectId = useEditorStore((state) => state.keyObjectId);
   const camera = useEditorStore((state) => state.camera);
@@ -708,6 +718,7 @@ export function CanvasStage() {
         ? {
             regions: sb.regions.map((region) => ({
               d: region.d,
+              fillRule: region.fillRule,
               state: region.state,
               hovered: region.id === sb.hoveredId,
             })),
@@ -735,9 +746,14 @@ export function CanvasStage() {
       }
 
       const fonts = new FontRegistry(canvasKit);
+      canvasKitRef.current = canvasKit;
       fontsForCleanup = fonts;
       try {
-        const fontData = await (await fetch(FONT_URL)).arrayBuffer();
+        const response = await fetch(FONT_URL);
+        if (!response.ok) {
+          throw new Error(`Bundled font request failed (${response.status}).`);
+        }
+        const fontData = await response.arrayBuffer();
         fonts.register("Inter", fontData);
       } catch (error) {
         console.warn("Font load failed; text renders as placeholder.", error);
@@ -783,7 +799,23 @@ export function CanvasStage() {
       observer.observe(container);
       applySize();
       setRendererReady(true);
-    })();
+      markRendererReady();
+    })().catch((error: unknown) => {
+      if (cancelled) {
+        return;
+      }
+      console.error("Vector engine failed to start.", error);
+      observer?.disconnect();
+      observer = null;
+      fontStore.detach();
+      rendererRef.current?.dispose();
+      rendererRef.current = null;
+      canvasKitRef.current = null;
+      fontsForCleanup?.dispose();
+      fontsForCleanup = null;
+      setRendererReady(false);
+      setRendererFailure(true);
+    });
 
     return () => {
       cancelled = true;
@@ -791,14 +823,23 @@ export function CanvasStage() {
       fontStore.detach();
       rendererRef.current?.dispose();
       rendererRef.current = null;
+      canvasKitRef.current = null;
       fontsForCleanup?.dispose();
+      setRendererReady(false);
     };
   }, [syncScene, setRendererReady]);
 
-  // Push scene whenever document / camera / selection change.
+  // Document changes bypass React: preview frames must reach CanvasKit live,
+  // while the editor chrome remains subscribed to committed snapshots only.
+  useEffect(
+    () => documentStore.subscribe(() => syncScene()),
+    [syncScene],
+  );
+
+  // Camera and selection still originate in React state.
   useEffect(() => {
     syncScene();
-  }, [document, camera, selectedNodeIds, keyObjectId, syncScene]);
+  }, [camera, selectedNodeIds, keyObjectId, syncScene]);
 
   // Space bar toggles temporary pan mode.
   useEffect(() => {
@@ -1177,7 +1218,7 @@ export function CanvasStage() {
             scissorsRef.current = false;
             setEditingPathId(null);
             documentStore.cancelPreview();
-            documentStore.apply({ type: "delete-nodes", nodeIds: [nodeId] });
+            deleteUnits([nodeId]);
             setSelection([]);
             syncScene();
             return;
@@ -1301,6 +1342,7 @@ export function CanvasStage() {
       locked: false,
       fill: { type: "solid", color: "#111827" },
       d: patch.d!,
+      fillRule: "nonzero",
       intrinsicWidth: patch.intrinsicWidth!,
       intrinsicHeight: patch.intrinsicHeight!,
       geometry: patch.geometry!,
@@ -1338,6 +1380,46 @@ export function CanvasStage() {
     setEditingPathId(node.id);
     setSelection([]);
     syncScene();
+  }
+
+  function startLegacyPathEdit(node: PathNode) {
+    try {
+      const canvasKit = canvasKitRef.current;
+      if (!canvasKit) {
+        useEditorStore
+          .getState()
+          .setToast("Node editing is unavailable while the vector engine is offline.");
+        return;
+      }
+      const geometry = materializePathGeometry(canvasKit, node.d);
+      const current = documentStore.document.nodes[node.id];
+      const state = useEditorStore.getState();
+
+      if (
+        !geometry ||
+        !current ||
+        current.type !== "path" ||
+        current.d !== node.d ||
+        current.rotation !== 0 ||
+        editRef.current ||
+        editingTextRef.current ||
+        state.tool !== "select"
+      ) {
+        if (!geometry) {
+          state.setToast("This path could not be converted for node editing.");
+        }
+        return;
+      }
+
+      // Keep recovery out of history until the user actually edits. The
+      // normal path-edit commit then persists both geometry and path data.
+      startPathEdit({ ...current, geometry });
+    } catch (error) {
+      console.error("Legacy path conversion failed.", error);
+      useEditorStore
+        .getState()
+        .setToast("Node editing is unavailable while the vector engine is offline.");
+    }
   }
 
   function commitPathEdit() {
@@ -1479,6 +1561,7 @@ export function CanvasStage() {
       fill: structuredClone(node.fill),
       ...(node.stroke ? { stroke: { ...node.stroke } } : {}),
       d: secondPatch.d!,
+      fillRule: node.fillRule,
       intrinsicWidth: secondPatch.intrinsicWidth!,
       intrinsicHeight: secondPatch.intrinsicHeight!,
       geometry: secondPatch.geometry!,
@@ -3019,8 +3102,12 @@ export function CanvasStage() {
       return;
     }
 
-    if (hit.type === "path" && hit.geometry && hit.rotation === 0) {
-      startPathEdit(hit);
+    if (hit.type === "path" && hit.rotation === 0) {
+      if (hit.geometry) {
+        startPathEdit(hit);
+      } else {
+        startLegacyPathEdit(hit);
+      }
       return;
     }
 
@@ -3101,7 +3188,35 @@ export function CanvasStage() {
         onDoubleClick={handleDoubleClick}
         aria-label="OpenLogo canvas"
       />
-      <GradientAnnotator />
+      {!rendererFailure && <GradientAnnotator />}
+      {rendererFailure && (
+        <div
+          className="absolute inset-0 z-40 grid place-items-center bg-surface/95 p-24"
+          role="alert"
+          aria-live="assertive"
+        >
+          <div className="w-full max-w-[420px] rounded-panel border border-card-border bg-card p-22 text-center shadow-panel">
+            <span className="mx-auto mb-12 grid h-40 w-40 place-items-center rounded-[12px] border border-danger/20 bg-danger/10 text-danger">
+              <TriangleAlert size={20} aria-hidden="true" />
+            </span>
+            <strong className="block text-[15px] text-ink">
+              Vector engine unavailable
+            </strong>
+            <p className="mx-auto mt-6 max-w-[320px] text-[12px] leading-[1.55] text-ink-dim">
+              Your document is still safe. Reload OpenLogo to restart the local
+              graphics engine.
+            </p>
+            <button
+              type="button"
+              className="mx-auto mt-16 inline-flex h-32 items-center gap-7 rounded-field bg-accent px-13 text-[12px] font-semibold text-white shadow-[0_4px_12px_rgb(79_107_246/0.22)] transition-[filter] hover:brightness-105"
+              onClick={() => window.location.reload()}
+            >
+              <RefreshCw size={14} aria-hidden="true" />
+              Reload editor
+            </button>
+          </div>
+        </div>
+      )}
       {editingTextId && (
         <TextEditOverlay
           nodeId={editingTextId}

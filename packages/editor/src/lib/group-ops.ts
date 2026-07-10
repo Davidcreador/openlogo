@@ -11,6 +11,7 @@ import {
   expandDeletionSet,
   findContainerId,
   getAncestorGroupIds,
+  getClippingMaskOwnerId,
   getContainerChildIds,
   getParentGroupId,
   rotatePoint,
@@ -63,7 +64,10 @@ export function groupSelection(
 ): string | null {
   const document = documentStore.document;
   const ids = selectedNodeIds.filter((id) => document.nodes[id]);
-  if (ids.length < 2) {
+  if (
+    ids.length < 2 ||
+    ids.some((id) => getClippingMaskOwnerId(document, id) !== null)
+  ) {
     return null;
   }
 
@@ -136,6 +140,8 @@ export function moveUnitToContainer(
   if (
     !node ||
     !fromContainerId ||
+    (getClippingMaskOwnerId(document, nodeId) !== null &&
+      toContainerId !== fromContainerId) ||
     nodeId === toContainerId ||
     collectSubtreeIds(document, nodeId).includes(toContainerId)
   ) {
@@ -148,6 +154,26 @@ export function moveUnitToContainer(
     toContainerId,
     toIndex,
   };
+
+  const sourceGroup = document.nodes[fromContainerId];
+  if (
+    sourceGroup?.type === "group" &&
+    sourceGroup.clippingMaskId !== undefined &&
+    nodeId !== sourceGroup.clippingMaskId &&
+    sourceGroup.children.every(
+      (childId) =>
+        childId === nodeId || childId === sourceGroup.clippingMaskId,
+    )
+  ) {
+    // The last content leaving a clipping group would leave a blank structural
+    // shell. Release the remaining path into the old parent in the same undo.
+    documentStore.apply({
+      type: "batch",
+      label: "Move last clipped object",
+      commands: [move, { type: "ungroup-nodes", groupId: sourceGroup.id }],
+    });
+    return true;
+  }
 
   // Groups emptied by the move (walking up from the source container,
   // stopping at the destination — it gains the node and stays alive).
@@ -184,7 +210,50 @@ export function deleteSelection(selectedNodeIds: readonly string[]): void {
   const document = documentStore.document;
   const nodeIds = expandDeletionSet(document, selectedNodeIds);
   if (nodeIds.length > 0) {
-    documentStore.apply({ type: "delete-nodes", nodeIds });
+    // Deleting a clipping path releases its owner first, then removes only
+    // the requested path. One batch keeps the masked content and makes undo
+    // restore both the path and its exact ownership relationship.
+    const selected = new Set(selectedNodeIds);
+    const maskOwners = [
+      ...new Set(
+        selectedNodeIds
+          .map((nodeId) => getClippingMaskOwnerId(document, nodeId))
+          .filter((id): id is string => id !== null && !selected.has(id)),
+      ),
+    ];
+    const exhaustedOwners = Object.values(document.nodes)
+      .filter(
+        (node): node is GroupNode =>
+          node.type === "group" &&
+          node.clippingMaskId !== undefined &&
+          !nodeIds.includes(node.id),
+      )
+      .filter((group) => {
+        const contentIds = group.children.filter(
+          (childId) => childId !== group.clippingMaskId,
+        );
+        return (
+          contentIds.length > 0 &&
+          contentIds.every((childId) => nodeIds.includes(childId))
+        );
+      })
+      .map((group) => group.id);
+    const owners = [...new Set([...maskOwners, ...exhaustedOwners])];
+    documentStore.apply(
+      owners.length === 0
+        ? { type: "delete-nodes", nodeIds }
+        : {
+            type: "batch",
+            label: "Delete clipping path",
+            commands: [
+              ...owners.map((groupId) => ({
+                type: "ungroup-nodes" as const,
+                groupId,
+              })),
+              { type: "delete-nodes", nodeIds },
+            ],
+          },
+    );
   }
 }
 
@@ -234,9 +303,24 @@ export function cloneUnits(
     const clone = structuredClone(node) as LogoNode;
     clone.id = createId(node.type === "group" ? "group" : "node");
     if (clone.type === "group") {
-      clone.children = clone.children
-        .map(cloneSubtree)
+      const sourceChildren = [...clone.children];
+      const clonedChildren = sourceChildren.map((sourceId) => ({
+        sourceId,
+        cloneId: cloneSubtree(sourceId),
+      }));
+      clone.children = clonedChildren
+        .map((item) => item.cloneId)
         .filter((childId): childId is string => childId !== null);
+      if (clone.clippingMaskId) {
+        const clonedMaskId = clonedChildren.find(
+          (item) => item.sourceId === clone.clippingMaskId,
+        )?.cloneId;
+        if (clonedMaskId) {
+          clone.clippingMaskId = clonedMaskId;
+        } else {
+          delete clone.clippingMaskId;
+        }
+      }
     } else {
       clone.x += offset;
       clone.y += offset;

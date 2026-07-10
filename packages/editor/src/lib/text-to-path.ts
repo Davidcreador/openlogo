@@ -157,6 +157,7 @@ function buildOutlinePathNode(
     fill: structuredClone(node.fill),
     ...(node.stroke ? { stroke: { ...node.stroke } } : {}),
     d: pathGeometryToSvg(normalized),
+    fillRule: "nonzero",
     intrinsicWidth: bounds.width,
     intrinsicHeight: bounds.height,
     geometry: normalized,

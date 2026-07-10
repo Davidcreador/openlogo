@@ -127,6 +127,9 @@ const nodeSchema = z.discriminatedUnion("type", [
     d: z.string(),
     intrinsicWidth: z.number().positive(),
     intrinsicHeight: z.number().positive(),
+    // Documents before v3 omitted this; defaulting materializes their SVG
+    // nonzero semantics while v3 keeps compound-hole behavior explicit.
+    fillRule: z.enum(["nonzero", "evenodd"]).default("nonzero"),
     shape: z
       .object({
         kind: z.enum(["triangle", "polygon", "star", "line", "arrow"]),
@@ -182,6 +185,9 @@ const nodeSchema = z.discriminatedUnion("type", [
     ...baseNodeShape,
     type: z.literal("group"),
     children: z.array(z.string()),
+    // Introduced in v4. Ownership lives on exactly one group instead of on
+    // ambiguous per-node tags; older groups remain ordinary groups.
+    clippingMaskId: z.string().optional(),
   }),
 ]);
 
@@ -299,8 +305,25 @@ function sanitizeDocument(document: LogoDocument): LogoDocument {
       const node = nodes[id]!;
       if (node.type === "group") {
         const children = sanitizeChildren(node.children);
-        if (children.length !== node.children.length) {
-          nodes[id] = { ...node, children };
+        const mask = node.clippingMaskId
+          ? nodes[node.clippingMaskId]
+          : undefined;
+        const validMask =
+          node.clippingMaskId !== undefined &&
+          children.includes(node.clippingMaskId) &&
+          (mask?.type === "rectangle" ||
+            mask?.type === "ellipse" ||
+            mask?.type === "path");
+        if (
+          children.length !== node.children.length ||
+          (node.clippingMaskId !== undefined && !validMask)
+        ) {
+          if (validMask) {
+            nodes[id] = { ...node, children };
+          } else {
+            const { clippingMaskId: _invalidMask, ...regularGroup } = node;
+            nodes[id] = { ...regularGroup, children };
+          }
         }
       }
     }

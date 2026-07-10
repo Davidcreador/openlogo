@@ -22,6 +22,46 @@ describe("parseDocument", () => {
       /newer/,
     );
   });
+
+  it("round-trips explicit compound-path fill rules", () => {
+    const doc = createInitialDocument();
+    const path = Object.values(doc.nodes).find((node) => node.type === "path");
+    expect(path).toBeDefined();
+    if (!path || path.type !== "path") {
+      return;
+    }
+    path.fillRule = "evenodd";
+
+    const parsed = parseDocument(JSON.parse(JSON.stringify(doc)));
+    expect(parsed.nodes[path.id]).toMatchObject({ fillRule: "evenodd" });
+  });
+
+  it("migrates pre-v3 paths to explicit nonzero fill", () => {
+    const doc = createInitialDocument();
+    doc.schemaVersion = 2;
+    const path = Object.values(doc.nodes).find((node) => node.type === "path");
+    expect(path).toBeDefined();
+    if (!path) {
+      return;
+    }
+    delete (path as unknown as { fillRule?: unknown }).fillRule;
+
+    const parsed = parseDocument(JSON.parse(JSON.stringify(doc)));
+    expect(parsed.schemaVersion).toBe(DOCUMENT_SCHEMA_VERSION);
+    expect(parsed.nodes[path.id]).toMatchObject({ fillRule: "nonzero" });
+  });
+
+  it("rejects unknown path fill rules", () => {
+    const doc = createInitialDocument();
+    const path = Object.values(doc.nodes).find((node) => node.type === "path");
+    expect(path).toBeDefined();
+    if (!path) {
+      return;
+    }
+    (path as unknown as Record<string, unknown>).fillRule = "inverse";
+
+    expect(() => parseDocument(JSON.parse(JSON.stringify(doc)))).toThrow();
+  });
 });
 
 describe("artboard position migration", () => {

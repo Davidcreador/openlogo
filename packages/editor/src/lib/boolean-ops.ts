@@ -4,6 +4,7 @@ import {
   collectLeafNodeIds,
   createId,
   expandDeletionSet,
+  getAncestorGroupIds,
   getActiveArtboard,
 } from "@openlogo/core";
 import { type BooleanOp, combineNodes } from "@openlogo/renderer";
@@ -24,10 +25,24 @@ const OP_LABELS: Record<BooleanOp, string> = {
  */
 export function combinableNodes(selectedNodeIds: readonly string[]): LogoNode[] {
   const document = documentStore.document;
-  return collectLeafNodeIds(
+  const leafIds = collectLeafNodeIds(
     document,
     sortBySceneOrder(document, selectedNodeIds),
-  )
+  );
+  // Boolean/Shape Builder results currently replace operands. Operating
+  // inside a clipping group could orphan its owner or flatten a masked
+  // subtree, so users must release the mask first.
+  if (
+    leafIds.some((id) =>
+      getAncestorGroupIds(document, id).some((groupId) => {
+        const group = document.nodes[groupId];
+        return group?.type === "group" && group.clippingMaskId !== undefined;
+      }),
+    )
+  ) {
+    return [];
+  }
+  return leafIds
     .map((id) => document.nodes[id])
     .filter(
       (node): node is LogoNode =>
@@ -93,6 +108,8 @@ export async function applyBooleanOp(
     fill: structuredClone(first.fill),
     ...(first.stroke ? { stroke: { ...first.stroke } } : {}),
     d: result.d,
+    fillRule: result.fillRule,
+    geometry: result.geometry,
     intrinsicWidth: result.width,
     intrinsicHeight: result.height,
   };

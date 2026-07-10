@@ -180,6 +180,9 @@ export type ShapeParams = {
   innerRatio?: number;
 };
 
+/** How overlapping subpaths determine the filled interior of a path. */
+export type PathFillRule = "nonzero" | "evenodd";
+
 export type PathNode = BaseNode & {
   type: "path";
   /** SVG path data in the node's intrinsic coordinate space. */
@@ -187,6 +190,8 @@ export type PathNode = BaseNode & {
   /** Intrinsic coordinate space the path data is authored in. */
   intrinsicWidth: number;
   intrinsicHeight: number;
+  /** Explicit so compound-path holes survive every renderer/export round-trip. */
+  fillRule: PathFillRule;
   /**
    * Structured editable geometry (pen tool). Same intrinsic space as `d`,
    * which is derived from it. Absent on imported/legacy paths.
@@ -252,11 +257,19 @@ export type TextNode = BaseNode & {
  * geometry is always derived from its children via `unitBounds` in
  * queries.ts, so it can never go stale. Transforms on a group cascade
  * to leaf nodes at commit time. `visible`/`locked`/`opacity` DO apply
- * and cascade down the subtree.
+ * and cascade down the subtree. A clipping group owns one direct child as
+ * its clipping path; that child's appearance is preserved for release but
+ * is not painted while the relationship exists.
  */
 export type GroupNode = BaseNode & {
   type: "group";
   children: string[];
+  /**
+   * Direct child whose filled geometry clips every other child. The group
+   * owns the relationship: the mask node remains an ordinary editable node,
+   * but is not painted while this reference exists.
+   */
+  clippingMaskId?: string;
 };
 
 export type LogoNode =
@@ -293,7 +306,7 @@ export type ColorPalette = {
   colors: string[];
 };
 
-export const DOCUMENT_SCHEMA_VERSION = 2;
+export const DOCUMENT_SCHEMA_VERSION = 4;
 
 export type LogoDocument = {
   schemaVersion: number;

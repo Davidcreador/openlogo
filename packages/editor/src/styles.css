@@ -248,10 +248,10 @@
 
   .tool-flyout-caret {
     position: absolute;
-    right: 3px;
-    bottom: 3px;
-    width: 10px;
-    height: 10px;
+    right: 0;
+    bottom: 0;
+    width: 18px;
+    height: 18px;
     padding: 0;
     border: none;
     background: transparent;
@@ -506,10 +506,10 @@
   }
 
   .layer-caret {
-    flex: 0 0 18px;
+    flex: 0 0 24px;
     display: grid;
     place-items: center;
-    height: 18px;
+    height: 24px;
     border-radius: 5px;
     color: var(--color-ink-dim);
     transition:
@@ -523,7 +523,7 @@
   }
 
   .layer-caret-space {
-    flex: 0 0 18px;
+    flex: 0 0 24px;
   }
 
   .layer-main {
@@ -650,5 +650,28 @@
 
   .layer-toggle.is-on {
     color: var(--color-accent);
+  }
+}
+
+/* Keyboard focus must survive utility classes that intentionally remove the
+   native outline from compact fields. Pointer interaction stays unchanged. */
+:where(button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+:where(.toolbar, .menu, [data-testid="toast"])
+  :where(button, input, select, textarea, [tabindex]):focus-visible {
+  outline-color: #aebaff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

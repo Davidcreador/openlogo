@@ -17,6 +17,7 @@ import type {
   LogoNode,
   MeasureSegment,
   Paint,
+  PathFillRule,
   PathGeometry,
   PathPoint,
   SnapGuide,
@@ -25,6 +26,7 @@ import type {
 } from "@openlogo/core";
 import {
   type SelectionFrame,
+  getAncestorGroupIds,
   getRenderNodesForArtboard,
   isGradient,
   kernAt,
@@ -39,6 +41,8 @@ import {
 import type { Camera } from "./camera";
 import { screenToWorld } from "./camera";
 import { FontRegistry } from "./fonts";
+import { InvalidationScheduler } from "./invalidation-scheduler";
+import { nodeToSkPath } from "./booleans";
 
 export type Scene = {
   document: LogoDocument;
@@ -75,6 +79,7 @@ export type Scene = {
   shapeBuilder?: {
     regions: ReadonlyArray<{
       d: string;
+      fillRule: PathFillRule;
       state: "pending" | "merged" | "deleted";
       hovered: boolean;
     }>;
@@ -103,17 +108,48 @@ function blurSigma(blur: number): number {
   return blur / 2;
 }
 
+type ClippingPathNode = Extract<
+  LogoNode,
+  { type: "rectangle" | "ellipse" | "path" }
+>;
+
+/** Pure ancestor traversal shared by CanvasKit hit-testing and regression tests. */
+export function pointInsideClippingMasks(
+  document: LogoDocument,
+  nodeId: string,
+  point: Vec2,
+  contains: (mask: ClippingPathNode, point: Vec2) => boolean,
+): boolean {
+  for (const groupId of getAncestorGroupIds(document, nodeId)) {
+    const group = document.nodes[groupId];
+    if (group?.type !== "group" || !group.clippingMaskId) {
+      continue;
+    }
+    const mask = document.nodes[group.clippingMaskId];
+    if (
+      !mask ||
+      mask.type === "group" ||
+      mask.type === "text" ||
+      !contains(mask, point)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /**
  * Draws a LogoDocument to a canvas via CanvasKit and answers hit-tests.
- * Owns the frame loop: callers mutate the scene then call `invalidate()`.
+ * Owns frame invalidation: callers mutate the scene then call `invalidate()`.
  */
 export class SceneRenderer {
   private surface: Surface | null = null;
-  private dirty = true;
   private disposed = false;
   private scene: Scene | null = null;
   private dpr = 1;
+  private readonly frameScheduler: InvalidationScheduler;
   private pathCache = new Map<string, Path>();
+  private clipPathCache = new Map<string, { key: string; path: Path }>();
   private paragraphCache = new Map<string, ParagraphCacheEntry>();
   /** Last computed text-on-path layout per text node (debug/automation). */
   private textPathLayouts = new Map<string, TextPathGlyph[]>();
@@ -134,17 +170,12 @@ export class SceneRenderer {
     readonly fonts: FontRegistry,
   ) {
     this.createSurface();
-    const loop = () => {
-      if (this.disposed) {
-        return;
+    this.frameScheduler = new InvalidationScheduler(() => {
+      const scene = this.scene;
+      if (scene && this.surface) {
+        this.draw(scene);
       }
-      if (this.dirty && this.scene && this.surface) {
-        this.dirty = false;
-        this.draw(this.scene);
-      }
-      requestAnimationFrame(loop);
-    };
-    requestAnimationFrame(loop);
+    });
   }
 
   setScene(scene: Scene): void {
@@ -164,6 +195,20 @@ export class SceneRenderer {
           this.textPathLayouts.delete(nodeId);
         }
       }
+      const clippingMaskIds = new Set(
+        Object.values(scene.document.nodes)
+          .filter(
+            (node): node is Extract<LogoNode, { type: "group" }> =>
+              node.type === "group" && node.clippingMaskId !== undefined,
+          )
+          .map((node) => node.clippingMaskId!),
+      );
+      for (const [nodeId, entry] of this.clipPathCache) {
+        if (!clippingMaskIds.has(nodeId)) {
+          entry.path.delete();
+          this.clipPathCache.delete(nodeId);
+        }
+      }
       const artboardIds = new Set(
         scene.document.artboards.map((item) => item.id),
       );
@@ -179,7 +224,7 @@ export class SceneRenderer {
   }
 
   invalidate(): void {
-    this.dirty = true;
+    this.frameScheduler.invalidate();
   }
 
   /** Resize backing store to CSS size * devicePixelRatio. */
@@ -195,9 +240,16 @@ export class SceneRenderer {
   }
 
   dispose(): void {
+    if (this.disposed) {
+      return;
+    }
     this.disposed = true;
+    this.frameScheduler.dispose();
     for (const path of this.pathCache.values()) {
       path.delete();
+    }
+    for (const entry of this.clipPathCache.values()) {
+      entry.path.delete();
     }
     for (const entry of this.paragraphCache.values()) {
       entry.paragraph.delete();
@@ -206,6 +258,7 @@ export class SceneRenderer {
       entry.paragraph.delete();
     }
     this.pathCache.clear();
+    this.clipPathCache.clear();
     this.paragraphCache.clear();
     this.labelCache.clear();
     this.labelRects.clear();
@@ -241,12 +294,32 @@ export class SceneRenderer {
       if (!node || !node.visible || node.locked) {
         continue;
       }
-      if (this.nodeContains(node, local)) {
+      if (
+        this.nodeContains(node, local) &&
+        this.pointInsideClippingAncestors(document, node.id, local)
+      ) {
         return node;
       }
     }
 
     return null;
+  }
+
+  /** A clipped child is never interactive outside every owning mask. */
+  private pointInsideClippingAncestors(
+    document: LogoDocument,
+    nodeId: string,
+    point: Vec2,
+  ): boolean {
+    return pointInsideClippingMasks(
+      document,
+      nodeId,
+      point,
+      (mask, candidate) => {
+        const path = this.getClippingPath(mask);
+        return path?.contains(candidate.x, candidate.y) ?? false;
+      },
+    );
   }
 
   private nodeContains(node: LogoNode, worldPoint: Vec2): boolean {
@@ -277,7 +350,7 @@ export class SceneRenderer {
     }
 
     if (node.type === "path") {
-      const path = this.getPath(node.d);
+      const path = this.getPath(node.d, node.fillRule);
       if (!path) {
         return false;
       }
@@ -572,9 +645,39 @@ export class SceneRenderer {
     if (node.type === "group") {
       const effects = node.effects?.filter((effect) => effect.enabled) ?? [];
       const drawChildren = () => {
-        for (const childId of node.children) {
-          this.drawSubtree(canvas, document, childId, opacity * node.opacity);
+        const drawContent = () => {
+          for (const childId of node.children) {
+            if (childId !== node.clippingMaskId) {
+              this.drawSubtree(
+                canvas,
+                document,
+                childId,
+                opacity * node.opacity,
+              );
+            }
+          }
+        };
+        if (!node.clippingMaskId) {
+          drawContent();
+          return;
         }
+
+        const mask = document.nodes[node.clippingMaskId];
+        if (!mask || mask.type === "group" || mask.type === "text") {
+          return; // malformed relationship fails closed, never leaks content
+        }
+        const clippingPath = this.getClippingPath(mask);
+        if (!clippingPath) {
+          return;
+        }
+        canvas.save();
+        canvas.clipPath(
+          clippingPath,
+          this.canvasKit.ClipOp.Intersect,
+          true,
+        );
+        drawContent();
+        canvas.restore();
       };
       const layerPaint = node.blendMode ? new this.canvasKit.Paint() : null;
       if (layerPaint && node.blendMode) {
@@ -794,7 +897,7 @@ export class SceneRenderer {
       canvas.drawOval(rect, fill);
       this.strokeNode(canvas, node, (paint) => canvas.drawOval(rect, paint));
     } else if (node.type === "path") {
-      const path = this.getPath(node.d);
+      const path = this.getPath(node.d, node.fillRule);
       if (path) {
         canvas.save();
         canvas.translate(node.x, node.y);
@@ -944,7 +1047,7 @@ export class SceneRenderer {
       return false;
     }
 
-    const base = this.getPath(pathNode.d);
+    const base = this.getPath(pathNode.d, pathNode.fillRule);
     if (!base) {
       return false;
     }
@@ -1292,8 +1395,9 @@ export class SceneRenderer {
     return skPaint;
   }
 
-  private getPath(d: string): Path | null {
-    const cached = this.pathCache.get(d);
+  private getPath(d: string, fillRule: PathFillRule = "nonzero"): Path | null {
+    const key = `${fillRule}\u0000${d}`;
+    const cached = this.pathCache.get(key);
     if (cached) {
       return cached;
     }
@@ -1302,6 +1406,11 @@ export class SceneRenderer {
     if (!path) {
       return null;
     }
+    path.setFillType(
+      fillRule === "evenodd"
+        ? this.canvasKit.FillType.EvenOdd
+        : this.canvasKit.FillType.Winding,
+    );
 
     // Cheap eviction: path data strings are few in a logo document.
     if (this.pathCache.size > 512) {
@@ -1312,7 +1421,35 @@ export class SceneRenderer {
       }
     }
 
-    this.pathCache.set(d, path);
+    this.pathCache.set(key, path);
+    return path;
+  }
+
+  /** Cached mask geometry in artboard-local coordinates, rotation included. */
+  private getClippingPath(
+    node: Exclude<LogoNode, { type: "group" | "text" }>,
+  ): Path | null {
+    const geometryKey =
+      node.type === "rectangle"
+        ? `rectangle|${node.cornerRadius}`
+        : node.type === "ellipse"
+          ? "ellipse"
+          : `path|${node.fillRule}|${node.intrinsicWidth}|${node.intrinsicHeight}|${node.d}`;
+    const key = `${geometryKey}|${node.x}|${node.y}|${node.width}|${node.height}|${node.rotation}`;
+    const cached = this.clipPathCache.get(node.id);
+    if (cached?.key === key) {
+      return cached.path;
+    }
+    if (cached) {
+      cached.path.delete();
+      this.clipPathCache.delete(node.id);
+    }
+
+    const path = nodeToSkPath(this.canvasKit, node);
+    if (!path) {
+      return null;
+    }
+    this.clipPathCache.set(node.id, { key, path });
     return path;
   }
 
@@ -1530,7 +1667,7 @@ export class SceneRenderer {
 
     this.withActiveArtboard(canvas, scene, () => {
       for (const region of sb.regions) {
-        const path = this.getPath(region.d);
+        const path = this.getPath(region.d, region.fillRule);
         if (!path) {
           continue;
         }

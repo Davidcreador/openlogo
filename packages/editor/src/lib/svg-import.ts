@@ -1,11 +1,14 @@
 import { Effect } from "effect";
 import type { CanvasKit } from "canvaskit-wasm";
 import {
+  type GroupNode,
   type LogoNode,
+  type PathFillRule,
   type PathNode,
   createGroup,
   createId,
   getActiveArtboard,
+  pathCommandsToGeometry,
 } from "@openlogo/core";
 import { type CanvasKitLoadError, canvasKit } from "./canvaskit";
 import { documentStore } from "../state/document";
@@ -14,9 +17,10 @@ import { documentStore } from "../state/document";
  * SVG import, v1: every supported shape is flattened to a path with its
  * cumulative transform baked in, imported as one group centred on the
  * artboard. Covers exported logo SVGs (rect/circle/ellipse/path/polygon/
- * polyline/line + nested <g> transforms). Skipped: text (outline it in
- * the source tool), gradients/patterns (fill falls back to first colour
- * guess or black), clip paths, masks.
+ * polyline/line + nested <g> transforms). Simple user-space clipPath groups
+ * round-trip as editable clipping groups. Skipped: text (outline it in the
+ * source tool), gradients/patterns (fill falls back to black), SVG masks,
+ * objectBoundingBox clips, and clip paths made from multiple elements.
  */
 
 type Mat = [number, number, number, number, number, number]; // a b c d e f
@@ -169,18 +173,114 @@ function shapeToPathData(element: Element): string | null {
 }
 
 type FlatShape = {
+  id: string;
   d: string;
   matrix: Mat;
   fill: string;
+  fillRule: PathFillRule;
   opacity: number;
   stroke: { color: string; width: number } | null;
+  ownerClipId: string | null;
+  order: number;
 };
+
+type FlatClipGroup = {
+  id: string;
+  parentClipId: string | null;
+  mask: FlatShape;
+  order: number;
+};
+
+type WalkState = {
+  root: Element;
+  shapes: FlatShape[];
+  clips: FlatClipGroup[];
+  nextId: number;
+  nextOrder: number;
+};
+
+function nextFlatId(state: WalkState, prefix: string): string {
+  state.nextId += 1;
+  return `${prefix}-${state.nextId}`;
+}
+
+function clipReferenceId(value: string | null): string | null {
+  const match = value?.match(/url\(\s*['"]?#([^'")\s]+)['"]?\s*\)/i);
+  return match?.[1] ?? null;
+}
+
+/** Capture the conservative clipPath subset emitted by OpenLogo itself. */
+function captureClipGroup(
+  element: Element,
+  matrix: Mat,
+  parentClipId: string | null,
+  state: WalkState,
+): string | null {
+  const referenceId = clipReferenceId(styleValue(element, "clip-path"));
+  if (!referenceId) {
+    return null;
+  }
+  const definition = Array.from(state.root.querySelectorAll("clipPath")).find(
+    (candidate) => candidate.getAttribute("id") === referenceId,
+  );
+  if (
+    !definition ||
+    (definition.getAttribute("clipPathUnits") ?? "userSpaceOnUse") !==
+      "userSpaceOnUse"
+  ) {
+    return null;
+  }
+
+  const maskElements = Array.from(definition.children).filter((child) =>
+    Boolean(shapeToPathData(child)),
+  );
+  if (maskElements.length !== 1) {
+    return null;
+  }
+  const maskElement = maskElements[0]!;
+  const d = shapeToPathData(maskElement);
+  if (!d) {
+    return null;
+  }
+  const rule = (
+    styleValue(maskElement, "clip-rule") ??
+    styleValue(maskElement, "fill-rule") ??
+    styleValue(definition, "clip-rule") ??
+    "nonzero"
+  )
+    .trim()
+    .toLowerCase();
+  const fillRule: PathFillRule = rule === "evenodd" ? "evenodd" : "nonzero";
+  const order = state.nextOrder++;
+  const id = nextFlatId(state, "clip");
+  const definitionMatrix = multiply(
+    matrix,
+    parseTransform(definition.getAttribute("transform")),
+  );
+  const mask: FlatShape = {
+    id: nextFlatId(state, "mask"),
+    d,
+    matrix: multiply(
+      definitionMatrix,
+      parseTransform(maskElement.getAttribute("transform")),
+    ),
+    fill: "#000000",
+    fillRule,
+    opacity: 1,
+    stroke: null,
+    ownerClipId: id,
+    order,
+  };
+  state.clips.push({ id, parentClipId, mask, order });
+  return id;
+}
 
 function walk(
   element: Element,
   matrix: Mat,
-  inherited: { fill: string; opacity: number },
-  output: FlatShape[],
+  inherited: { fill: string; fillRule: PathFillRule; opacity: number },
+  ownerClipId: string | null,
+  state: WalkState,
 ): void {
   const localMatrix = multiply(
     matrix,
@@ -188,13 +288,31 @@ function walk(
   );
   const fillRaw = styleValue(element, "fill");
   const fill = fillRaw ?? inherited.fill;
+  const fillRuleRaw = styleValue(element, "fill-rule")?.trim().toLowerCase();
+  const fillRule =
+    fillRuleRaw === "initial"
+      ? "nonzero"
+      : fillRuleRaw === "evenodd" || fillRuleRaw === "nonzero"
+        ? fillRuleRaw
+        : inherited.fillRule;
   const opacity =
     inherited.opacity * Number(styleValue(element, "opacity") ?? 1);
 
   const tag = element.tagName.toLowerCase();
   if (tag === "g" || tag === "svg") {
+    const nextOwner =
+      tag === "g"
+        ? (captureClipGroup(element, localMatrix, ownerClipId, state) ??
+          ownerClipId)
+        : ownerClipId;
     for (const child of Array.from(element.children)) {
-      walk(child, localMatrix, { fill, opacity }, output);
+      walk(
+        child,
+        localMatrix,
+        { fill, fillRule, opacity },
+        nextOwner,
+        state,
+      );
     }
     return;
   }
@@ -220,11 +338,15 @@ function walk(
     return;
   }
 
-  output.push({
+  state.shapes.push({
+    id: nextFlatId(state, "shape"),
     d,
     matrix: localMatrix,
     fill: resolvedFill,
+    fillRule,
     opacity,
+    ownerClipId,
+    order: state.nextOrder++,
     stroke:
       strokeColor && strokeColor !== "none"
         ? { color: strokeColor, width: strokeWidth }
@@ -254,7 +376,7 @@ function nodeFromPath(
   path: SkiaPath,
   shape: FlatShape,
   index: number,
-): PathNode {
+): PathNode | null {
   const [a, b, c, d2, e, f] = shape.matrix;
   path.transform([a, c, e, b, d2, f, 0, 0, 1]);
 
@@ -264,6 +386,10 @@ function nodeFromPath(
   const height = Math.max(0.5, bottom - top);
   path.transform([1, 0, -left, 0, 1, -top, 0, 0, 1]);
   const normalized = path.toSVGString();
+  const geometry = pathCommandsToGeometry(path.toCmds());
+  if (!geometry) {
+    return null;
+  }
 
   return {
     id: createId("node"),
@@ -278,6 +404,7 @@ function nodeFromPath(
     visible: true,
     locked: false,
     fill: { type: "solid", color: shape.fill },
+    fillRule: shape.fillRule,
     ...(shape.stroke
       ? {
           stroke: {
@@ -288,6 +415,7 @@ function nodeFromPath(
         }
       : {}),
     d: normalized,
+    geometry,
     intrinsicWidth: width,
     intrinsicHeight: height,
   };
@@ -308,26 +436,48 @@ export const importSvg = (
       return [];
     }
 
-    const shapes: FlatShape[] = [];
-    walk(root, IDENTITY, { fill: "#000000", opacity: 1 }, shapes);
-    if (shapes.length === 0) {
+    const state: WalkState = {
+      root,
+      shapes: [],
+      clips: [],
+      nextId: 0,
+      nextOrder: 0,
+    };
+    walk(
+      root,
+      IDENTITY,
+      { fill: "#000000", fillRule: "nonzero", opacity: 1 },
+      null,
+      state,
+    );
+    if (state.shapes.length === 0) {
       return [];
     }
 
     const ck = yield* canvasKit;
-    const nodes = (yield* Effect.all(
-      shapes.map((shape, index) => buildNode(ck, shape, index)),
-    )).filter((node): node is PathNode => node !== null);
-    if (nodes.length === 0) {
+    const flatShapes = [
+      ...state.shapes,
+      ...state.clips.map((clip) => clip.mask),
+    ];
+    const built = (yield* Effect.all(
+      flatShapes.map((shape, index) =>
+        buildNode(ck, shape, index).pipe(
+          Effect.map((node) => (node ? { shape, node } : null)),
+        ),
+      ),
+    )).filter(
+      (item): item is { shape: FlatShape; node: PathNode } => item !== null,
+    );
+    if (built.length === 0) {
       return [];
     }
 
     // Fit and centre on the artboard.
     const artboard = getActiveArtboard(documentStore.document);
-    const minX = Math.min(...nodes.map((n) => n.x));
-    const minY = Math.min(...nodes.map((n) => n.y));
-    const maxX = Math.max(...nodes.map((n) => n.x + n.width));
-    const maxY = Math.max(...nodes.map((n) => n.y + n.height));
+    const minX = Math.min(...built.map(({ node }) => node.x));
+    const minY = Math.min(...built.map(({ node }) => node.y));
+    const maxX = Math.max(...built.map(({ node }) => node.x + node.width));
+    const maxY = Math.max(...built.map(({ node }) => node.y + node.height));
     const spanW = maxX - minX;
     const spanH = maxY - minY;
     const scale = Math.min(
@@ -338,33 +488,111 @@ export const importSvg = (
     const offsetX = (artboard.width - spanW * scale) / 2 - minX * scale;
     const offsetY = (artboard.height - spanH * scale) / 2 - minY * scale;
 
-    const placed: LogoNode[] = nodes.map((node) => ({
-      ...node,
-      x: node.x * scale + offsetX,
-      y: node.y * scale + offsetY,
-      width: node.width * scale,
-      height: node.height * scale,
-      // Path data stays in intrinsic space; only the box scales.
+    const placed = built.map(({ shape, node }) => ({
+      shape,
+      node: {
+        ...node,
+        x: node.x * scale + offsetX,
+        y: node.y * scale + offsetY,
+        width: node.width * scale,
+        height: node.height * scale,
+        // Path data stays in intrinsic space; only the box scales.
+      } as PathNode,
     }));
+    const placedByFlatId = new Map(
+      placed.map((item) => [item.shape.id, item.node] as const),
+    );
 
-    // Multi-shape imports arrive as one real group; a single shape stays flat.
-    if (placed.length === 1) {
-      documentStore.apply({
-        type: "insert-nodes",
-        artboardId: artboard.id,
-        nodes: placed,
-      });
-      return [placed[0]!.id];
+    type OrderedNode = { id: string; order: number };
+    const groupsByClipId = new Map<string, OrderedNode>();
+    const groups: GroupNode[] = [];
+
+    // Clip instances are recorded outer-to-inner; build inner groups first so
+    // each parent can own a child clipping group without flattening it.
+    for (const clip of [...state.clips].reverse()) {
+      const content: OrderedNode[] = [
+        ...state.shapes
+          .filter((shape) => shape.ownerClipId === clip.id)
+          .map((shape) => ({
+            id: placedByFlatId.get(shape.id)?.id ?? "",
+            order: shape.order,
+          })),
+        ...state.clips
+          .filter((child) => child.parentClipId === clip.id)
+          .map((child) => groupsByClipId.get(child.id))
+          .filter((item): item is OrderedNode => item !== undefined),
+      ]
+        .filter((item) => item.id !== "")
+        .sort((a, b) => a.order - b.order);
+      if (content.length === 0) {
+        continue;
+      }
+
+      const mask = placedByFlatId.get(clip.mask.id);
+      const children = content.map((item) => item.id);
+      if (mask) {
+        mask.name = "Clipping path";
+        children.push(mask.id);
+      }
+      const group = createGroup(children);
+      group.name = mask ? "Clipping group" : "Imported SVG group";
+      if (mask) {
+        group.clippingMaskId = mask.id;
+      }
+      groups.push(group);
+      groupsByClipId.set(clip.id, { id: group.id, order: clip.order });
     }
 
-    const group = createGroup(placed.map((node) => node.id));
-    group.name = "Imported SVG";
+    const roots: OrderedNode[] = [
+      ...state.shapes
+        .filter((shape) => shape.ownerClipId === null)
+        .map((shape) => ({
+          id: placedByFlatId.get(shape.id)?.id ?? "",
+          order: shape.order,
+        })),
+      ...state.clips
+        .filter((clip) => clip.parentClipId === null)
+        .map((clip) => groupsByClipId.get(clip.id))
+        .filter((item): item is OrderedNode => item !== undefined),
+    ]
+      .filter((item) => item.id !== "")
+      .sort((a, b) => a.order - b.order);
+    if (roots.length === 0) {
+      return [];
+    }
+
+    let rootIds = roots.map((item) => item.id);
+    if (rootIds.length > 1) {
+      const imported = createGroup(rootIds);
+      imported.name = "Imported SVG";
+      groups.push(imported);
+      rootIds = [imported.id];
+    }
+
+    const nodeTable = new Map<string, LogoNode>([
+      ...placed.map(({ node }) => [node.id, node] as const),
+      ...groups.map((group) => [group.id, group] as const),
+    ]);
+    const reachable = new Set<string>();
+    const visit = (id: string) => {
+      if (reachable.has(id)) {
+        return;
+      }
+      const node = nodeTable.get(id);
+      if (!node) {
+        return;
+      }
+      reachable.add(id);
+      if (node.type === "group") {
+        node.children.forEach(visit);
+      }
+    };
+    rootIds.forEach(visit);
 
     documentStore.apply({
       type: "insert-nodes",
       artboardId: artboard.id,
-      nodes: [...placed, group],
+      nodes: [...nodeTable.values()].filter((node) => reachable.has(node.id)),
     });
-
-    return [group.id];
+    return rootIds;
   });

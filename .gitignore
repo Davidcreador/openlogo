@@ -4,3 +4,5 @@ dist
 *.local
 *.tsbuildinfo
 node_modules/.tmp
+.claude/
+.codex-token-guard/

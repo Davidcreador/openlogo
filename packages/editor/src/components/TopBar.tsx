@@ -4,8 +4,10 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  Combine,
   Copy,
   Download,
+  FolderKanban,
   FolderOpen,
   Magnet,
   Pencil,
@@ -18,6 +20,7 @@ import {
   SquaresSubtract,
   SquaresUnite,
   Trash2,
+  Unlink,
   Undo2,
 } from "lucide-react";
 import {
@@ -31,10 +34,17 @@ import {
 import { type BooleanOp, fitBounds } from "@openlogo/renderer";
 import { applyBooleanOp, combinableNodes } from "../lib/boolean-ops";
 import {
+  canMakeCompoundPath,
+  canReleaseCompoundPath,
+  makeCompoundPath,
+  releaseCompoundPath,
+} from "../lib/compound-path";
+import {
   openDocumentFileWithToast,
   saveDocumentFile,
 } from "../lib/document-file";
 import { exportPack } from "../lib/export-pack";
+import { deleteSelection as deleteSelectedUnits } from "../lib/group-ops";
 import { importSvg } from "../lib/svg-import";
 import { documentStore, useDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
@@ -80,6 +90,30 @@ const ICON_BUTTON =
 const ACTION_BUTTON =
   "grid h-22 w-22 place-items-center rounded-[6px] text-chrome-dim transition-colors duration-120 ease-studio hover:enabled:bg-chrome-raised hover:enabled:text-chrome-text disabled:cursor-default disabled:opacity-35";
 
+const SESSION_STATUS = {
+  loading: { label: "Restoring…", dot: "bg-chrome-dim" },
+  saving: { label: "Saving…", dot: "bg-amber-400" },
+  saved: { label: "Saved locally", dot: "bg-emerald-400" },
+  error: { label: "Save issue", dot: "bg-red-400" },
+} as const;
+
+function DocumentSessionStatus() {
+  const state = useEditorStore((editor) => editor.documentSessionState);
+  const status = SESSION_STATUS[state];
+
+  return (
+    <span
+      className="flex h-30 items-center gap-6 rounded-m border border-chrome-hairline bg-[rgb(255_255_255/0.025)] px-8 text-[11px] text-chrome-dim"
+      role="status"
+      aria-live="polite"
+      title="Local document status"
+    >
+      <span className={`h-6 w-6 rounded-full ${status.dot}`} aria-hidden="true" />
+      {status.label}
+    </span>
+  );
+}
+
 const ARTBOARD_PRESETS = [
   { label: "Logo", width: 720, height: 420 },
   { label: "Square", width: 1080, height: 1080 },
@@ -87,6 +121,17 @@ const ARTBOARD_PRESETS = [
   { label: "Social", width: 1200, height: 630 },
   { label: "Story", width: 1080, height: 1920 },
 ];
+
+const MAX_ARTBOARD_DIMENSION = 16_384;
+const MAX_SVG_IMPORT_BYTES = 5 * 1024 * 1024;
+
+function normalizeArtboardDimension(value: number): number | null {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  const rounded = Math.round(value);
+  return rounded >= 1 && rounded <= MAX_ARTBOARD_DIMENSION ? rounded : null;
+}
 
 /** Fit the camera to an artboard (new/switched); no-op before first layout. */
 function fitCameraTo(artboardId: string) {
@@ -186,6 +231,7 @@ function ArtboardRenameField({
 function ArtboardMenu() {
   const document = useDocument();
   const setSelection = useEditorStore((state) => state.setSelection);
+  const setToast = useEditorStore((state) => state.setToast);
   const [open, setOpen] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -206,10 +252,19 @@ function ArtboardMenu() {
   }
 
   function addArtboard(width: number, height: number) {
+    const normalizedWidth = normalizeArtboardDimension(width);
+    const normalizedHeight = normalizeArtboardDimension(height);
+    if (normalizedWidth === null || normalizedHeight === null) {
+      setToast(
+        `Artboards must be between 1 and ${MAX_ARTBOARD_DIMENSION.toLocaleString()} px per side.`,
+      );
+      return;
+    }
+
     const doc = documentStore.document;
     const size = {
-      width: Math.max(1, Math.round(width)),
-      height: Math.max(1, Math.round(height)),
+      width: normalizedWidth,
+      height: normalizedHeight,
     };
     // Illustrator-style: the new board joins the shared canvas right next
     // to the board you are working in, and becomes the active one.
@@ -295,6 +350,14 @@ function ArtboardMenu() {
   }
 
   const canDelete = document.artboards.length > 1;
+  const normalizedCustomWidth = normalizeArtboardDimension(
+    Number(customWidth),
+  );
+  const normalizedCustomHeight = normalizeArtboardDimension(
+    Number(customHeight),
+  );
+  const customSizeValid =
+    normalizedCustomWidth !== null && normalizedCustomHeight !== null;
 
   return (
     <div className="menu-anchor relative" ref={ref}>
@@ -434,30 +497,40 @@ function ArtboardMenu() {
             <input
               type="number"
               min="1"
+              max={MAX_ARTBOARD_DIMENSION}
+              step="1"
               className="h-24 w-62 rounded-[6px] border border-chrome-border bg-chrome-raised px-6 text-[11.5px] tabular-nums text-chrome-text outline-none focus:border-accent focus:shadow-ring"
               value={customWidth}
               onChange={(event) => setCustomWidth(event.target.value)}
               aria-label="Custom artboard width"
+              aria-invalid={normalizedCustomWidth === null}
             />
             <span className="text-[11px] text-chrome-dim">×</span>
             <input
               type="number"
               min="1"
+              max={MAX_ARTBOARD_DIMENSION}
+              step="1"
               className="h-24 w-62 rounded-[6px] border border-chrome-border bg-chrome-raised px-6 text-[11.5px] tabular-nums text-chrome-text outline-none focus:border-accent focus:shadow-ring"
               value={customHeight}
               onChange={(event) => setCustomHeight(event.target.value)}
               aria-label="Custom artboard height"
+              aria-invalid={normalizedCustomHeight === null}
             />
             <button
               type="button"
               className="ml-auto inline-flex h-24 items-center gap-4 rounded-[6px] bg-linear-to-b from-[#5d77f7] to-accent px-9 text-[11.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.24)] hover:brightness-[1.08]"
               onClick={() => {
-                const width = Number(customWidth);
-                const height = Number(customHeight);
-                if (width > 0 && height > 0) {
-                  addArtboard(width, height);
+                if (customSizeValid) {
+                  addArtboard(normalizedCustomWidth, normalizedCustomHeight);
                 }
               }}
+              disabled={!customSizeValid}
+              title={
+                customSizeValid
+                  ? "Add custom artboard"
+                  : `Use 1–${MAX_ARTBOARD_DIMENSION.toLocaleString()} px per side`
+              }
               aria-label="Add custom artboard"
             >
               <Plus size={12} /> Add
@@ -487,15 +560,18 @@ function ArtboardMenu() {
 
 function ExportMenu() {
   const [open, setOpen] = useState(false);
+  const [exportingPack, setExportingPack] = useState(false);
   const ref = useClickOutside(() => setOpen(false));
   const setExportDialogOpen = useEditorStore(
     (state) => state.setExportDialogOpen,
   );
+  const setToast = useEditorStore((state) => state.setToast);
 
   return (
     <div className="menu-anchor relative" ref={ref}>
       <button
         type="button"
+        data-export-dialog-trigger
         className="export-button flex items-center gap-7 rounded-[9px] bg-linear-to-b from-[#5d77f7] to-accent px-13 py-7 text-[12.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.22),0_1px_3px_rgb(8_6_12/0.45)] transition-[filter] duration-140 ease-studio hover:brightness-[1.09]"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
@@ -522,12 +598,28 @@ function ExportMenu() {
           <button
             type="button"
             className="menu-item"
+            disabled={exportingPack}
             onClick={() => {
-              void Effect.runPromise(exportPack);
               setOpen(false);
+              setExportingPack(true);
+              void Effect.runPromise(exportPack)
+                .catch((error: unknown) => {
+                  console.warn("Export pack failed", error);
+                  setToast(
+                    error &&
+                      typeof error === "object" &&
+                      "reason" in error &&
+                      typeof error.reason === "string"
+                      ? error.reason
+                      : "Export pack failed — try a smaller artboard.",
+                  );
+                })
+                .finally(() => setExportingPack(false));
             }}
           >
-            <span className="menu-label">Export pack</span>
+            <span className="menu-label">
+              {exportingPack ? "Preparing…" : "Export pack"}
+            </span>
             <small>svg · mono · reversed · favicons</small>
           </button>
         </div>
@@ -537,17 +629,60 @@ function ExportMenu() {
 }
 
 export function TopBar() {
-  useDocument(); // re-render on history/name changes
+  const document = useDocument(); // re-render on history/name changes
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   const setSelection = useEditorStore((state) => state.setSelection);
   const pixelSnap = useEditorStore((state) => state.pixelSnap);
   const setPixelSnap = useEditorStore((state) => state.setPixelSnap);
+  const setToast = useEditorStore((state) => state.setToast);
+  const setDocumentLibraryOpen = useEditorStore(
+    (state) => state.setDocumentLibraryOpen,
+  );
   const canCombine = combinableNodes(selectedNodeIds).length >= 2;
+  const canCompound = canMakeCompoundPath(selectedNodeIds);
+  const canReleaseCompound = canReleaseCompoundPath(selectedNodeIds);
 
   async function runBoolean(op: BooleanOp) {
-    const newId = await applyBooleanOp(op, selectedNodeIds);
-    if (newId) {
-      setSelection([newId]);
+    try {
+      const newId = await applyBooleanOp(op, selectedNodeIds);
+      if (newId) {
+        setSelection([newId]);
+      } else {
+        setToast("Those shapes could not be combined.");
+      }
+    } catch (error) {
+      console.warn("Boolean operation failed", error);
+      setToast("Boolean operation failed. The original shapes were preserved.");
+    }
+  }
+
+  async function runCompound() {
+    try {
+      const newId = await makeCompoundPath(selectedNodeIds);
+      if (newId) {
+        setSelection([newId]);
+      } else {
+        setToast("Select two or more sibling vector shapes.");
+      }
+    } catch (error) {
+      console.warn("Compound path failed", error);
+      setToast("Compound path failed. The original shapes were preserved.");
+    }
+  }
+
+  function runReleaseCompound() {
+    try {
+      const ids = releaseCompoundPath(selectedNodeIds);
+      if (ids) {
+        setSelection(ids);
+      } else {
+        setToast("Select one editable compound path.");
+      }
+    } catch (error) {
+      console.warn("Release compound path failed", error);
+      setToast(
+        "Release compound path failed. The original path was preserved.",
+      );
     }
   }
 
@@ -555,7 +690,7 @@ export function TopBar() {
     if (selectedNodeIds.length === 0) {
       return;
     }
-    documentStore.apply({ type: "delete-nodes", nodeIds: selectedNodeIds });
+    deleteSelectedUnits(selectedNodeIds);
     setSelection([]);
   }
 
@@ -570,9 +705,21 @@ export function TopBar() {
     if (!file) {
       return;
     }
-    const ids = await Effect.runPromise(importSvg(await file.text()));
-    if (ids.length > 0) {
-      setSelection(ids);
+    if (file.size > MAX_SVG_IMPORT_BYTES) {
+      setToast("SVG import is limited to 5 MB for reliable local editing.");
+      return;
+    }
+
+    try {
+      const ids = await Effect.runPromise(importSvg(await file.text()));
+      if (ids.length > 0) {
+        setSelection(ids);
+      } else {
+        setToast("This SVG contains no supported editable shapes.");
+      }
+    } catch (error) {
+      console.warn("SVG import failed", error);
+      setToast("SVG import failed. The current document was not changed.");
     }
   }
 
@@ -596,6 +743,19 @@ export function TopBar() {
             OpenLogo
           </span>
           <span className="h-18 w-px bg-chrome-border" />
+          <button
+            type="button"
+            className="flex h-28 items-center gap-6 rounded-m px-7 text-[11.5px] text-chrome-dim transition-colors duration-140 ease-studio hover:bg-chrome-raised hover:text-chrome-text"
+            onClick={() => setDocumentLibraryOpen(true)}
+            title="Document library and version history"
+            aria-label="Open document library and version history"
+          >
+            <FolderKanban size={14} strokeWidth={1.75} />
+            <span className="hidden max-w-[140px] truncate lg:inline">
+              {document.name}
+            </span>
+          </button>
+          <span className="h-18 w-px bg-chrome-border" />
           <ArtboardMenu />
         </div>
       </div>
@@ -604,8 +764,32 @@ export function TopBar() {
         <div
           className="flex items-center gap-2 rounded-[10px] border border-chrome-hairline bg-[rgb(255_255_255/0.035)] p-3"
           role="group"
-          aria-label="Boolean operations"
+          aria-label="Path operations"
         >
+          <button
+            type="button"
+            className={ICON_BUTTON}
+            onClick={() => void runCompound()}
+            disabled={!canCompound}
+            title="Make compound path (⌘8)"
+            aria-label="Make compound path"
+          >
+            <Combine size={16} strokeWidth={1.75} />
+          </button>
+          <button
+            type="button"
+            className={ICON_BUTTON}
+            onClick={runReleaseCompound}
+            disabled={!canReleaseCompound}
+            title="Release compound path (⌥⇧⌘8 / Alt+Shift+Ctrl+8)"
+            aria-label="Release compound path"
+          >
+            <Unlink size={16} strokeWidth={1.75} />
+          </button>
+          <span
+            className="mx-2 h-18 w-px bg-chrome-border"
+            aria-hidden="true"
+          />
           {BOOLEAN_OPS.map((op) => {
             const Icon = op.icon;
             return (
@@ -626,6 +810,7 @@ export function TopBar() {
       </div>
 
       <div className="flex items-center gap-8">
+        <DocumentSessionStatus />
         <button
           type="button"
           className={ICON_BUTTON}

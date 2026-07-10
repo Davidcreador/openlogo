@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -80,12 +81,14 @@ function pushRecent(name: string): string[] {
 
 /** One windowed row; kicks off its preview after it has stayed visible. */
 function FontRow({
+  id,
   family,
   active,
   current,
   onApply,
   onHover,
 }: {
+  id: string;
   family: FontFamily;
   active: boolean;
   current: boolean;
@@ -100,8 +103,10 @@ function FontRow({
 
   const ready = isPreviewReady(family.name);
   return (
-    <button
-      type="button"
+    <div
+      id={id}
+      role="option"
+      aria-selected={current}
       data-font-option={family.name}
       className={`flex w-full cursor-pointer items-center justify-between gap-8 border-0 px-10 text-left text-[13px] ${
         active ? "bg-accent/12 text-ink" : "bg-transparent text-ink"
@@ -111,8 +116,8 @@ function FontRow({
       onClick={() => onApply(family)}
     >
       <span className="truncate">{family.name}</span>
-      {current && <Check size={12} className="flex-none" />}
-    </button>
+      {current && <Check size={12} className="flex-none" aria-hidden="true" />}
+    </div>
   );
 }
 
@@ -137,6 +142,9 @@ export function FontPicker({
   const [scrollTop, setScrollTop] = useState(0);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [panelPos, setPanelPos] = useState({ top: 0, left: 0 });
+  const pickerId = useId();
+  const panelId = `${pickerId}-panel`;
+  const listboxId = `${pickerId}-listbox`;
 
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -256,10 +264,14 @@ export function FontPicker({
   };
 
   const onPanelKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    const controlsList = event.target === searchRef.current;
+    if (
+      controlsList &&
+      (event.key === "ArrowDown" || event.key === "ArrowUp")
+    ) {
       event.preventDefault();
       moveActive(event.key === "ArrowDown" ? 1 : -1);
-    } else if (event.key === "Enter") {
+    } else if (controlsList && event.key === "Enter") {
       event.preventDefault();
       const item = items[activeIndex];
       if (item?.kind === "font") {
@@ -278,6 +290,11 @@ export function FontPicker({
     items.length,
     Math.ceil((scrollTop + LIST_H) / ROW_H) + OVERSCAN,
   );
+  const activeItem = items[activeIndex];
+  const activeOptionId =
+    activeItem?.kind === "font"
+      ? `${listboxId}-option-${activeIndex}-${activeItem.family.id}`
+      : undefined;
 
   return (
     <>
@@ -287,29 +304,52 @@ export function FontPicker({
         data-testid="font-picker-trigger"
         className={TRIGGER}
         aria-label="Font family"
-        aria-haspopup="listbox"
+        aria-haspopup="dialog"
         aria-expanded={open}
+        aria-controls={panelId}
         onClick={() => (open ? setOpen(false) : openPanel())}
       >
         <span className="truncate">{currentName}</span>
-        <ChevronDown size={12} className="flex-none text-ink-dim" />
+        <ChevronDown
+          size={12}
+          className="flex-none text-ink-dim"
+          aria-hidden="true"
+        />
       </button>
 
       {open && (
         <div
           ref={panelRef}
+          id={panelId}
           data-testid="font-picker-panel"
           className="fixed z-50 flex flex-col gap-6 rounded-card border border-panel-hairline bg-card p-8 shadow-[0_10px_30px_rgb(28_25_33/0.18)]"
           style={{ top: panelPos.top, left: panelPos.left, width: PANEL_W }}
-          role="listbox"
+          role="dialog"
+          aria-modal="false"
+          aria-label="Choose a font family"
           onKeyDown={onPanelKeyDown}
+          onBlur={(event) => {
+            const next = event.relatedTarget as Node | null;
+            if (
+              !event.currentTarget.contains(next) &&
+              !triggerRef.current?.contains(next)
+            ) {
+              setOpen(false);
+            }
+          }}
         >
           <div className="flex items-center gap-6 rounded-field border border-field-border bg-field px-8">
-            <Search size={12} className="flex-none text-ink-dim" />
+            <Search size={12} className="flex-none text-ink-dim" aria-hidden="true" />
             <input
               ref={searchRef}
               data-testid="font-search"
               className="h-26 w-full border-0 bg-transparent text-[12px] text-ink outline-none"
+              role="combobox"
+              aria-label="Search font families"
+              aria-autocomplete="list"
+              aria-expanded="true"
+              aria-controls={listboxId}
+              aria-activedescendant={activeOptionId}
               placeholder={`Search ${families.length} fonts…`}
               value={query}
               onChange={(event) => {
@@ -330,6 +370,7 @@ export function FontPicker({
                 type="button"
                 data-font-cat={cat.value}
                 className={category === cat.value ? CHIP_ACTIVE : CHIP}
+                aria-pressed={category === cat.value}
                 onClick={() => {
                   setCategory(category === cat.value ? null : cat.value);
                   setActiveIndex(-1);
@@ -346,16 +387,27 @@ export function FontPicker({
 
           <div
             ref={listRef}
+            id={listboxId}
             className="overflow-y-auto overscroll-contain"
             style={{ height: LIST_H }}
+            role="listbox"
+            aria-label="Font families"
             onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
           >
             {items.length === 0 ? (
-              <p className="m-0 px-10 py-12 text-[12px] text-ink-dim">
+              <p
+                className="m-0 px-10 py-12 text-[12px] text-ink-dim"
+                role="option"
+                aria-selected="false"
+                aria-disabled="true"
+              >
                 No fonts match.
               </p>
             ) : (
-              <div style={{ height: totalHeight, position: "relative" }}>
+              <div
+                role="presentation"
+                style={{ height: totalHeight, position: "relative" }}
+              >
                 {items.slice(start, end).map((item, offset) => {
                   const index = start + offset;
                   const top = index * ROW_H;
@@ -363,6 +415,7 @@ export function FontPicker({
                     return (
                       <div
                         key={`header-${item.label}`}
+                        role="presentation"
                         className="flex items-end px-10 pb-3 text-[10px] font-[650] uppercase tracking-[0.08em] text-ink-dim"
                         style={{ position: "absolute", top, height: ROW_H, width: "100%" }}
                       >
@@ -373,9 +426,11 @@ export function FontPicker({
                   return (
                     <div
                       key={`${index}-${item.family.id}`}
+                      role="presentation"
                       style={{ position: "absolute", top, width: "100%" }}
                     >
                       <FontRow
+                        id={`${listboxId}-option-${index}-${item.family.id}`}
                         family={item.family}
                         active={index === activeIndex}
                         current={item.family.name === currentName}

@@ -11,9 +11,9 @@ import {
   getActiveArtboard,
   kernAt,
   kernToPx,
+  paintBounds,
   pathGeometryToSvg,
   reversePathGeometry,
-  unitBounds,
 } from "@openlogo/core";
 
 function escapeXml(value: string): string {
@@ -27,6 +27,7 @@ function escapeXml(value: string): string {
 let gradientCounter = 0;
 let filterCounter = 0;
 let textPathCounter = 0;
+let clippingPathCounter = 0;
 
 /**
  * Layer effects → an SVG <filter>. Faithful pieces: drop shadow and glow
@@ -340,9 +341,43 @@ function renderNode(
           node.y + node.height / 2
         }) `;
 
-  return `<g opacity="${node.opacity}" fill="${fill}"${stroke}${filter} transform="${pathRotate}${transform}"><path d="${escapeXml(
+  return `<g opacity="${node.opacity}" fill="${fill}"${stroke}${filter} transform="${pathRotate}${transform}"><path fill-rule="${node.fillRule}" d="${escapeXml(
     node.d,
   )}" /></g>`;
+}
+
+/** Geometry-only SVG for a clipping path; paint, stroke and opacity do not. */
+function renderClippingGeometry(node: LogoNode): string | null {
+  if (node.type === "group" || node.type === "text") {
+    return null;
+  }
+  const rotate =
+    node.rotation === 0
+      ? ""
+      : ` transform="rotate(${node.rotation} ${node.x + node.width / 2} ${
+          node.y + node.height / 2
+        })"`;
+  if (node.type === "rectangle") {
+    return `<rect${rotate} x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" rx="${node.cornerRadius}" />`;
+  }
+  if (node.type === "ellipse") {
+    return `<ellipse${rotate} cx="${node.x + node.width / 2}" cy="${
+      node.y + node.height / 2
+    }" rx="${node.width / 2}" ry="${node.height / 2}" />`;
+  }
+
+  const boxTransform = `translate(${node.x} ${node.y}) scale(${
+    node.width / node.intrinsicWidth
+  } ${node.height / node.intrinsicHeight})`;
+  const pathRotate =
+    node.rotation === 0
+      ? ""
+      : `rotate(${node.rotation} ${node.x + node.width / 2} ${
+          node.y + node.height / 2
+        }) `;
+  return `<path clip-rule="${node.fillRule}" transform="${pathRotate}${boxTransform}" d="${escapeXml(
+    node.d,
+  )}" />`;
 }
 
 /** Render a node subtree; groups become real nested `<g>` elements. */
@@ -357,7 +392,23 @@ function renderTree(
   }
 
   if (node.type === "group") {
-    const inner = node.children
+    let clipping = "";
+    let childIds = node.children;
+    if (node.clippingMaskId) {
+      const mask = document.nodes[node.clippingMaskId];
+      const geometry = mask ? renderClippingGeometry(mask) : null;
+      if (!geometry || !node.children.includes(node.clippingMaskId)) {
+        return ""; // malformed relationship fails closed
+      }
+      clippingPathCounter += 1;
+      const id = `clip-${clippingPathCounter}`;
+      defs.push(
+        `<clipPath id="${id}" clipPathUnits="userSpaceOnUse">${geometry}</clipPath>`,
+      );
+      clipping = ` clip-path="url(#${id})"`;
+      childIds = node.children.filter((id) => id !== node.clippingMaskId);
+    }
+    const inner = childIds
       .map((childId) => renderTree(document, childId, defs))
       .filter(Boolean)
       .join("\n  ");
@@ -371,7 +422,7 @@ function renderTree(
       ? ` style="mix-blend-mode:${node.blendMode}"`
       : "";
     const filter = effectsAttr(node, defs);
-    return `<g${opacity}${blend}${filter} data-name="${escapeXml(node.name)}">\n  ${inner}\n  </g>`;
+    return `<g${opacity}${blend}${filter}${clipping} data-name="${escapeXml(node.name)}">\n  ${inner}\n  </g>`;
   }
 
   return renderNode(document, node, defs);
@@ -414,7 +465,7 @@ export function nodesToSvg(
   nodeIds: readonly string[],
 ): string | null {
   const boxes = nodeIds
-    .map((id) => unitBounds(document, id))
+    .map((id) => paintBounds(document, id))
     .filter((bounds): bounds is NonNullable<typeof bounds> => bounds !== null);
   if (boxes.length === 0) {
     return null;
@@ -479,7 +530,7 @@ export function nodeToPreviewSvg(
   if (!node) {
     return null;
   }
-  const bounds = unitBounds(document, nodeId);
+  const bounds = paintBounds(document, nodeId);
   if (!bounds || bounds.width <= 0 || bounds.height <= 0) {
     return null;
   }
@@ -537,10 +588,68 @@ export function downloadBinaryFile(
   URL.revokeObjectURL(url);
 }
 
-/** PNG rasterization failure (SVG didn't render, or no 2D canvas). */
+/** Raster export failure (SVG render, canvas allocation, or encoding). */
 export class ExportError extends Data.TaggedError("ExportError")<{
   readonly reason: string;
 }> {}
+
+/** Conservative browser limits: 32 MiPx is ~128 MiB before PNG encoding. */
+export const MAX_RASTER_DIMENSION = 16_384;
+export const MAX_RASTER_PIXELS = 32 * 1024 * 1024;
+
+export type RasterSizeResult =
+  | { ok: true; width: number; height: number }
+  | { ok: false; reason: string };
+
+/** Validate and round the actual canvas allocation before touching the DOM. */
+export function validateRasterSize(
+  width: number,
+  height: number,
+  scale: number,
+): RasterSizeResult {
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    !Number.isFinite(scale) ||
+    width <= 0 ||
+    height <= 0 ||
+    scale <= 0
+  ) {
+    return {
+      ok: false,
+      reason: "Export dimensions must be finite positive numbers.",
+    };
+  }
+
+  const scaledWidth = width * scale;
+  const scaledHeight = height * scale;
+  if (!Number.isFinite(scaledWidth) || !Number.isFinite(scaledHeight)) {
+    return {
+      ok: false,
+      reason: "Export dimensions must be finite positive numbers.",
+    };
+  }
+
+  // Positive aspect ratios can round a very thin axis to zero. Canvas
+  // allocations cannot be zero-sized, so preserve the ratio as closely as
+  // integer pixels allow while guaranteeing one pixel on each axis.
+  const pixelWidth = Math.max(1, Math.round(scaledWidth));
+  const pixelHeight = Math.max(1, Math.round(scaledHeight));
+
+  if (
+    pixelWidth > MAX_RASTER_DIMENSION ||
+    pixelHeight > MAX_RASTER_DIMENSION ||
+    pixelWidth * pixelHeight > MAX_RASTER_PIXELS
+  ) {
+    return {
+      ok: false,
+      reason:
+        "Raster export is too large for reliable local export. Keep each side at or below 16,384 px and total area below 32 megapixels.",
+    };
+  }
+
+  return { ok: true, width: pixelWidth, height: pixelHeight };
+}
 
 /**
  * Rasterize an SVG string to a 2D canvas of width×height×scale device
@@ -552,8 +661,14 @@ export const rasterizeSvg = (
   width: number,
   height: number,
   scale: number,
-): Effect.Effect<HTMLCanvasElement, ExportError> =>
-  Effect.acquireUseRelease(
+  backgroundColor?: string,
+): Effect.Effect<HTMLCanvasElement, ExportError> => {
+  const size = validateRasterSize(width, height, scale);
+  if (!size.ok) {
+    return Effect.fail(new ExportError({ reason: size.reason }));
+  }
+
+  return Effect.acquireUseRelease(
     Effect.sync(() =>
       URL.createObjectURL(
         new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
@@ -574,8 +689,8 @@ export const rasterizeSvg = (
         });
 
         const canvas = window.document.createElement("canvas");
-        canvas.width = Math.max(1, Math.round(width * scale));
-        canvas.height = Math.max(1, Math.round(height * scale));
+        canvas.width = size.width;
+        canvas.height = size.height;
         const context = canvas.getContext("2d");
 
         if (!context) {
@@ -584,11 +699,161 @@ export const rasterizeSvg = (
           );
         }
 
-        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        drawRasterImage(
+          context,
+          image,
+          canvas.width,
+          canvas.height,
+          backgroundColor,
+        );
         return canvas;
       }),
     (url) => Effect.sync(() => URL.revokeObjectURL(url)),
   );
+};
+
+export type RasterMimeType = "image/png" | "image/jpeg" | "image/webp";
+
+export type RasterEncodingOptions = {
+  mimeType: RasterMimeType;
+  /** Browser canvas quality, from 0.1 through 1. Omitted for lossless PNG. */
+  quality?: number;
+  /** Explicit opaque underlay for JPEG and non-transparent PNG/WebP. */
+  backgroundColor?: string;
+};
+
+export const MIN_RASTER_QUALITY = 0.1;
+export const MAX_RASTER_QUALITY = 1;
+const SAFE_RASTER_BACKGROUND = /^#[\da-f]{6}$/i;
+
+function validateRasterEncoding(
+  options: RasterEncodingOptions,
+  requireBackground: boolean,
+): string | null {
+  if (
+    options.quality !== undefined &&
+    (!Number.isFinite(options.quality) ||
+      options.quality < MIN_RASTER_QUALITY ||
+      options.quality > MAX_RASTER_QUALITY)
+  ) {
+    return "JPEG and WebP quality must be between 10% and 100%.";
+  }
+  if (
+    options.backgroundColor !== undefined &&
+    !SAFE_RASTER_BACKGROUND.test(options.backgroundColor)
+  ) {
+    return "Raster background must be a six-digit hex color.";
+  }
+  if (requireBackground && options.backgroundColor === undefined) {
+    return "JPEG export requires an explicit background color.";
+  }
+  return null;
+}
+
+/** Draw the background before the source so transparent pixels never turn black. */
+export function drawRasterImage(
+  context: CanvasRenderingContext2D,
+  image: CanvasImageSource,
+  width: number,
+  height: number,
+  backgroundColor?: string,
+): void {
+  if (backgroundColor) {
+    context.fillStyle = backgroundColor;
+    context.fillRect(0, 0, width, height);
+  }
+  context.drawImage(image, 0, 0, width, height);
+}
+
+function rasterFormatLabel(mimeType: RasterMimeType): string {
+  if (mimeType === "image/jpeg") {
+    return "JPEG";
+  }
+  if (mimeType === "image/webp") {
+    return "WebP";
+  }
+  return "PNG";
+}
+
+/**
+ * Encode without a base64 data URL. Browsers may silently fall back to PNG
+ * for unsupported encoders, so the returned MIME type is verified.
+ */
+export const canvasToRasterBlob = (
+  canvas: HTMLCanvasElement,
+  options: RasterEncodingOptions,
+): Effect.Effect<Blob, ExportError> => {
+  const validationError = validateRasterEncoding(options, false);
+  if (validationError) {
+    return Effect.fail(new ExportError({ reason: validationError }));
+  }
+  return Effect.async<Blob, ExportError>((resume) => {
+    canvas.toBlob(
+      (blob) => {
+        const label = rasterFormatLabel(options.mimeType);
+        if (!blob) {
+          resume(
+            Effect.fail(new ExportError({ reason: `${label} encoding failed.` })),
+          );
+          return;
+        }
+        if (blob.type.toLowerCase() !== options.mimeType) {
+          resume(
+            Effect.fail(
+              new ExportError({
+                reason: `${label} export is not supported by this browser.`,
+              }),
+            ),
+          );
+          return;
+        }
+        resume(Effect.succeed(blob));
+      },
+      options.mimeType,
+      options.quality,
+    );
+  });
+};
+
+/** Rasterize, encode, and download one PNG/JPEG/WebP file. */
+export const downloadRasterFromSvg = (
+  svg: string,
+  filename: string,
+  width: number,
+  height: number,
+  scale: number,
+  options: RasterEncodingOptions,
+): Effect.Effect<void, ExportError> => {
+  const validationError = validateRasterEncoding(
+    options,
+    options.mimeType === "image/jpeg",
+  );
+  if (validationError) {
+    return Effect.fail(new ExportError({ reason: validationError }));
+  }
+  return rasterizeSvg(
+    svg,
+    width,
+    height,
+    scale,
+    options.backgroundColor,
+  ).pipe(
+    Effect.flatMap((canvas) => canvasToRasterBlob(canvas, options)),
+    Effect.flatMap((blob) =>
+      Effect.acquireUseRelease(
+        Effect.sync(() => URL.createObjectURL(blob)),
+        (url) =>
+          Effect.sync(() => {
+            const anchor = window.document.createElement("a");
+            anchor.href = url;
+            anchor.download = filename;
+            anchor.click();
+          }),
+        (url) => Effect.sync(() => URL.revokeObjectURL(url)),
+      ),
+    ),
+  );
+};
 
 /** Rasterize an SVG string to a PNG download. */
 export const downloadPngFromSvg = (
@@ -598,32 +863,23 @@ export const downloadPngFromSvg = (
   height: number,
   scale = 2,
 ): Effect.Effect<void, ExportError> =>
-  rasterizeSvg(svg, width, height, scale).pipe(
-    Effect.map((canvas) => {
-      const anchor = window.document.createElement("a");
-      anchor.href = canvas.toDataURL("image/png");
-      anchor.download = filename;
-      anchor.click();
-    }),
-  );
+  downloadRasterFromSvg(svg, filename, width, height, scale, {
+    mimeType: "image/png",
+  });
 
 /** Encode a canvas to PNG bytes. */
 const canvasToPngBytes = (
   canvas: HTMLCanvasElement,
 ): Effect.Effect<Uint8Array, ExportError> =>
-  Effect.async<Uint8Array, ExportError>((resume) => {
-    canvas.toBlob((blob) => {
-      if (!blob) {
-        resume(
-          Effect.fail(new ExportError({ reason: "PNG encoding failed." })),
-        );
-        return;
-      }
-      void blob.arrayBuffer().then((buffer) => {
-        resume(Effect.succeed(new Uint8Array(buffer)));
-      });
-    }, "image/png");
-  });
+  canvasToRasterBlob(canvas, { mimeType: "image/png" }).pipe(
+    Effect.flatMap((blob) =>
+      Effect.tryPromise({
+        try: () => blob.arrayBuffer(),
+        catch: () => new ExportError({ reason: "PNG encoding failed." }),
+      }),
+    ),
+    Effect.map((buffer) => new Uint8Array(buffer)),
+  );
 
 /** Rasterize an SVG string to encoded PNG bytes. */
 export const svgToPngBytes = (

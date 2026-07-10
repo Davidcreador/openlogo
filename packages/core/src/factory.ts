@@ -1,5 +1,6 @@
 import type { Bounds } from "./geometry";
 import { createId } from "./id";
+import { pathGeometryToSvg, type PathGeometry } from "./path-data";
 import type {
   Artboard,
   EllipseNode,
@@ -7,6 +8,7 @@ import type {
   LogoDocument,
   LogoNode,
   LogoVariant,
+  PathFillRule,
   PathNode,
   RectangleNode,
   TextNode,
@@ -15,6 +17,98 @@ import { DOCUMENT_SCHEMA_VERSION } from "./types";
 
 const DEFAULT_FONT_STACK = "Inter, ui-sans-serif, system-ui, sans-serif";
 export const PATH_INTRINSIC_SIZE = 96;
+
+function createStarterMarkGeometry(): PathGeometry {
+  return {
+    subpaths: [
+      {
+        closed: true,
+        points: [
+          {
+            x: 48,
+            y: 4,
+            handleIn: { x: 28, y: 4 },
+            handleOut: { x: 68, y: 4 },
+          },
+          {
+            x: 84,
+            y: 40,
+            handleIn: { x: 84, y: 20 },
+            handleOut: { x: 84, y: 66 },
+          },
+          {
+            x: 48,
+            y: 92,
+            handleIn: { x: 62, y: 78 },
+            handleOut: { x: 34, y: 78 },
+          },
+          {
+            x: 12,
+            y: 40,
+            handleIn: { x: 12, y: 66 },
+            handleOut: { x: 12, y: 20 },
+          },
+        ],
+      },
+      {
+        closed: true,
+        points: [
+          {
+            x: 48,
+            y: 22,
+            handleIn: { x: 58, y: 30 },
+            handleOut: { x: 38, y: 30 },
+          },
+          {
+            x: 32,
+            y: 48,
+            handleIn: { x: 32, y: 38 },
+            handleOut: { x: 32, y: 58 },
+          },
+          {
+            x: 48,
+            y: 70,
+            handleIn: { x: 39, y: 66 },
+            handleOut: { x: 57, y: 66 },
+          },
+          {
+            x: 64,
+            y: 48,
+            handleIn: { x: 64, y: 58 },
+            handleOut: { x: 64, y: 38 },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function createSampleMarkGeometry(): PathGeometry {
+  return {
+    subpaths: [
+      {
+        closed: true,
+        points: [
+          { x: 48, y: 6 },
+          { x: 88, y: 78 },
+          { x: 68, y: 78 },
+          { x: 60, y: 62 },
+          { x: 36, y: 62 },
+          { x: 28, y: 78 },
+          { x: 8, y: 78 },
+        ],
+      },
+      {
+        closed: true,
+        points: [
+          { x: 44, y: 46 },
+          { x: 52, y: 46 },
+          { x: 48, y: 36 },
+        ],
+      },
+    ],
+  };
+}
 
 type BaseOptions = {
   x: number;
@@ -60,18 +154,26 @@ export function createEllipse(options: BaseOptions): EllipseNode {
 }
 
 export function createPath(
-  options: BaseOptions & { d?: string; name?: string },
+  options: BaseOptions & {
+    d?: string;
+    fillRule?: PathFillRule;
+    geometry?: PathGeometry;
+    name?: string;
+  },
 ): PathNode {
+  const geometry =
+    options.geometry ??
+    (options.d === undefined ? createStarterMarkGeometry() : undefined);
+
   return {
     ...baseNode(options),
     type: "path",
     name: options.name ?? "Mark",
-    d:
-      options.d ??
-      // Starter heart-style mark in the 96×96 intrinsic space.
-      "M48 4 C68 4 84 20 84 40 C84 66 62 78 48 92 C34 78 12 66 12 40 C12 20 28 4 48 4 Z M48 22 C38 30 32 38 32 48 C32 58 39 66 48 70 C57 66 64 58 64 48 C64 38 58 30 48 22 Z",
+    d: geometry ? pathGeometryToSvg(geometry) : (options.d ?? ""),
+    fillRule: options.fillRule ?? "nonzero",
     intrinsicWidth: PATH_INTRINSIC_SIZE,
     intrinsicHeight: PATH_INTRINSIC_SIZE,
+    ...(geometry ? { geometry } : {}),
   };
 }
 
@@ -148,7 +250,7 @@ export function createInitialDocument(): LogoDocument {
     x: 180,
     y: 140,
     name: "Sample mark",
-    d: "M48 6 L88 78 H68 L60 62 H36 L28 78 H8 L48 6 Z M44 46 H52 L48 36 Z",
+    geometry: createSampleMarkGeometry(),
   });
 
   const wordmark = createText({ x: 300, y: 185, content: "OpenLogo" });
@@ -210,9 +312,24 @@ export function cloneArtboardForVariant(
     const clone: LogoNode = structuredClone(node);
     clone.id = createId(node.type === "group" ? "group" : "node");
     if (clone.type === "group") {
-      clone.children = clone.children
-        .map((childId) => cloneSubtree(childId, seen))
+      const sourceChildren = [...clone.children];
+      const clonedChildren = sourceChildren.map((childId) => ({
+        sourceId: childId,
+        cloneId: cloneSubtree(childId, seen),
+      }));
+      clone.children = clonedChildren
+        .map((item) => item.cloneId)
         .filter((id): id is string => id !== null);
+      if (clone.clippingMaskId) {
+        const clonedMaskId = clonedChildren.find(
+          (item) => item.sourceId === clone.clippingMaskId,
+        )?.cloneId;
+        if (clonedMaskId) {
+          clone.clippingMaskId = clonedMaskId;
+        } else {
+          delete clone.clippingMaskId;
+        }
+      }
     }
     nodes.push(clone);
     return clone.id;

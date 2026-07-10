@@ -4,6 +4,7 @@ import {
   type PathNode,
   type Vec2,
   joinAnchors,
+  getClippingMaskOwnerId,
   pathGeometryToSvg,
   pathNodeLocalGeometry,
 } from "@openlogo/core";
@@ -96,7 +97,12 @@ export function joinSelectedPaths(
     return null;
   }
   const [a, b] = nodes as [PathNode, PathNode];
-  if (a.rotation !== 0 || b.rotation !== 0) {
+  if (
+    a.rotation !== 0 ||
+    b.rotation !== 0 ||
+    getClippingMaskOwnerId(document, a.id) !== null ||
+    getClippingMaskOwnerId(document, b.id) !== null
+  ) {
     return null;
   }
 

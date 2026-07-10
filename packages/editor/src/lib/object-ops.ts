@@ -357,6 +357,8 @@ export async function expandStrokeOp(nodeId: string): Promise<string | null> {
     locked: false,
     fill: { type: "solid", color: node.stroke.color },
     d: result.d,
+    fillRule: result.fillRule,
+    geometry: result.geometry,
     intrinsicWidth: result.width,
     intrinsicHeight: result.height,
   };

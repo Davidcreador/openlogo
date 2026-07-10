@@ -108,6 +108,25 @@ export function getParentGroupId(
   return getParentMap(document).get(nodeId) ?? null;
 }
 
+/** Group that explicitly owns this node as its clipping path, if any. */
+export function getClippingMaskOwnerId(
+  document: LogoDocument,
+  nodeId: string,
+): string | null {
+  const parentId = getParentGroupId(document, nodeId);
+  const parent = parentId ? document.nodes[parentId] : undefined;
+  return parent?.type === "group" && parent.clippingMaskId === nodeId
+    ? parent.id
+    : null;
+}
+
+export function isClippingMaskNode(
+  document: LogoDocument,
+  nodeId: string,
+): boolean {
+  return getClippingMaskOwnerId(document, nodeId) !== null;
+}
+
 /** Ancestor group ids of a node, outermost first. */
 export function getAncestorGroupIds(
   document: LogoDocument,
@@ -244,7 +263,14 @@ export function nodeBounds(node: LogoNode): Bounds {
   );
 }
 
-const unitBoundsCache = new WeakMap<LogoDocument, Map<string, Bounds | null>>();
+const visualBoundsCache = new WeakMap<
+  LogoDocument,
+  Map<string, Bounds | null>
+>();
+const paintBoundsCache = new WeakMap<
+  LogoDocument,
+  Map<string, Bounds | null>
+>();
 
 /**
  * Selection-unit bounds: a leaf's unrotated box (matching the editor's
@@ -255,10 +281,28 @@ export function unitBounds(
   document: LogoDocument,
   nodeId: string,
 ): Bounds | null {
-  return unitBoundsGuarded(document, nodeId, new Set());
+  const node = document.nodes[nodeId];
+  if (!node) {
+    return null;
+  }
+  return node.type === "group"
+    ? visualBounds(document, nodeId)
+    : { x: node.x, y: node.y, width: node.width, height: node.height };
 }
 
-function unitBoundsGuarded(
+/**
+ * Axis-aligned geometry bounds after node rotations and clipping are applied.
+ * Stroke/effect bleed is intentionally excluded; use `paintBounds` for export
+ * and render extents.
+ */
+export function visualBounds(
+  document: LogoDocument,
+  nodeId: string,
+): Bounds | null {
+  return visualBoundsGuarded(document, nodeId, new Set());
+}
+
+function visualBoundsGuarded(
   document: LogoDocument,
   nodeId: string,
   visiting: Set<string>,
@@ -268,13 +312,13 @@ function unitBoundsGuarded(
     return null;
   }
   if (node.type !== "group") {
-    return { x: node.x, y: node.y, width: node.width, height: node.height };
+    return nodeBounds(node);
   }
 
-  let cache = unitBoundsCache.get(document);
+  let cache = visualBoundsCache.get(document);
   if (!cache) {
     cache = new Map();
-    unitBoundsCache.set(document, cache);
+    visualBoundsCache.set(document, cache);
   }
   const cached = cache.get(nodeId);
   if (cached !== undefined) {
@@ -282,14 +326,149 @@ function unitBoundsGuarded(
   }
 
   visiting.add(nodeId);
-  const bounds = boundsUnion(
+  const contentBounds = boundsUnion(
     node.children
-      .map((childId) => unitBoundsGuarded(document, childId, visiting))
+      .filter((childId) => childId !== node.clippingMaskId)
+      .map((childId) => visualBoundsGuarded(document, childId, visiting))
       .filter((item): item is Bounds => item !== null),
   );
+  const maskBounds = node.clippingMaskId
+    ? visualBoundsGuarded(document, node.clippingMaskId, visiting)
+    : null;
+  const bounds =
+    node.clippingMaskId && maskBounds && contentBounds
+      ? intersectBounds(maskBounds, contentBounds)
+      : node.clippingMaskId
+        ? null
+        : contentBounds;
   visiting.delete(nodeId);
   cache.set(nodeId, bounds);
   return bounds;
+}
+
+/**
+ * Conservative AABB of every pixel a subtree can paint. This extends visual
+ * geometry for centered strokes and enabled effects while preserving renderer
+ * order: child paint is clipped first, then group effects may bleed outside.
+ */
+export function paintBounds(
+  document: LogoDocument,
+  nodeId: string,
+): Bounds | null {
+  return paintBoundsGuarded(document, nodeId, new Set());
+}
+
+function paintBoundsGuarded(
+  document: LogoDocument,
+  nodeId: string,
+  visiting: Set<string>,
+): Bounds | null {
+  const node = document.nodes[nodeId];
+  if (!node || visiting.has(nodeId)) {
+    return null;
+  }
+
+  let cache = paintBoundsCache.get(document);
+  if (!cache) {
+    cache = new Map();
+    paintBoundsCache.set(document, cache);
+  }
+  const cached = cache.get(nodeId);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  let bounds: Bounds | null;
+  if (node.type !== "group") {
+    bounds = applyEffectBounds(
+      expandBounds(nodeBounds(node), strokeOutset(node)),
+      node.effects,
+    );
+  } else {
+    visiting.add(nodeId);
+    const contentBounds = boundsUnion(
+      node.children
+        .filter((childId) => childId !== node.clippingMaskId)
+        .map((childId) => paintBoundsGuarded(document, childId, visiting))
+        .filter((item): item is Bounds => item !== null),
+    );
+    const maskBounds = node.clippingMaskId
+      ? visualBounds(document, node.clippingMaskId)
+      : null;
+    const clippedBounds =
+      node.clippingMaskId && maskBounds && contentBounds
+        ? intersectBounds(maskBounds, contentBounds)
+        : node.clippingMaskId
+          ? null
+          : contentBounds;
+    visiting.delete(nodeId);
+    bounds = clippedBounds
+      ? applyEffectBounds(clippedBounds, node.effects)
+      : null;
+  }
+
+  cache.set(nodeId, bounds);
+  return bounds;
+}
+
+function strokeOutset(node: LogoNode): number {
+  if (!node.stroke || node.stroke.width <= 0) {
+    return 0;
+  }
+  if (node.type !== "path") {
+    return node.stroke.width / 2;
+  }
+
+  const scaleX = Math.abs(node.width / node.intrinsicWidth);
+  const scaleY = Math.abs(node.height / node.intrinsicHeight);
+  const scale = Math.max(scaleX, scaleY);
+  return (node.stroke.width * (Number.isFinite(scale) ? scale : 1)) / 2;
+}
+
+function expandBounds(bounds: Bounds, amount: number): Bounds {
+  const outset = Number.isFinite(amount) ? Math.max(0, amount) : 0;
+  return {
+    x: bounds.x - outset,
+    y: bounds.y - outset,
+    width: bounds.width + outset * 2,
+    height: bounds.height + outset * 2,
+  };
+}
+
+function applyEffectBounds(
+  source: Bounds,
+  effects: LogoNode["effects"],
+): Bounds {
+  const parts = [source];
+  for (const effect of effects ?? []) {
+    if (!effect.enabled) {
+      continue;
+    }
+    if (effect.type === "outline" && effect.width > 0) {
+      parts.push(expandBounds(source, effect.width));
+      continue;
+    }
+    if (effect.type === "glow" || effect.type === "drop-shadow") {
+      // CanvasKit and SVG use sigma = blur / 2. Three sigma is a safe visual
+      // cutoff that avoids clipping while keeping exports reasonably tight.
+      const blurred = expandBounds(source, Math.max(0, effect.blur) * 1.5);
+      const dx = effect.type === "drop-shadow" ? effect.dx : 0;
+      const dy = effect.type === "drop-shadow" ? effect.dy : 0;
+      parts.push({ ...blurred, x: blurred.x + dx, y: blurred.y + dy });
+    }
+    // Bevel passes are composited SrcATop and cannot paint outside source.
+  }
+  return boundsUnion(parts)!;
+}
+
+function intersectBounds(a: Bounds, b: Bounds): Bounds | null {
+  const x = Math.max(a.x, b.x);
+  const y = Math.max(a.y, b.y);
+  const right = Math.min(a.x + a.width, b.x + b.width);
+  const bottom = Math.min(a.y + a.height, b.y + b.height);
+  return right > x && bottom > y
+    ? { x, y, width: right - x, height: bottom - y }
+    : null;
 }
 
 export function getSelectionBounds(
@@ -298,7 +477,7 @@ export function getSelectionBounds(
 ): Bounds | null {
   return boundsUnion(
     selectedNodeIds
-      .map((id) => unitBounds(document, id))
+      .map((id) => visualBounds(document, id))
       .filter((item): item is Bounds => item !== null),
   );
 }
@@ -339,6 +518,9 @@ export function getRenderNodesForArtboard(
         return;
       }
       for (const childId of node.children) {
+        if (childId === node.clippingMaskId) {
+          continue;
+        }
         visit(childId, opacity * node.opacity, locked || node.locked);
       }
       return;

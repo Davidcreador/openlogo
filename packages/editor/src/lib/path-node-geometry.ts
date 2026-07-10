@@ -1,10 +1,33 @@
 import {
   type NodePatch,
   type PathGeometry,
+  pathCommandsToGeometry,
   pathGeometryBounds,
   pathGeometryToSvg,
   translatePathGeometry,
 } from "@openlogo/core";
+import type { CanvasKit } from "canvaskit-wasm";
+
+/**
+ * Recover canonical geometry for pre-v2/imported path records that only keep
+ * SVG path data. This stays lazy: opening a large legacy document must not
+ * synchronously parse every path before the first frame.
+ */
+export function materializePathGeometry(
+  canvasKit: CanvasKit,
+  d: string,
+): PathGeometry | null {
+  const path = canvasKit.Path.MakeFromSVGString(d);
+  if (!path) {
+    return null;
+  }
+
+  try {
+    return pathCommandsToGeometry(path.toCmds());
+  } finally {
+    path.delete();
+  }
+}
 
 /**
  * Node patch for a path whose artboard-local geometry changed: the

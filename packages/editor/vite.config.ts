@@ -11,4 +11,28 @@ export default defineConfig({
   server: {
     port: 5174,
   },
+  build: {
+    // Keep stable runtime engines independently cacheable from fast-moving
+    // editor code. Vite 8/Rolldown's codeSplitting API replaces manualChunks.
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: "react-runtime",
+              test: /node_modules\/.pnpm\/(?:react|react-dom|scheduler)@/,
+            },
+            {
+              name: "effect-runtime",
+              test: /node_modules\/.pnpm\/effect@/,
+            },
+            {
+              name: "canvaskit-runtime",
+              test: /node_modules\/.pnpm\/canvaskit-wasm@/,
+            },
+          ],
+        },
+      },
+    },
+  },
 });

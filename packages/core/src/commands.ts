@@ -10,6 +10,7 @@ import type {
   GroupNode,
   LogoDocument,
   LogoNode,
+  PathFillRule,
   ShapeParams,
   TextPathAttachment,
 } from "./types";
@@ -43,6 +44,7 @@ export type NodePatch = Partial<
       d: string;
       intrinsicWidth: number;
       intrinsicHeight: number;
+      fillRule: PathFillRule;
       geometry: PathGeometry;
       /** undefined detaches a shape node from its params (bezier edit). */
       shape: ShapeParams | undefined;
@@ -541,6 +543,23 @@ export function applyCommand(
       const { group } = command;
       const list = containerListOf(document, command.containerId);
       if (!list) {
+        return { document, inverse: command };
+      }
+
+      // A clipping relationship is valid only inside the group that owns it.
+      // Reject malformed commands before touching the tree so editor-level
+      // operations remain atomic even if a future caller skips validation.
+      const clippingMask = group.clippingMaskId
+        ? document.nodes[group.clippingMaskId]
+        : undefined;
+      if (
+        group.children.some((childId) => !list.includes(childId)) ||
+        (group.clippingMaskId !== undefined &&
+          (!group.children.includes(group.clippingMaskId) ||
+            (clippingMask?.type !== "rectangle" &&
+              clippingMask?.type !== "ellipse" &&
+              clippingMask?.type !== "path")))
+      ) {
         return { document, inverse: command };
       }
 

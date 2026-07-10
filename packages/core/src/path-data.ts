@@ -731,6 +731,214 @@ export function commandsToGeometry(commands: PathCommand[]): PathGeometry {
 }
 
 /**
+ * Convert CanvasKit's flattened `Path.toCmds()` representation into editable
+ * geometry. CanvasKit verbs are move, line, quad, conic, cubic, and close
+ * (0–5), followed by their absolute coordinates.
+ *
+ * Conics have no exact cubic representation in the general case. Their
+ * control handles use Skia's standard single-cubic approximation; a unit
+ * weight reduces to the exact quadratic elevation.
+ */
+export function pathCommandsToGeometry(
+  commands: ArrayLike<number>,
+): PathGeometry | null {
+  const length = commands.length;
+  if (!Number.isSafeInteger(length) || length <= 0) {
+    return null;
+  }
+
+  const subpaths: SubPath[] = [];
+  let points: PathPoint[] | null = null;
+  let offset = 0;
+
+  const flush = (closed: boolean) => {
+    if (!points) {
+      return;
+    }
+
+    // CanvasKit may retain an explicit final point at the contour origin.
+    // Closing already supplies that segment, so keep one editable anchor.
+    if (closed && points.length > 1) {
+      const first = points[0]!;
+      const last = points[points.length - 1]!;
+      if (
+        Math.abs(first.x - last.x) < 1e-6 &&
+        Math.abs(first.y - last.y) < 1e-6
+      ) {
+        if (last.handleIn) {
+          first.handleIn = last.handleIn;
+        }
+        points.pop();
+      }
+    }
+
+    if (points.length > 1) {
+      subpaths.push({ points, closed });
+    }
+    points = null;
+  };
+
+  while (offset < length) {
+    const verb = commands[offset];
+    offset += 1;
+
+    let argumentCount: number;
+    switch (verb) {
+      case 0:
+      case 1:
+        argumentCount = 2;
+        break;
+      case 2:
+        argumentCount = 4;
+        break;
+      case 3:
+        argumentCount = 5;
+        break;
+      case 4:
+        argumentCount = 6;
+        break;
+      case 5:
+        argumentCount = 0;
+        break;
+      default:
+        return null;
+    }
+
+    if (offset + argumentCount > length) {
+      return null;
+    }
+    for (let index = 0; index < argumentCount; index += 1) {
+      if (!Number.isFinite(commands[offset + index])) {
+        return null;
+      }
+    }
+
+    switch (verb) {
+      case 0:
+        flush(false);
+        points = [
+          {
+            x: commands[offset]!,
+            y: commands[offset + 1]!,
+          },
+        ];
+        break;
+
+      case 1:
+        if (!points) {
+          return null;
+        }
+        points.push({
+          x: commands[offset]!,
+          y: commands[offset + 1]!,
+        });
+        break;
+
+      case 2: {
+        if (!points) {
+          return null;
+        }
+        const previous = points[points.length - 1]!;
+        const controlX = commands[offset]!;
+        const controlY = commands[offset + 1]!;
+        const x = commands[offset + 2]!;
+        const y = commands[offset + 3]!;
+        const handleOut = {
+          x: previous.x + (2 / 3) * (controlX - previous.x),
+          y: previous.y + (2 / 3) * (controlY - previous.y),
+        };
+        const handleIn = {
+          x: x + (2 / 3) * (controlX - x),
+          y: y + (2 / 3) * (controlY - y),
+        };
+        if (
+          !Number.isFinite(handleOut.x) ||
+          !Number.isFinite(handleOut.y) ||
+          !Number.isFinite(handleIn.x) ||
+          !Number.isFinite(handleIn.y)
+        ) {
+          return null;
+        }
+        previous.handleOut = handleOut;
+        points.push({ x, y, handleIn });
+        break;
+      }
+
+      case 3: {
+        if (!points) {
+          return null;
+        }
+        const previous = points[points.length - 1]!;
+        const controlX = commands[offset]!;
+        const controlY = commands[offset + 1]!;
+        const x = commands[offset + 2]!;
+        const y = commands[offset + 3]!;
+        const weight = commands[offset + 4]!;
+        const denominator = 3 * (1 + weight);
+        if (!Number.isFinite(denominator) || denominator <= 0) {
+          return null;
+        }
+        const alpha = (4 * weight) / denominator;
+        if (!Number.isFinite(alpha)) {
+          return null;
+        }
+        const handleOut = {
+          x: previous.x + alpha * (controlX - previous.x),
+          y: previous.y + alpha * (controlY - previous.y),
+        };
+        const handleIn = {
+          x: x + alpha * (controlX - x),
+          y: y + alpha * (controlY - y),
+        };
+        if (
+          !Number.isFinite(handleOut.x) ||
+          !Number.isFinite(handleOut.y) ||
+          !Number.isFinite(handleIn.x) ||
+          !Number.isFinite(handleIn.y)
+        ) {
+          return null;
+        }
+        previous.handleOut = handleOut;
+        points.push({ x, y, handleIn });
+        break;
+      }
+
+      case 4: {
+        if (!points) {
+          return null;
+        }
+        const previous = points[points.length - 1]!;
+        previous.handleOut = {
+          x: commands[offset]!,
+          y: commands[offset + 1]!,
+        };
+        points.push({
+          x: commands[offset + 4]!,
+          y: commands[offset + 5]!,
+          handleIn: {
+            x: commands[offset + 2]!,
+            y: commands[offset + 3]!,
+          },
+        });
+        break;
+      }
+
+      case 5:
+        if (!points) {
+          return null;
+        }
+        flush(true);
+        break;
+    }
+
+    offset += argumentCount;
+  }
+
+  flush(false);
+  return subpaths.length > 0 ? { subpaths } : null;
+}
+
+/**
  * Reverse every subpath's direction: points in reverse order with
  * handleIn/handleOut swapped. Walking the reversed path forward is
  * identical to walking the original backward — this is what "flip" on

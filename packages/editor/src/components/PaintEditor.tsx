@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   type GradientStop,
   type Paint,
@@ -39,6 +39,24 @@ function rampBackground(stops: GradientStop[]): string {
     .join(", ")})`;
 }
 
+/** Midpoint of the largest empty interval: predictable keyboard stop add. */
+export function nextGradientStopOffset(stops: GradientStop[]): number {
+  const offsets = [0, ...stops.map((stop) => stop.offset), 1].sort(
+    (a, b) => a - b,
+  );
+  let bestStart = 0;
+  let bestEnd = 0;
+  for (let index = 1; index < offsets.length; index += 1) {
+    const start = offsets[index - 1]!;
+    const end = offsets[index]!;
+    if (end - start > bestEnd - bestStart) {
+      bestStart = start;
+      bestEnd = end;
+    }
+  }
+  return (bestStart + bestEnd) / 2;
+}
+
 /** Numeric input that commits on blur/Enter (compact, unlabeled). */
 function SmallNumber({
   value,
@@ -66,6 +84,8 @@ function SmallNumber({
         className="w-40 min-w-0 border-0 bg-transparent text-[12px] tabular-nums text-ink outline-none"
         value={draft}
         step={step}
+        min={min}
+        max={max}
         aria-label={ariaLabel}
         onChange={(event) => setDraft(event.target.value)}
         onBlur={() => {
@@ -85,6 +105,9 @@ function SmallNumber({
         onKeyDown={(event) => {
           if (event.key === "Enter") {
             (event.target as HTMLInputElement).blur();
+          } else if (event.key === "Escape") {
+            setDraft(String(value));
+            (event.target as HTMLInputElement).blur();
           }
         }}
       />
@@ -98,6 +121,7 @@ export function PaintEditor({
   label,
   onCommit,
   onPreview,
+  onCancelPreview,
 }: {
   paint: Paint;
   /** Aria prefix, e.g. "Fill" / "Stroke". */
@@ -106,8 +130,12 @@ export function PaintEditor({
   onCommit: (paint: Paint) => void;
   /** Transient change during a chip drag; commit follows on release. */
   onPreview: (paint: Paint) => void;
+  /** Restore the committed paint when a pointer gesture is interrupted. */
+  onCancelPreview: () => void;
 }) {
   const [selectedStop, setSelectedStop] = useState(0);
+  const [previewPaint, setPreviewPaint] = useState<Paint | null>(null);
+  const rampId = useId();
   const rampRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{
     index: number;
@@ -115,21 +143,48 @@ export function PaintEditor({
     moved: boolean;
   } | null>(null);
 
-  const gradient = isGradient(paint) ? paint : null;
+  // Keep the moving chip/ramp local to this small subtree. The document
+  // preview updates CanvasKit directly; no inspector-wide live subscription.
+  const displayedPaint = previewPaint ?? paint;
+  const gradient = isGradient(displayedPaint) ? displayedPaint : null;
   const stopIndex = gradient
     ? Math.min(selectedStop, gradient.stops.length - 1)
     : 0;
   const stop = gradient?.stops[stopIndex];
-  const solidColor = paint.type === "solid" ? paint.color : "#000000";
+  const solidColor =
+    displayedPaint.type === "solid" ? displayedPaint.color : "#000000";
+
+  const finishDrag = (commit: boolean) => {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    setPreviewPaint(null);
+    if (!drag?.moved) {
+      return;
+    }
+    if (commit) {
+      onCommit(drag.paint);
+    } else {
+      onCancelPreview();
+    }
+  };
 
   const toggleButton =
-    "flex-1 rounded-[6px] py-4 text-[11.5px] transition-[background-color,color,box-shadow] duration-120 ease-studio";
+    "min-h-24 flex-1 rounded-[6px] py-4 text-[11.5px] transition-[background-color,color,box-shadow] duration-120 ease-studio";
   const toggleActive =
     "bg-card font-semibold text-ink shadow-[0_1px_2px_rgb(28_25_33/0.1)]";
 
   const offsetFromEvent = (event: React.PointerEvent): number => {
     const rect = rampRef.current!.getBoundingClientRect();
     return Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+  };
+
+  const addStop = (offset: number) => {
+    if (!gradient) {
+      return;
+    }
+    const added = withStopAdded(gradient, offset);
+    setSelectedStop(added.index);
+    onCommit(added.paint);
   };
 
   return (
@@ -151,11 +206,14 @@ export function PaintEditor({
             type="button"
             data-paint-type={type}
             className={`${toggleButton} ${
-              paint.type === type ? `active ${toggleActive}` : "text-ink-dim"
+              displayedPaint.type === type
+                ? `active ${toggleActive}`
+                : "text-ink-dim"
             }`}
+            aria-pressed={displayedPaint.type === type}
             onClick={() => {
-              if (paint.type !== type) {
-                onCommit(convertPaint(paint, type));
+              if (displayedPaint.type !== type) {
+                onCommit(convertPaint(displayedPaint, type));
               }
             }}
           >
@@ -166,19 +224,31 @@ export function PaintEditor({
 
       {gradient ? (
         <div className="mb-10">
+          <div className="mb-6 flex items-center justify-between gap-8">
+            <span className="text-[10.5px] text-ink-dim">Gradient stops</span>
+            <button
+              type="button"
+              className="h-24 rounded-field border border-field-border bg-card px-7 text-[10.5px] text-ink-dim transition-[border-color,color] duration-140 ease-studio hover:border-accent hover:text-accent"
+              aria-controls={rampId}
+              onClick={() => addStop(nextGradientStopOffset(gradient.stops))}
+            >
+              Add stop
+            </button>
+          </div>
           {/* The ramp: click adds a stop, chips drag to reposition. */}
           <div
             ref={rampRef}
+            id={rampId}
             data-testid="gradient-ramp"
             className="relative mb-14 h-16 cursor-copy rounded-[7px] border border-field-border"
             style={{ background: rampBackground(gradient.stops) }}
+            role="group"
+            aria-label={`${label} gradient stops`}
             onPointerDown={(event) => {
               if ((event.target as HTMLElement).dataset.stopChip) {
                 return; // chip drags handle themselves
               }
-              const added = withStopAdded(gradient, offsetFromEvent(event));
-              setSelectedStop(added.index);
-              onCommit(added.paint);
+              addStop(offsetFromEvent(event));
             }}
           >
             {gradient.stops.map((item, index) => (
@@ -187,15 +257,48 @@ export function PaintEditor({
                 type="button"
                 data-stop-chip={index}
                 data-selected={index === stopIndex || undefined}
-                className={`absolute top-[14px] h-14 w-14 -translate-x-1/2 cursor-ew-resize rounded-full border-2 shadow-[0_1px_3px_rgb(28_25_33/0.3)] ${
-                  index === stopIndex ? "border-accent" : "border-white"
-                }`}
-                style={{ left: `${item.offset * 100}%`, background: item.color }}
-                aria-label={`${label} gradient stop ${index + 1}`}
+                className="absolute top-[9px] grid h-24 w-24 -translate-x-1/2 cursor-ew-resize place-items-center rounded-full"
+                style={{ left: `${item.offset * 100}%` }}
+                aria-label={`${label} gradient stop ${index + 1}, ${Math.round(
+                  item.offset * 100,
+                )} percent`}
+                aria-pressed={index === stopIndex}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setSelectedStop(index);
+                    return;
+                  }
+                  const delta = event.shiftKey ? 0.1 : 0.01;
+                  const nextOffset =
+                    event.key === "Home"
+                      ? 0
+                      : event.key === "End"
+                        ? 1
+                        : event.key === "ArrowLeft" || event.key === "ArrowDown"
+                          ? item.offset - delta
+                          : event.key === "ArrowRight" || event.key === "ArrowUp"
+                            ? item.offset + delta
+                            : null;
+                  if (nextOffset === null) {
+                    return;
+                  }
+                  event.preventDefault();
+                  const moved = withStopMoved(
+                    gradient,
+                    index,
+                    Math.min(1, Math.max(0, nextOffset)),
+                  );
+                  if (moved) {
+                    setSelectedStop(moved.index);
+                    onCommit(moved.paint);
+                  }
+                }}
                 onPointerDown={(event) => {
                   event.stopPropagation();
                   event.currentTarget.setPointerCapture(event.pointerId);
                   setSelectedStop(index);
+                  setPreviewPaint(null);
                   dragRef.current = { index, paint: gradient, moved: false };
                 }}
                 onPointerMove={(event) => {
@@ -213,17 +316,22 @@ export function PaintEditor({
                     drag.index = moved.index;
                     drag.moved = true;
                     setSelectedStop(moved.index);
+                    setPreviewPaint(moved.paint);
                     onPreview(moved.paint);
                   }
                 }}
-                onPointerUp={() => {
-                  const drag = dragRef.current;
-                  dragRef.current = null;
-                  if (drag?.moved) {
-                    onCommit(drag.paint);
-                  }
-                }}
-              />
+                onPointerUp={() => finishDrag(true)}
+                onPointerCancel={() => finishDrag(false)}
+                onLostPointerCapture={() => finishDrag(false)}
+              >
+                <span
+                  className={`h-14 w-14 rounded-full border-2 shadow-[0_1px_3px_rgb(28_25_33/0.3)] ${
+                    index === stopIndex ? "border-accent" : "border-white"
+                  }`}
+                  style={{ background: item.color }}
+                  aria-hidden="true"
+                />
+              </button>
             ))}
           </div>
 

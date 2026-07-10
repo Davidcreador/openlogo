@@ -20,7 +20,25 @@ import {
  */
 export const documentStore = new DocumentStore(createInitialDocument());
 
+/**
+ * React chrome observes committed states only. Live gestures are rendered by
+ * CanvasKit directly, so preview-frame broadcasts must not regenerate every
+ * inspector section, layer thumbnail, and export preview.
+ */
 export function useDocument(): LogoDocument {
+  return useSyncExternalStore(
+    (onChange) =>
+      documentStore.subscribe((_document, kind) => {
+        if (kind === "committed") {
+          onChange();
+        }
+      }),
+    () => documentStore.committedDocument,
+  );
+}
+
+/** Opt-in hook for the small number of overlays that must follow previews. */
+export function useLiveDocument(): LogoDocument {
   return useSyncExternalStore(
     (onChange) => documentStore.subscribe(onChange),
     () => documentStore.document,

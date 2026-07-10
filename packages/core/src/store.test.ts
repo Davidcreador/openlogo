@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createInitialDocument } from "./factory";
 import { getActiveArtboard } from "./queries";
-import { DocumentStore } from "./store";
+import { DocumentStore, type DocumentChangeKind } from "./store";
 
 function firstNodeId(store: DocumentStore): string {
   return getActiveArtboard(store.document).nodeIds[0]!;
@@ -96,6 +96,46 @@ describe("DocumentStore", () => {
     unsubscribe();
     store.undo();
     expect(calls).toBe(1);
+  });
+
+  it("labels apply, undo, and redo as committed changes", () => {
+    const store = new DocumentStore(createInitialDocument());
+    const nodeId = firstNodeId(store);
+    const kinds: DocumentChangeKind[] = [];
+    store.subscribe((_document, kind) => kinds.push(kind));
+
+    store.apply({ type: "update-nodes", updates: [{ nodeId, patch: { x: 1 } }] });
+    expect(store.committedDocument).toBe(store.document);
+    store.undo();
+    store.redo();
+
+    expect(kinds).toEqual(["committed", "committed", "committed"]);
+  });
+
+  it("labels previews as transient and reset as committed", () => {
+    const store = new DocumentStore(createInitialDocument());
+    const nodeId = firstNodeId(store);
+    const originalX = store.document.nodes[nodeId]!.x;
+    const originalDocument = store.document;
+    const kinds: DocumentChangeKind[] = [];
+    store.subscribe((_document, kind) => kinds.push(kind));
+
+    store.preview([{ nodeId, patch: { x: 800 } }]);
+    expect(store.committedDocument).toBe(originalDocument);
+    expect(store.document).not.toBe(originalDocument);
+    store.cancelPreview();
+    expect(store.document.nodes[nodeId]!.x).toBe(originalX);
+
+    store.preview([{ nodeId, patch: { x: 900 } }]);
+
+    const replacement = createInitialDocument();
+    store.reset(replacement);
+
+    expect(kinds).toEqual(["preview", "preview", "preview", "committed"]);
+    expect(store.document).toBe(replacement);
+    expect(store.committedDocument).toBe(store.document);
+    expect(store.canUndo).toBe(false);
+    expect(store.canRedo).toBe(false);
   });
 
   it("new apply clears the redo stack", () => {

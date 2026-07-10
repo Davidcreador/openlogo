@@ -43,7 +43,7 @@ const TOOL_BUTTON =
 const TOOL_BUTTON_ACTIVE =
   "bg-linear-to-b from-[#5d77f7] to-accent text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.24),0_2px_8px_rgb(79_107_246/0.45)]";
 const TOOL_BUTTON_IDLE =
-  "text-chrome-dim hover:bg-chrome-raised hover:text-chrome-text";
+  "text-chrome-dim hover:bg-chrome-raised hover:text-chrome-text aria-disabled:cursor-not-allowed aria-disabled:opacity-40";
 
 /**
  * Rectangle tool slot with a shape-library flyout: click activates the
@@ -55,6 +55,8 @@ function ShapeToolSlot() {
   const [open, setOpen] = useState(false);
   const [lastShape, setLastShape] = useState<ToolSpec>(SHAPE_TOOLS[0]!);
   const anchorRef = useRef<HTMLDivElement | null>(null);
+  const mainButtonRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const openedByPress = useRef(false);
 
@@ -74,14 +76,53 @@ function ShapeToolSlot() {
         setOpen(false);
       }
     }
+    const focusFrame = requestAnimationFrame(() => {
+      const buttons = menuRef.current?.querySelectorAll<HTMLButtonElement>(
+        "button:not([disabled])",
+      );
+      const activeIndex = SHAPE_TOOLS.findIndex((item) => item.id === current.id);
+      buttons?.[Math.max(0, activeIndex)]?.focus();
+    });
     window.addEventListener("pointerdown", onPointerDown);
-    return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [open]);
+    return () => {
+      cancelAnimationFrame(focusFrame);
+      window.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [current.id, open]);
 
   function pick(item: ToolSpec) {
     setLastShape(item);
     setTool(item.id);
     setOpen(false);
+    requestAnimationFrame(() => mainButtonRef.current?.focus());
+  }
+
+  function handleMenuKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    const buttons = Array.from(
+      menuRef.current?.querySelectorAll<HTMLButtonElement>(
+        "button:not([disabled])",
+      ) ?? [],
+    );
+    const currentIndex = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+      nextIndex = (currentIndex + 1 + buttons.length) % buttons.length;
+    } else if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
+      nextIndex = (currentIndex - 1 + buttons.length) % buttons.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = buttons.length - 1;
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setOpen(false);
+      mainButtonRef.current?.focus();
+      return;
+    }
+    if (nextIndex !== null && buttons[nextIndex]) {
+      event.preventDefault();
+      buttons[nextIndex]!.focus();
+    }
   }
 
   function clearPressTimer() {
@@ -94,6 +135,7 @@ function ShapeToolSlot() {
   return (
     <div className="tool-flyout-anchor relative" ref={anchorRef}>
       <button
+        ref={mainButtonRef}
         type="button"
         className={`${TOOL_BUTTON} relative ${
           active ? `active ${TOOL_BUTTON_ACTIVE}` : TOOL_BUTTON_IDLE
@@ -108,6 +150,7 @@ function ShapeToolSlot() {
         }}
         onPointerUp={clearPressTimer}
         onPointerLeave={clearPressTimer}
+        onPointerCancel={clearPressTimer}
         onClick={() => {
           if (openedByPress.current) {
             openedByPress.current = false;
@@ -122,6 +165,15 @@ function ShapeToolSlot() {
         title={`${current.label}${current.shortcut ? ` (${current.shortcut})` : ""} — hold for more shapes`}
         aria-label={`${current.label}${current.shortcut ? ` (${current.shortcut})` : ""}`}
         aria-pressed={active}
+        aria-haspopup="true"
+        aria-expanded={open}
+        aria-controls="shape-tool-menu"
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+            event.preventDefault();
+            setOpen(true);
+          }
+        }}
       >
         <Icon size={18} strokeWidth={1.75} />
       </button>
@@ -130,11 +182,29 @@ function ShapeToolSlot() {
         className="tool-flyout-caret"
         onClick={() => setOpen((value) => !value)}
         title="Shape library"
-        aria-label="Shape library"
+        aria-label="Open shape library"
         aria-expanded={open}
+        aria-haspopup="true"
+        aria-controls="shape-tool-menu"
       />
       {open && (
-        <div className="tool-flyout menu" role="menu" aria-label="Shapes">
+        <div
+          ref={menuRef}
+          id="shape-tool-menu"
+          className="tool-flyout menu"
+          role="group"
+          aria-label="Shapes"
+          onKeyDown={handleMenuKeyDown}
+          onBlur={(event) => {
+            const next = event.relatedTarget as Node | null;
+            if (
+              !event.currentTarget.contains(next) &&
+              !anchorRef.current?.contains(next)
+            ) {
+              setOpen(false);
+            }
+          }}
+        >
           {SHAPE_TOOLS.map((item) => {
             const ItemIcon = item.icon;
             return (
@@ -142,7 +212,8 @@ function ShapeToolSlot() {
                 key={item.id}
                 type="button"
                 className={`menu-item ${tool === item.id ? "active" : ""}`}
-                role="menuitem"
+                data-shape-id={item.id}
+                aria-pressed={tool === item.id}
                 onClick={() => pick(item)}
               >
                 <ItemIcon size={14} strokeWidth={1.75} />
@@ -180,10 +251,12 @@ const AFTER_SHAPES: ToolSpec[] = [
 export function Toolbar() {
   const tool = useEditorStore((state) => state.tool);
   const setTool = useEditorStore((state) => state.setTool);
+  const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
 
   const renderButton = (item: ToolSpec) => {
     const Icon = item.icon;
     const title = item.shortcut ? `${item.label} (${item.shortcut})` : item.label;
+    const unavailable = item.id === "shapeBuilder" && selectedNodeIds.length < 2;
     return (
       <button
         key={item.id}
@@ -191,10 +264,15 @@ export function Toolbar() {
         className={`${TOOL_BUTTON} ${
           tool === item.id ? `active ${TOOL_BUTTON_ACTIVE}` : TOOL_BUTTON_IDLE
         }`}
-        onClick={() => setTool(item.id)}
+        onClick={() => {
+          if (!unavailable) {
+            setTool(item.id);
+          }
+        }}
         title={title}
         aria-label={title}
         aria-pressed={tool === item.id}
+        aria-disabled={unavailable}
       >
         <Icon size={18} strokeWidth={1.75} />
       </button>

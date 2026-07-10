@@ -1,6 +1,6 @@
 import { getActiveArtboard, isGradient } from "@openlogo/core";
 import { worldToScreen } from "@openlogo/renderer";
-import { useDocument } from "../state/document";
+import { useLiveDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
 import { gradientHandlePoints } from "./gradient-annotator";
 
@@ -14,7 +14,7 @@ const LINE = "#4f6bf6";
  * the canvas is untouched (pointer-events: none throughout).
  */
 export function GradientAnnotator() {
-  const document = useDocument();
+  const document = useLiveDocument();
   const camera = useEditorStore((state) => state.camera);
   const tool = useEditorStore((state) => state.tool);
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);

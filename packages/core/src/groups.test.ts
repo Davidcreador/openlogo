@@ -15,7 +15,11 @@ import {
   unitBounds,
 } from "./queries";
 import { parseDocument } from "./schema";
-import type { GroupNode, LogoDocument } from "./types";
+import {
+  DOCUMENT_SCHEMA_VERSION,
+  type GroupNode,
+  type LogoDocument,
+} from "./types";
 
 /** Initial doc has 3 nodes; group the bottom and top ones (non-contiguous). */
 function docWithGroup(): {
@@ -427,7 +431,7 @@ describe("schema v1 → v2 migration", () => {
     raw.nodes[top!]!.groupId = "group_legacy";
 
     const migrated = parseDocument(raw);
-    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.schemaVersion).toBe(DOCUMENT_SCHEMA_VERSION);
 
     const ids = migrated.artboards[0]!.nodeIds;
     expect(ids).toHaveLength(2);

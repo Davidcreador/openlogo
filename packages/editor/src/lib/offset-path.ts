@@ -55,6 +55,8 @@ export async function offsetPathOp(
     fill: structuredClone(node.fill),
     ...(node.stroke ? { stroke: { ...node.stroke } } : {}),
     d: result.d,
+    fillRule: result.fillRule,
+    geometry: result.geometry,
     intrinsicWidth: result.width,
     intrinsicHeight: result.height,
   };

@@ -230,6 +230,7 @@ export function shapeNodeFromGeometry(
     fill: { type: "solid", color: options.fill ?? "#111827" },
     ...(options.stroke ? { stroke: options.stroke } : {}),
     d: pathGeometryToSvg(normalized),
+    fillRule: "nonzero",
     intrinsicWidth: width,
     intrinsicHeight: height,
     geometry: normalized,

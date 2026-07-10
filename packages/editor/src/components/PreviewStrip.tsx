@@ -31,13 +31,20 @@ export function PreviewStrip() {
         className="preview-toggle flex w-full items-center gap-6 px-12 py-8 text-[10.5px] font-[650] uppercase tracking-[0.07em] text-ink-dim transition-colors duration-140 ease-studio hover:text-ink"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
+        aria-controls="logo-production-previews"
       >
         <span>Preview</span>
-        {open ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
+        {open ? (
+          <ChevronDown size={13} aria-hidden="true" />
+        ) : (
+          <ChevronUp size={13} aria-hidden="true" />
+        )}
       </button>
       {open && (
         <div
+          id="logo-production-previews"
           className="flex items-end gap-12 px-12 pb-12 pt-2"
+          role="group"
           aria-label="Logo production previews"
         >
           {SIZES.map((size) => (
@@ -50,7 +57,7 @@ export function PreviewStrip() {
                   12,
                   Math.round((size * artboard.height) / artboard.width),
                 )}
-                alt={`${size}px preview`}
+                alt={`Logo preview at ${size} pixels wide`}
               />
               <span className="text-[10px] tabular-nums text-ink-dim">{size}</span>
             </div>

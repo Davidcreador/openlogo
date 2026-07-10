@@ -58,6 +58,20 @@ describe("applyCommand", () => {
     expect(reverted.nodes[nodeId]!.opacity).toBe(original.opacity);
   });
 
+  it("updates and restores a path fill rule", () => {
+    const doc = createInitialDocument();
+    const path = Object.values(doc.nodes).find((node) => node.type === "path")!;
+
+    const { document: next, inverse } = applyCommand(doc, {
+      type: "update-nodes",
+      updates: [{ nodeId: path.id, patch: { fillRule: "evenodd" } }],
+    });
+    expect(next.nodes[path.id]).toMatchObject({ fillRule: "evenodd" });
+
+    const { document: reverted } = applyCommand(next, inverse);
+    expect(reverted.nodes[path.id]).toMatchObject({ fillRule: "nonzero" });
+  });
+
   it("reorder-node inverse restores original order", () => {
     const doc = createInitialDocument();
     const artboard = getActiveArtboard(doc);

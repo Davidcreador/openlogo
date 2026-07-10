@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { getActiveArtboard, parseDocumentEffect } from "@openlogo/core";
 import { documentToSvg, downloadTextFile, nodesToSvg } from "./export";
+import { documentLibrary } from "./document-library";
 import { ensureDocumentFonts } from "./text-to-path";
 import { documentStore } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
@@ -8,8 +9,8 @@ import { useEditorStore } from "../state/editor-store";
 /**
  * .openlogo documents: plain JSON of the LogoDocument, gated on load by
  * the same zod parse + referential sanitize every untrusted payload goes
- * through (parseDocument). Autosave/IndexedDB is untouched — opening a
- * file resets the store and the next autosave persists it as usual.
+ * through (parseDocument). Opening imports an independent local document;
+ * a colliding document id becomes a copy instead of overwriting a head.
  */
 
 export const OPENLOGO_EXTENSION = ".openlogo";
@@ -60,8 +61,17 @@ export const openDocumentFile = (
       ),
     );
 
+    yield* Effect.tryPromise({
+      try: () => documentLibrary.importDocument(document),
+      catch: (error) =>
+        openError(
+          error instanceof Error
+            ? error.message
+            : `Could not import “${file.name}” into the Document library.`,
+        ),
+    });
+
     yield* Effect.sync(() => {
-      documentStore.reset(document);
       const state = useEditorStore.getState();
       state.setSelection([]);
       state.setActiveGroupId(null);

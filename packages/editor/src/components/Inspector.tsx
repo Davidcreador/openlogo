@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 // Aliased: this file already imports the domain `Effect` (layer effect) type.
 import { Effect as Fx } from "effect";
 import {
@@ -16,6 +16,7 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
+  Crop,
   Eye,
   EyeOff,
   FlipHorizontal2,
@@ -45,6 +46,8 @@ import {
   type TextNode,
   analyzeLogoDocument,
   collectLeafNodeIds,
+  findContainerId,
+  getClippingMaskOwnerId,
   getContainerChildIds,
   kernedPairCount,
   shapeDisplayName,
@@ -70,6 +73,7 @@ import {
   rotateCopies,
 } from "../lib/object-ops";
 import { colorInfo } from "../lib/color-info";
+import { releaseClippingMask } from "../lib/clipping-mask";
 import { nodeToPreviewSvg } from "../lib/export";
 import { offsetPathOp } from "../lib/offset-path";
 import { editSwatch } from "../lib/swatches";
@@ -127,7 +131,7 @@ const STROKE_TOGGLE_BASE =
 const STROKE_TOGGLE = `${STROKE_TOGGLE_BASE} border-field-border text-ink-dim hover:border-accent hover:text-accent`;
 const STROKE_TOGGLE_ACTIVE = `${STROKE_TOGGLE_BASE} border-accent text-accent`;
 const SELECT =
-  "h-28 rounded-field border border-field-border bg-field px-6 text-[12px] text-ink outline-none";
+  "h-28 rounded-field border border-field-border bg-field px-6 text-[12px] text-ink outline-none transition-[border-color,box-shadow] duration-140 ease-studio focus:border-accent focus:bg-card focus:shadow-ring";
 const TEXT_INPUT =
   "h-28 rounded-field border border-field-border bg-field px-8 text-[12.5px] text-ink outline-none transition-[border-color,box-shadow] duration-140 ease-studio focus:border-accent focus:bg-card focus:shadow-ring";
 const OUTLINE_BUTTON =
@@ -140,12 +144,14 @@ const OUTLINE_BUTTON =
  */
 function NumberField({
   label,
+  ariaLabel,
   value,
   onCommit,
   step = 1,
   unit,
 }: {
   label: string;
+  ariaLabel?: string;
   value: number;
   onCommit: (value: number) => void;
   step?: number;
@@ -212,10 +218,14 @@ function NumberField({
         type="number"
         step={step}
         value={draft}
+        aria-label={ariaLabel ?? label}
         onChange={(event) => setDraft(event.target.value)}
         onBlur={() => commitNumber(Number(draft))}
         onKeyDown={(event) => {
           if (event.key === "Enter") {
+            (event.target as HTMLInputElement).blur();
+          } else if (event.key === "Escape") {
+            setDraft(String(Math.round(value * 100) / 100));
             (event.target as HTMLInputElement).blur();
           }
         }}
@@ -369,10 +379,12 @@ function FillEditor({
   node,
   patchSelection,
   previewSelection,
+  cancelPreview,
 }: {
   node: LogoNode;
   patchSelection: (patch: NodePatch) => void;
   previewSelection: (patch: NodePatch) => void;
+  cancelPreview: () => void;
 }) {
   return (
     <>
@@ -381,6 +393,7 @@ function FillEditor({
         label="Fill"
         onCommit={(fill) => patchSelection({ fill })}
         onPreview={(fill) => previewSelection({ fill })}
+        onCancelPreview={cancelPreview}
       />
       <div className={`${OPACITY_FIELD} mb-10`}>
         <input
@@ -405,13 +418,16 @@ function StrokeEditor({
   node,
   patchSelection,
   previewSelection,
+  cancelPreview,
 }: {
   node: LogoNode;
   patchSelection: (patch: NodePatch) => void;
   previewSelection: (patch: NodePatch) => void;
+  cancelPreview: () => void;
 }) {
   const stroke = node.stroke;
   const [showPaint, setShowPaint] = useState(false);
+  const paintEditorId = useId();
   const strokeIsGradient = Boolean(stroke?.paint && stroke.paint.type !== "solid");
 
   // A gradient stroke edits through the shared PaintEditor; `color`
@@ -436,6 +452,8 @@ function StrokeEditor({
         <button
           type="button"
           className={STROKE_TOGGLE}
+          aria-label={stroke ? "Remove stroke" : "Add stroke"}
+          aria-pressed={Boolean(stroke)}
           onClick={() =>
             patchSelection({
               stroke: stroke
@@ -461,10 +479,12 @@ function StrokeEditor({
               title="Stroke paint"
               aria-label="Stroke paint"
               aria-expanded={showPaint}
+              aria-controls={paintEditorId}
               onClick={() => setShowPaint((value) => !value)}
             />
             <NumberField
               label="W"
+              ariaLabel="Stroke width"
               unit="px"
               value={stroke.width}
               step={0.5}
@@ -484,7 +504,7 @@ function StrokeEditor({
             )}
           </div>
           {(showPaint || strokeIsGradient) && (
-            <div className="stroke-paint mt-8">
+            <div id={paintEditorId} className="stroke-paint mt-8">
               <PaintEditor
                 paint={stroke.paint ?? { type: "solid", color: stroke.color }}
                 label="Stroke"
@@ -492,6 +512,7 @@ function StrokeEditor({
                 onPreview={(paint) =>
                   previewSelection({ stroke: strokeWithPaint(paint) })
                 }
+                onCancelPreview={cancelPreview}
               />
             </div>
           )}
@@ -505,10 +526,12 @@ function DesignSection({
   node,
   patchSelection,
   previewSelection,
+  cancelPreview,
 }: {
   node: LogoNode;
   patchSelection: (patch: NodePatch) => void;
   previewSelection: (patch: NodePatch) => void;
+  cancelPreview: () => void;
 }) {
   const document = useDocument();
   const setSelection = useEditorStore((state) => state.setSelection);
@@ -610,12 +633,37 @@ function DesignSection({
         node={node}
         patchSelection={patchSelection}
         previewSelection={previewSelection}
+        cancelPreview={cancelPreview}
       />
       <StrokeEditor
         node={node}
         patchSelection={patchSelection}
         previewSelection={previewSelection}
+        cancelPreview={cancelPreview}
       />
+
+      {node.type === "path" && (
+        <>
+          <div className={STROKE_HEAD}>
+            <span>Fill rule</span>
+          </div>
+          <div className={`${FIELD_ROW} mb-10`}>
+            <select
+              className={`${SELECT} min-w-0 flex-1`}
+              value={node.fillRule}
+              aria-label="Path fill rule"
+              onChange={(event) =>
+                patchSelection({
+                  fillRule: event.target.value as typeof node.fillRule,
+                })
+              }
+            >
+              <option value="nonzero">Non-zero winding</option>
+              <option value="evenodd">Even-odd holes</option>
+            </select>
+          </div>
+        </>
+      )}
 
       <div className={STROKE_HEAD}>
         <span>Blend</span>
@@ -646,6 +694,7 @@ function DesignSection({
       <div className="rotate-copies mb-10 flex items-center gap-6">
         <NumberField
           label="×"
+          ariaLabel="Rotated copy count"
           value={copiesCount}
           onCommit={(value) =>
             setCopiesCount(Math.max(2, Math.min(64, Math.round(value))))
@@ -672,6 +721,7 @@ function DesignSection({
         <div className="offset-path mb-10 flex items-center gap-6">
           <NumberField
             label="±"
+            ariaLabel="Path offset amount"
             unit="px"
             value={offsetAmount}
             onCommit={(value) => setOffsetAmount(Math.round(value * 10) / 10)}
@@ -833,6 +883,7 @@ function DesignSection({
                   onClick={() => patchSelection({ align })}
                   title={`Align ${align}`}
                   aria-label={`Align ${align}`}
+                  aria-pressed={node.align === align}
                 >
                   <Icon size={14} />
                 </button>
@@ -1122,6 +1173,8 @@ function EffectsSection({ node }: { node: LogoNode }) {
               className={`effect-row rounded-field border border-field-border px-8 pb-5 pt-7${
                 effect.enabled ? "" : " is-off"
               }`}
+              role="group"
+              aria-label={`${EFFECT_LABELS[effect.type]} effect`}
             >
               <div className="mb-6 flex items-center justify-between">
                 <label className="inline-flex cursor-pointer items-center gap-6 text-[12px] font-semibold text-ink">
@@ -1310,13 +1363,50 @@ function EffectsSection({ node }: { node: LogoNode }) {
   );
 }
 
+function ClippingPathOwnershipSection({ ownerId }: { ownerId: string }) {
+  const document = useDocument();
+  const setSelection = useEditorStore((state) => state.setSelection);
+  const owner = document.nodes[ownerId];
+  if (owner?.type !== "group" || !owner.clippingMaskId) {
+    return null;
+  }
+
+  return (
+    <section className={SECTION}>
+      <header className={SECTION_HEAD}>
+        <h2 className={`${SECTION_H2} flex items-center gap-5`}>
+          <Crop size={12} aria-hidden="true" /> Clipping path
+        </h2>
+        <span className={SECTION_META}>Owned by {owner.name}</span>
+      </header>
+      <p className={`${MUTED} mb-10`}>
+        This shape clips its sibling content. Fill, stroke, opacity and effects
+        are stored but do not paint until the mask is released.
+      </p>
+      <button
+        type="button"
+        className={OUTLINE_BUTTON}
+        onClick={() => setSelection([owner.id])}
+      >
+        Select clipping group
+      </button>
+    </section>
+  );
+}
+
 function GroupSection({ group }: { group: GroupNode }) {
   const document = useDocument();
   const setSelection = useEditorStore((state) => state.setSelection);
   // Remount key so the rotate-by field snaps back to 0 after committing.
   const [rotateNonce, setRotateNonce] = useState(0);
-  const bounds = unitBounds(document, group.id);
+  const bounds =
+    unitBounds(document, group.id) ??
+    (group.clippingMaskId
+      ? unitBounds(document, group.clippingMaskId)
+      : null);
   const leafCount = collectLeafNodeIds(document, [group.id]).length;
+  const isClippingGroup = group.clippingMaskId !== undefined;
+  const contentCount = Math.max(0, leafCount - (isClippingGroup ? 1 : 0));
 
   if (!bounds) {
     return null;
@@ -1325,11 +1415,22 @@ function GroupSection({ group }: { group: GroupNode }) {
   return (
     <section className={SECTION}>
       <header className={SECTION_HEAD}>
-        <h2 className={SECTION_H2}>Group</h2>
+        <h2 className={SECTION_H2}>
+          {isClippingGroup ? "Clipping group" : "Group"}
+        </h2>
         <span className={SECTION_META}>
-          {leafCount} object{leafCount === 1 ? "" : "s"}
+          {isClippingGroup
+            ? `${contentCount} content object${contentCount === 1 ? "" : "s"}`
+            : `${leafCount} object${leafCount === 1 ? "" : "s"}`}
         </span>
       </header>
+
+      {isClippingGroup && (
+        <p className={`${MUTED} mb-10`}>
+          The clipping path controls the visible area. Its original paint is
+          preserved and returns when you release the mask.
+        </p>
+      )}
 
       <AlignPanel nodeIds={[group.id]} />
 
@@ -1440,13 +1541,15 @@ function GroupSection({ group }: { group: GroupNode }) {
         type="button"
         className={OUTLINE_BUTTON}
         onClick={() => {
-          const freed = ungroupSelection([group.id]);
-          if (freed.length > 0) {
+          const freed = isClippingGroup
+            ? releaseClippingMask([group.id])
+            : ungroupSelection([group.id]);
+          if (freed && freed.length > 0) {
             setSelection(freed);
           }
         }}
       >
-        Ungroup (⇧⌘G)
+        {isClippingGroup ? "Release clipping mask (⌥⌘7)" : "Ungroup (⇧⌘G)"}
       </button>
     </section>
   );
@@ -1499,7 +1602,7 @@ function SwatchesSection() {
         </p>
       ) : (
         <p className={`${MUTED} mt-8`}>
-          Editing a swatch recolors every use. Hover for print values.
+          Editing a swatch recolors every use. Focus or hover for print values.
         </p>
       )}
     </section>
@@ -1578,8 +1681,13 @@ function LayerRenameField({
   onDone: () => void;
 }) {
   const [draft, setDraft] = useState(node.name);
+  const cancelledRef = useRef(false);
 
   function commit() {
+    if (cancelledRef.current) {
+      onDone();
+      return;
+    }
     const name = draft.trim();
     if (name && name !== node.name) {
       documentStore.apply({
@@ -1603,6 +1711,7 @@ function LayerRenameField({
         if (event.key === "Enter") {
           (event.target as HTMLInputElement).blur();
         } else if (event.key === "Escape") {
+          cancelledRef.current = true;
           onDone();
         }
       }}
@@ -1633,6 +1742,7 @@ function LayersSection() {
   const [drop, setDrop] = useState<DropSpec | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [announcement, setAnnouncement] = useState("");
 
   const artboard = document.artboards.find(
     (item) => item.id === document.activeArtboardId,
@@ -1659,6 +1769,82 @@ function LayersSection() {
       }
       return next;
     });
+  }
+
+  function moveLayerByKeyboard(row: LayerRow, direction: -1 | 1) {
+    const siblings = getContainerChildIds(document, row.containerId);
+    const toIndex = Math.min(
+      siblings.length - 1,
+      Math.max(0, row.zIndex + direction),
+    );
+    if (toIndex === row.zIndex) {
+      setAnnouncement(
+        `${row.node.name} is already at the ${direction > 0 ? "top" : "bottom"}.`,
+      );
+      return;
+    }
+    documentStore.apply({
+      type: "reorder-node",
+      containerId: row.containerId,
+      nodeId: row.node.id,
+      toIndex,
+    });
+    setAnnouncement(
+      `${row.node.name} moved ${direction > 0 ? "up" : "down"} to position ${
+        siblings.length - toIndex
+      } of ${siblings.length}.`,
+    );
+  }
+
+  function indentLayerByKeyboard(row: LayerRow, rowIndex: number) {
+    let previousSibling: LayerRow | undefined;
+    for (let index = rowIndex - 1; index >= 0; index -= 1) {
+      const candidate = rows[index]!;
+      if (candidate.depth < row.depth) {
+        break;
+      }
+      if (candidate.depth === row.depth) {
+        previousSibling = candidate;
+        break;
+      }
+    }
+    if (
+      previousSibling?.containerId !== row.containerId ||
+      previousSibling.node.type !== "group"
+    ) {
+      setAnnouncement(`${row.node.name} has no group directly above it.`);
+      return;
+    }
+    const targetGroup = previousSibling.node;
+    moveUnitToContainer(
+      row.node.id,
+      targetGroup.id,
+      getContainerChildIds(document, targetGroup.id).length,
+    );
+    setExpanded((current) => new Set(current).add(targetGroup.id));
+    setAnnouncement(`${row.node.name} moved into ${targetGroup.name}.`);
+  }
+
+  function outdentLayerByKeyboard(row: LayerRow) {
+    const parentGroup = document.nodes[row.containerId];
+    if (parentGroup?.type !== "group") {
+      setAnnouncement(`${row.node.name} is already at the artboard level.`);
+      return;
+    }
+    const targetContainerId = findContainerId(document, parentGroup.id);
+    if (!targetContainerId) {
+      return;
+    }
+    const parentIndex = getContainerChildIds(
+      document,
+      targetContainerId,
+    ).indexOf(parentGroup.id);
+    moveUnitToContainer(
+      row.node.id,
+      targetContainerId,
+      Math.max(0, parentIndex),
+    );
+    setAnnouncement(`${row.node.name} moved out of ${parentGroup.name}.`);
   }
 
   /**
@@ -1760,6 +1946,15 @@ function LayersSection() {
           {objectCount} object{objectCount === 1 ? "" : "s"}
         </span>
       </header>
+      <p id="layer-keyboard-help" className="sr-only">
+        Press F2 to rename. Hold Alt and press Arrow Up or Arrow Down to
+        reorder within the current group. Alt Arrow Right moves a layer into
+        the group directly above it; Alt Arrow Left moves it out of its current
+        group. On a group, press Alt Enter to open it.
+      </p>
+      <p className="sr-only" aria-live="polite" aria-atomic="true">
+        {announcement}
+      </p>
       <div className="layer-rows">
         {rows.map((row, rowIndex) => {
           const { node } = row;
@@ -1767,7 +1962,11 @@ function LayersSection() {
           const isGroup = node.type === "group";
           const isExpanded = isGroup && expanded.has(node.id);
           const renaming = renamingId === node.id;
+          const clippingOwnerId = getClippingMaskOwnerId(document, node.id);
+          const isClippingPath = clippingOwnerId !== null;
+          const isClippingGroup = isGroup && node.clippingMaskId !== undefined;
           const badge = [
+            isClippingPath ? "Mask" : isClippingGroup ? "Clip" : null,
             node.blendMode ? BLEND_BADGES[node.blendMode] : null,
             node.opacity !== 1 ? `${Math.round(node.opacity * 100)}%` : null,
           ]
@@ -1781,8 +1980,15 @@ function LayersSection() {
               className={`layer-row${selected ? " active" : ""}${
                 node.visible ? "" : " is-hidden"
               }${dropClass}`}
-              draggable={!renaming}
+              draggable={!renaming && !isClippingPath}
               onDragStart={(event) => {
+                if (isClippingPath) {
+                  event.preventDefault();
+                  setAnnouncement(
+                    "Release the clipping mask before moving its clipping path.",
+                  );
+                  return;
+                }
                 dragRef.current = row;
                 event.dataTransfer.effectAllowed = "move";
               }}
@@ -1825,7 +2031,8 @@ function LayersSection() {
                   className="layer-caret"
                   onClick={() => toggleExpanded(node.id)}
                   title={isExpanded ? "Collapse" : "Expand"}
-                  aria-label={isExpanded ? "Collapse group" : "Expand group"}
+                  aria-label={`${isExpanded ? "Collapse" : "Expand"} ${node.name}`}
+                  aria-expanded={isExpanded}
                 >
                   {isExpanded ? (
                     <ChevronDown size={12} />
@@ -1836,30 +2043,88 @@ function LayersSection() {
               ) : (
                 hasGroups && <i className="layer-caret-space" />
               )}
-              <button
-                type="button"
-                className="layer-main"
-                onClick={(event) =>
-                  setSelection(
-                    event.shiftKey && !selected
-                      ? [...selectedNodeIds, node.id]
-                      : [node.id],
-                  )
-                }
-                onDoubleClick={() => {
-                  if (isGroup) {
-                    setActiveGroupId(node.id);
-                    toggleExpanded(node.id);
-                  }
-                }}
-              >
-                <LayerThumb document={document} node={node} />
-                {renaming ? (
+              {renaming ? (
+                <div className="layer-main">
+                  <LayerThumb document={document} node={node} />
                   <LayerRenameField
                     node={node}
                     onDone={() => setRenamingId(null)}
                   />
-                ) : (
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="layer-main"
+                  aria-label={
+                    isClippingPath
+                      ? `${node.name}, clipping path owned by ${
+                          document.nodes[clippingOwnerId]?.name ??
+                          "clipping group"
+                        }`
+                      : isClippingGroup
+                        ? `${node.name}, clipping group, ${node.children.length - 1} content layers and one clipping path`
+                        : isGroup
+                      ? `${node.name}, group, ${node.children.length} layers`
+                      : node.name
+                  }
+                  aria-pressed={selected}
+                  aria-describedby="layer-keyboard-help"
+                  aria-keyshortcuts={
+                    isGroup
+                      ? "F2 Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight Alt+Enter"
+                      : "F2 Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight"
+                  }
+                  onClick={(event) =>
+                    setSelection(
+                      event.shiftKey && !selected
+                        ? [...selectedNodeIds, node.id]
+                        : [node.id],
+                    )
+                  }
+                  onDoubleClick={() => {
+                    if (isGroup) {
+                      setActiveGroupId(node.id);
+                      toggleExpanded(node.id);
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "F2") {
+                      event.preventDefault();
+                      setRenamingId(node.id);
+                    } else if (event.altKey && event.key === "ArrowUp") {
+                      event.preventDefault();
+                      moveLayerByKeyboard(row, 1);
+                    } else if (event.altKey && event.key === "ArrowDown") {
+                      event.preventDefault();
+                      moveLayerByKeyboard(row, -1);
+                    } else if (event.altKey && event.key === "ArrowRight") {
+                      event.preventDefault();
+                      if (isClippingPath) {
+                        setAnnouncement(
+                          "Release the clipping mask before moving its clipping path.",
+                        );
+                      } else {
+                        indentLayerByKeyboard(row, rowIndex);
+                      }
+                    } else if (event.altKey && event.key === "ArrowLeft") {
+                      event.preventDefault();
+                      if (isClippingPath) {
+                        setAnnouncement(
+                          "Release the clipping mask before moving its clipping path.",
+                        );
+                      } else {
+                        outdentLayerByKeyboard(row);
+                      }
+                    } else if (event.altKey && event.key === "Enter" && isGroup) {
+                      event.preventDefault();
+                      setActiveGroupId(node.id);
+                      if (!isExpanded) {
+                        toggleExpanded(node.id);
+                      }
+                    }
+                  }}
+                >
+                  <LayerThumb document={document} node={node} />
                   <span
                     className="layer-name"
                     title="Double-click to rename"
@@ -1870,20 +2135,30 @@ function LayersSection() {
                   >
                     {node.name}
                   </span>
-                )}
-                {isGroup && !renaming && (
-                  <small className="layer-count">{node.children.length}</small>
-                )}
-                {badge && !renaming && (
-                  <small className="layer-badge">{badge}</small>
-                )}
-              </button>
+                  {isGroup && (
+                    <small className="layer-count" aria-hidden="true">
+                      {node.children.length}
+                    </small>
+                  )}
+                  {badge && <small className="layer-badge">{badge}</small>}
+                </button>
+              )}
               <button
                 type="button"
                 className="layer-toggle"
-                onClick={() => toggle(node.id, { visible: !node.visible })}
-                title={node.visible ? "Hide" : "Show"}
-                aria-label={node.visible ? "Hide layer" : "Show layer"}
+                onClick={() =>
+                  !isClippingPath && toggle(node.id, { visible: !node.visible })
+                }
+                title={
+                  isClippingPath
+                    ? "Visibility is owned by the clipping group"
+                    : node.visible
+                      ? "Hide"
+                      : "Show"
+                }
+                aria-label={`${node.name} visible`}
+                aria-pressed={node.visible}
+                disabled={isClippingPath}
               >
                 {node.visible ? <Eye size={13} /> : <EyeOff size={13} />}
               </button>
@@ -1892,7 +2167,8 @@ function LayersSection() {
                 className={`layer-toggle ${node.locked ? "is-on" : ""}`}
                 onClick={() => toggle(node.id, { locked: !node.locked })}
                 title={node.locked ? "Unlock" : "Lock"}
-                aria-label={node.locked ? "Unlock layer" : "Lock layer"}
+                aria-label={`${node.name} locked`}
+                aria-pressed={node.locked}
               >
                 {node.locked ? <Lock size={13} /> : <Unlock size={13} />}
               </button>
@@ -1922,7 +2198,7 @@ function AssistantSection() {
         Review active logo
       </button>
       {review && (
-        <div className="mt-10">
+        <div className="mt-10" aria-live="polite" aria-atomic="true">
           {review.findings.length === 0 ? (
             <p className={MUTED}>No issues found in this pass.</p>
           ) : (
@@ -2044,6 +2320,10 @@ export function Inspector() {
   const selectedNodes = selectedNodeIds
     .map((id) => document.nodes[id])
     .filter((node): node is LogoNode => Boolean(node));
+  const selectedClippingOwnerId =
+    selectedNodes.length === 1
+      ? getClippingMaskOwnerId(document, selectedNodes[0]!.id)
+      : null;
 
   // Paint/typography patches always land on drawable leaves; a selected
   // group fans the patch out to its descendants.
@@ -2089,10 +2369,16 @@ export function Inspector() {
         </>
       ) : selectedNodes.length === 1 ? (
         <>
+          {selectedClippingOwnerId && (
+            <ClippingPathOwnershipSection
+              ownerId={selectedClippingOwnerId}
+            />
+          )}
           <DesignSection
             node={selectedNodes[0]!}
             patchSelection={patchSelection}
             previewSelection={previewSelection}
+            cancelPreview={() => documentStore.cancelPreview()}
           />
           <EffectsSection node={selectedNodes[0]!} />
         </>
@@ -2100,7 +2386,10 @@ export function Inspector() {
         <section
           className={`${SECTION} grid justify-items-center gap-6 px-14 pb-18 pt-22 text-center`}
         >
-          <span className="mb-4 grid h-34 w-34 place-items-center rounded-[10px] border border-[rgb(79_107_246/0.18)] bg-[linear-gradient(135deg,var(--color-accent-soft),#e4e9fd)] text-accent">
+          <span
+            className="mb-4 grid h-34 w-34 place-items-center rounded-[10px] border border-[rgb(79_107_246/0.18)] bg-[linear-gradient(135deg,var(--color-accent-soft),#e4e9fd)] text-accent"
+            aria-hidden="true"
+          >
             <Shapes size={16} strokeWidth={1.75} />
           </span>
           <strong className="text-[12.5px] font-[650]">Nothing selected</strong>

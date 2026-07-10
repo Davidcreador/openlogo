@@ -8,7 +8,11 @@ import {
 } from "./commands";
 import type { LogoDocument } from "./types";
 
-export type DocumentListener = (document: LogoDocument) => void;
+export type DocumentChangeKind = "committed" | "preview";
+export type DocumentListener = (
+  document: LogoDocument,
+  kind: DocumentChangeKind,
+) => void;
 
 type HistoryEntry = {
   inverse: Command;
@@ -41,6 +45,10 @@ export class DocumentStore {
 
   get document(): LogoDocument {
     return this.current;
+  }
+
+  get committedDocument(): LogoDocument {
+    return this.committed;
   }
 
   get canUndo(): boolean {
@@ -85,7 +93,7 @@ export class DocumentStore {
       this.undoStack.shift();
     }
     this.redoStack = [];
-    this.emit();
+    this.emit("committed");
   }
 
   /**
@@ -102,13 +110,13 @@ export class DocumentStore {
       }
     }
     this.current = { ...this.committed, nodes };
-    this.emit();
+    this.emit("preview");
   }
 
   cancelPreview(): void {
     if (this.current !== this.committed) {
       this.current = this.committed;
-      this.emit();
+      this.emit("preview");
     }
   }
 
@@ -127,7 +135,7 @@ export class DocumentStore {
     this.committed = result.document;
     this.current = result.document;
     this.redoStack.push(entry);
-    this.emit();
+    this.emit("committed");
   }
 
   redo(): void {
@@ -144,7 +152,7 @@ export class DocumentStore {
     this.committed = result.document;
     this.current = result.document;
     this.undoStack.push({ inverse: result.inverse, redo: entry.redo });
-    this.emit();
+    this.emit("committed");
   }
 
   /** Replace the whole document (load from disk / new file). Clears history. */
@@ -153,12 +161,12 @@ export class DocumentStore {
     this.committed = document;
     this.undoStack = [];
     this.redoStack = [];
-    this.emit();
+    this.emit("committed");
   }
 
-  private emit(): void {
+  private emit(kind: DocumentChangeKind): void {
     for (const listener of this.listeners) {
-      listener(this.current);
+      listener(this.current, kind);
     }
   }
 }

@@ -5,6 +5,7 @@
   "description": "OpenLogo — manual-first logo design studio. Kittl approachability, Illustrator precision.",
   "type": "module",
   "scripts": {
+    "bench": "pnpm -r --if-present bench",
     "dev": "pnpm --filter @openlogo/editor dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",

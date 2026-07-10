@@ -54,6 +54,10 @@ function remapForInsert(
       clone.children = clone.children.map(
         (childId) => idMap.get(childId) ?? childId,
       );
+      if (clone.clippingMaskId) {
+        clone.clippingMaskId =
+          idMap.get(clone.clippingMaskId) ?? clone.clippingMaskId;
+      }
     } else {
       clone.x += offset;
       clone.y += offset;

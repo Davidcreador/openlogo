@@ -2,6 +2,7 @@ import type { Path } from "canvaskit-wasm";
 import {
   type Bounds,
   type LogoDocument,
+  type PathFillRule,
   type PathNode,
   type Vec2,
   collectLeafNodeIds,
@@ -25,6 +26,7 @@ export type ShapeBuilderRegion = {
   id: number;
   /** Path data, artboard-local (matches renderer overlay + hit-testing). */
   d: string;
+  fillRule: PathFillRule;
   bounds: Bounds;
   /** Operand indices covering this region, back-to-front. */
   sources: number[];
@@ -68,9 +70,15 @@ export async function createShapeBuilderSession(
   for (const [index, region] of regions.entries()) {
     const path = ck.Path.MakeFromSVGString(region.d);
     if (path) {
+      path.setFillType(
+        region.fillRule === "evenodd"
+          ? ck.FillType.EvenOdd
+          : ck.FillType.Winding,
+      );
       built.push({
         id: index,
         d: region.d,
+        fillRule: region.fillRule,
         bounds: region.bounds,
         sources: region.sources,
         path,
@@ -174,6 +182,8 @@ export async function commitShapeBuilder(
       locked: false,
       fill: structuredClone(source.fill),
       d: result.d,
+      fillRule: result.fillRule,
+      geometry: result.geometry,
       intrinsicWidth: result.width,
       intrinsicHeight: result.height,
     };
@@ -186,7 +196,9 @@ export async function commitShapeBuilder(
     .filter((region) => region.state === "pending")
     .sort((a, b) => Math.max(...a.sources) - Math.max(...b.sources));
   for (const region of pending) {
-    const result = unionPathData(ck, [region.d]);
+    const result = unionPathData(ck, [
+      { d: region.d, fillRule: region.fillRule },
+    ]);
     if (result) {
       newNodes.push(makeNode(result, region, styleSource(region).name));
     }
@@ -194,7 +206,10 @@ export async function commitShapeBuilder(
   if (merged.length > 0) {
     const result = unionPathData(
       ck,
-      merged.map((region) => region.d),
+      merged.map((region) => ({
+        d: region.d,
+        fillRule: region.fillRule,
+      })),
     );
     if (result) {
       newNodes.push(makeNode(result, merged[0]!, "Shape Builder"));

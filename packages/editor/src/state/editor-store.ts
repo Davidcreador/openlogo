@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { DesignReview } from "@openlogo/core";
 import { type Camera, createCamera } from "@openlogo/renderer";
+import type { DocumentSessionState } from "../lib/document-session";
 import { loadPrefs, savePrefs } from "../lib/prefs";
 
 export type Tool =
@@ -32,6 +33,8 @@ type EditorState = {
   camera: Camera;
   review: DesignReview | null;
   rendererReady: boolean;
+  /** Local document hydration/autosave state shown in the app chrome. */
+  documentSessionState: DocumentSessionState;
   /** Path node currently in bezier edit mode. */
   editingPathId: string | null;
   /**
@@ -45,6 +48,8 @@ type EditorState = {
   transformDialogOpen: boolean;
   /** Export dialog visibility. */
   exportDialogOpen: boolean;
+  /** Local multi-project library and version history visibility. */
+  documentLibraryOpen: boolean;
   /** Round committed positions/dimensions to whole pixels (persisted). */
   pixelSnap: boolean;
   /** Transient status message (file open errors etc.); null = hidden. */
@@ -52,6 +57,7 @@ type EditorState = {
   setTool: (tool: Tool) => void;
   setTransformDialogOpen: (open: boolean) => void;
   setExportDialogOpen: (open: boolean) => void;
+  setDocumentLibraryOpen: (open: boolean) => void;
   setPixelSnap: (on: boolean) => void;
   setToast: (message: string | null) => void;
   setEditingPathId: (id: string | null) => void;
@@ -62,6 +68,7 @@ type EditorState = {
   setCamera: (camera: Camera) => void;
   setReview: (review: DesignReview | null) => void;
   setRendererReady: (ready: boolean) => void;
+  setDocumentSessionState: (state: DocumentSessionState) => void;
 };
 
 export const useEditorStore = create<EditorState>((set) => ({
@@ -71,16 +78,20 @@ export const useEditorStore = create<EditorState>((set) => ({
   camera: createCamera(),
   review: null,
   rendererReady: false,
+  documentSessionState: "loading",
   editingPathId: null,
   activeGroupId: null,
   viewport: { width: 0, height: 0 },
   transformDialogOpen: false,
   exportDialogOpen: false,
+  documentLibraryOpen: false,
   pixelSnap: loadPrefs().pixelSnap,
   toast: null,
   setTool: (tool) => set({ tool }),
   setTransformDialogOpen: (transformDialogOpen) => set({ transformDialogOpen }),
   setExportDialogOpen: (exportDialogOpen) => set({ exportDialogOpen }),
+  setDocumentLibraryOpen: (documentLibraryOpen) =>
+    set({ documentLibraryOpen }),
   setPixelSnap: (pixelSnap) => {
     savePrefs({ ...loadPrefs(), pixelSnap });
     set({ pixelSnap });
@@ -104,4 +115,6 @@ export const useEditorStore = create<EditorState>((set) => ({
   setCamera: (camera) => set({ camera }),
   setReview: (review) => set({ review }),
   setRendererReady: (rendererReady) => set({ rendererReady }),
+  setDocumentSessionState: (documentSessionState) =>
+    set({ documentSessionState }),
 }));

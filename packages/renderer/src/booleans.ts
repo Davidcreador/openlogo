@@ -1,16 +1,39 @@
 import type { CanvasKit, Path } from "canvaskit-wasm";
-import type { LogoNode } from "@openlogo/core";
+import {
+  pathCommandsToGeometry,
+  pathGeometryToSvg,
+  translatePathGeometry,
+  type LogoNode,
+  type PathFillRule,
+  type PathGeometry,
+} from "@openlogo/core";
 
 export type BooleanOp = "union" | "subtract" | "intersect" | "exclude";
 
 export type CombineResult = {
   /** Path data normalised to start at (0,0). */
   d: string;
+  fillRule: PathFillRule;
+  geometry: PathGeometry;
   x: number;
   y: number;
   width: number;
   height: number;
 };
+
+function fillRuleOf(ck: CanvasKit, path: Path): PathFillRule {
+  return path.getFillType() === ck.FillType.EvenOdd ? "evenodd" : "nonzero";
+}
+
+function setFillRule(
+  ck: CanvasKit,
+  path: Path,
+  fillRule: PathFillRule,
+): void {
+  path.setFillType(
+    fillRule === "evenodd" ? ck.FillType.EvenOdd : ck.FillType.Winding,
+  );
+}
 
 /**
  * Build a Skia path for a node in artboard-local coordinates,
@@ -36,6 +59,7 @@ export function nodeToSkPath(ck: CanvasKit, node: LogoNode): Path | null {
     if (!raw) {
       return null;
     }
+    setFillRule(ck, raw, node.fillRule);
     // intrinsic space → node box.
     raw.transform([
       node.width / node.intrinsicWidth,
@@ -65,6 +89,106 @@ export function nodeToSkPath(ck: CanvasKit, node: LogoNode): Path | null {
   }
 
   return path;
+}
+
+/**
+ * Preserve each operand's filled area as editable geometry. Unlike a boolean
+ * across operands, overlapping shapes remain independent even-odd contours.
+ * Closed operands are simplified individually first so changing their global
+ * rule cannot invent holes inside an operand; redundant internal contours may
+ * therefore collapse.
+ */
+export function compoundNodes(
+  ck: CanvasKit,
+  nodes: readonly LogoNode[],
+): CombineResult | null {
+  if (nodes.length < 2) {
+    return null;
+  }
+
+  const subpaths: PathGeometry["subpaths"] = [];
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+
+  for (const node of nodes) {
+    const path = nodeToSkPath(ck, node);
+    if (!path) {
+      return null;
+    }
+
+    try {
+      let geometry = pathCommandsToGeometry(path.toCmds());
+      if (!geometry) {
+        return null;
+      }
+
+      const hasClosed = geometry.subpaths.some((subpath) => subpath.closed);
+      const hasOpen = geometry.subpaths.some((subpath) => !subpath.closed);
+      if (hasClosed && hasOpen) {
+        // One global even-odd rule cannot preserve both a complex filled area
+        // and unrelated open strokable contours without splitting the node.
+        return null;
+      }
+      if (hasClosed) {
+        // Canonicalize each operand's filled AREA before concatenating it.
+        // Otherwise switching a nonzero operand to the compound's even-odd
+        // rule can invent holes inside that operand. CanvasKit mutates and
+        // returns this same owned Path; it is still deleted once below.
+        if (!path.simplify()) {
+          return null;
+        }
+        setFillRule(ck, path, "evenodd");
+        geometry = pathCommandsToGeometry(path.toCmds());
+        if (!geometry) {
+          return null;
+        }
+      }
+
+      const bounds = path.computeTightBounds();
+      const [nodeLeft, nodeTop, nodeRight, nodeBottom] = bounds;
+      if (
+        nodeLeft === undefined ||
+        nodeTop === undefined ||
+        nodeRight === undefined ||
+        nodeBottom === undefined ||
+        !Number.isFinite(nodeLeft) ||
+        !Number.isFinite(nodeTop) ||
+        !Number.isFinite(nodeRight) ||
+        !Number.isFinite(nodeBottom) ||
+        nodeRight < nodeLeft ||
+        nodeBottom < nodeTop
+      ) {
+        return null;
+      }
+
+      subpaths.push(...geometry.subpaths);
+      left = Math.min(left, nodeLeft);
+      top = Math.min(top, nodeTop);
+      right = Math.max(right, nodeRight);
+      bottom = Math.max(bottom, nodeBottom);
+    } finally {
+      path.delete();
+    }
+  }
+
+  if (subpaths.length === 0 || !Number.isFinite(left) || !Number.isFinite(top)) {
+    return null;
+  }
+
+  const geometry = translatePathGeometry({ subpaths }, -left, -top);
+  const width = Math.max(0.01, right - left);
+  const height = Math.max(0.01, bottom - top);
+  return {
+    d: pathGeometryToSvg(geometry),
+    fillRule: "evenodd",
+    geometry,
+    x: left,
+    y: top,
+    width,
+    height,
+  };
 }
 
 /**
@@ -103,9 +227,14 @@ export function expandStroke(
   const height = Math.max(1, bottom - top);
   path.transform([1, 0, -left, 0, 1, -top, 0, 0, 1]);
   const d = path.toSVGString();
+  const fillRule = fillRuleOf(ck, path);
+  const geometry = pathCommandsToGeometry(path.toCmds());
   path.delete();
+  if (!geometry) {
+    return null;
+  }
 
-  return { d, x: left, y: top, width, height };
+  return { d, fillRule, geometry, x: left, y: top, width, height };
 }
 
 /**
@@ -170,14 +299,20 @@ export function offsetNodePath(
   const height = Math.max(0.01, bottom - top);
   combined.transform([1, 0, -left, 0, 1, -top, 0, 0, 1]);
   const d = combined.toSVGString();
+  const fillRule = fillRuleOf(ck, combined);
+  const geometry = pathCommandsToGeometry(combined.toCmds());
   combined.delete();
+  if (!geometry) {
+    return null;
+  }
 
-  return { d, x: left, y: top, width, height };
+  return { d, fillRule, geometry, x: left, y: top, width, height };
 }
 
 export type RegionResult = {
   /** Path data in the same (artboard-local) space as the input nodes. */
   d: string;
+  fillRule: PathFillRule;
   bounds: { x: number; y: number; width: number; height: number };
   /** Indices into the input nodes that cover this region, back-to-front. */
   sources: number[];
@@ -264,6 +399,7 @@ export function computeRegions(
 
     regions.push({
       d: region.toSVGString(),
+      fillRule: fillRuleOf(ck, region),
       bounds: { x: left, y: top, width, height },
       sources: entries
         .filter((_, i) => (mask & (1 << i)) !== 0)
@@ -284,14 +420,16 @@ export function computeRegions(
  */
 export function unionPathData(
   ck: CanvasKit,
-  ds: readonly string[],
+  inputs: ReadonlyArray<{ d: string; fillRule: PathFillRule }>,
 ): CombineResult | null {
   let result: Path | null = null;
-  for (const d of ds) {
+  for (const input of inputs) {
+    const { d, fillRule } = input;
     const path = ck.Path.MakeFromSVGString(d);
     if (!path) {
       continue;
     }
+    setFillRule(ck, path, fillRule);
     if (!result) {
       result = path;
       continue;
@@ -315,9 +453,14 @@ export function unionPathData(
   const height = Math.max(0.01, bottom - top);
   result.transform([1, 0, -left, 0, 1, -top, 0, 0, 1]);
   const d = result.toSVGString();
+  const fillRule = fillRuleOf(ck, result);
+  const geometry = pathCommandsToGeometry(result.toCmds());
   result.delete();
+  if (!geometry) {
+    return null;
+  }
 
-  return { d, x: left, y: top, width, height };
+  return { d, fillRule, geometry, x: left, y: top, width, height };
 }
 
 /**
@@ -370,7 +513,12 @@ export function combineNodes(
   // Normalise so the path's own coordinates start at the origin.
   result.transform([1, 0, -left, 0, 1, -top, 0, 0, 1]);
   const d = result.toSVGString();
+  const fillRule = fillRuleOf(ck, result);
+  const geometry = pathCommandsToGeometry(result.toCmds());
   result.delete();
+  if (!geometry) {
+    return null;
+  }
 
-  return { d, x: left, y: top, width, height };
+  return { d, fillRule, geometry, x: left, y: top, width, height };
 }

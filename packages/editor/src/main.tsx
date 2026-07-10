@@ -1,10 +1,14 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { documentToSvg } from "./lib/export";
+import { getStartupMetrics, markAppStart } from "./lib/performance";
 import { documentStore } from "./state/document";
 import { useEditorStore } from "./state/editor-store";
 import "./styles.css";
+
+markAppStart();
 
 if (import.meta.env.DEV) {
   // Automation/debug hook; dev builds only. CanvasStage adds `renderer`
@@ -13,6 +17,7 @@ if (import.meta.env.DEV) {
     documentStore,
     editorStore: useEditorStore,
     exportSvg: () => documentToSvg(documentStore.document),
+    getStartupMetrics,
   };
 }
 
@@ -24,6 +29,8 @@ if (!rootElement) {
 
 createRoot(rootElement).render(
   <StrictMode>
-    <App />
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
   </StrictMode>,
 );

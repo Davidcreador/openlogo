@@ -1,7 +1,6 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Effect } from "effect";
 import { CanvasStage } from "./canvas/CanvasStage";
-import { ExportDialog } from "./components/ExportDialog";
 import { Inspector } from "./components/Inspector";
 import { PreviewStrip } from "./components/PreviewStrip";
 import { Toast } from "./components/Toast";
@@ -18,6 +17,13 @@ import {
 } from "@openlogo/core";
 import { fitBounds, zoomAt } from "@openlogo/renderer";
 import { copyNodes, cutNodes, pasteNodes } from "./lib/clipboard";
+import { getCanvasKit } from "./lib/canvaskit";
+import {
+  clippingMaskFailureMessage,
+  makeClippingMask,
+  releaseClippingMask,
+} from "./lib/clipping-mask";
+import { makeCompoundPath, releaseCompoundPath } from "./lib/compound-path";
 import {
   OPENLOGO_EXTENSION,
   copyAsSvg,
@@ -27,17 +33,37 @@ import {
 } from "./lib/document-file";
 import { joinSelectedPaths } from "./lib/path-surgery";
 import { recordTransform, transformAgain } from "./lib/transform-again";
-import { TransformDialog } from "./components/TransformDialog";
 import {
   deleteSelection,
   groupSelection,
   ungroupSelection,
 } from "./lib/group-ops";
 import { fontCatalog } from "./lib/font-catalog";
-import { createAutosave, loadDocument } from "./lib/persistence";
+import { DocumentSession } from "./lib/document-session";
+import { documentLibrary } from "./lib/document-library";
+import { markDocumentReady } from "./lib/performance";
 import { ensureDocumentFonts } from "./lib/text-to-path";
 import { documentStore } from "./state/document";
 import { type Tool, useEditorStore } from "./state/editor-store";
+
+// Large modal workflows are absent from the first paint. Loading them on
+// demand keeps document/renderer startup inside the initial-JS budget while
+// preserving their state in the same editor store.
+const DocumentLibraryDialog = lazy(() =>
+  import("./components/DocumentLibraryDialog").then((module) => ({
+    default: module.DocumentLibraryDialog,
+  })),
+);
+const ExportDialog = lazy(() =>
+  import("./components/ExportDialog").then((module) => ({
+    default: module.ExportDialog,
+  })),
+);
+const TransformDialog = lazy(() =>
+  import("./components/TransformDialog").then((module) => ({
+    default: module.TransformDialog,
+  })),
+);
 
 const TOOL_SHORTCUTS: Record<string, Tool> = {
   v: "select",
@@ -62,41 +88,126 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 export default function App() {
-  // Restore last session, then autosave on every committed change.
+  const [sessionReady, setSessionReady] = useState(false);
+  const transformDialogOpen = useEditorStore(
+    (state) => state.transformDialogOpen,
+  );
+  const exportDialogOpen = useEditorStore((state) => state.exportDialogOpen);
+  const documentLibraryOpen = useEditorStore(
+    (state) => state.documentLibraryOpen,
+  );
+  const [loadedDialogs, setLoadedDialogs] = useState({
+    transform: false,
+    export: false,
+    library: false,
+  });
+
+  useEffect(() => {
+    if (
+      (transformDialogOpen && !loadedDialogs.transform) ||
+      (exportDialogOpen && !loadedDialogs.export) ||
+      (documentLibraryOpen && !loadedDialogs.library)
+    ) {
+      setLoadedDialogs((current) => ({
+        transform: current.transform || transformDialogOpen,
+        export: current.export || exportDialogOpen,
+        library: current.library || documentLibraryOpen,
+      }));
+    }
+  }, [
+    documentLibraryOpen,
+    exportDialogOpen,
+    loadedDialogs,
+    transformDialogOpen,
+  ]);
+
+  // Hydrate before enabling edits, then persist committed changes in order.
   useEffect(() => {
     let disposed = false;
-
-    void Effect.runPromise(loadDocument).then((stored) => {
-      if (stored && !disposed) {
-        documentStore.reset(stored);
-      }
-      ensureDocumentFonts();
-      // Documents can reference catalog-only families; once the full
-      // index is in, resolve any that the built-in list couldn't.
-      void Effect.runPromise(fontCatalog.init()).then(() => {
-        if (!disposed) {
-          ensureDocumentFonts();
-        }
-      });
+    // IndexedDB restore and WASM compilation are independent. Start both at
+    // once so cold startup pays the slower cost, not their sum; CanvasStage
+    // consumes the same cached promise and owns user-facing failure recovery.
+    void getCanvasKit().catch(() => undefined);
+    const session = new DocumentSession({
+      store: documentStore,
+      load: () => documentLibrary.loadActiveDocument(documentStore.document),
+      save: (document) => documentLibrary.saveDocument(document),
+      getVisibilityState: () => window.document.visibilityState,
+      onStateChange: (state) =>
+        useEditorStore.getState().setDocumentSessionState(state),
+      onFailure: ({ phase, error }) => {
+        console.warn(`Document ${phase} failed`, error);
+        const libraryMessage = documentLibrary.snapshot.error;
+        useEditorStore
+          .getState()
+          .setToast(
+            libraryMessage ??
+              (phase === "load"
+                ? "Local recovery is unavailable. Autosave is paused to protect stored work; use ⌘S to save a copy."
+                : "Local save failed. Your document is still open; the next edit will retry."),
+          );
+      },
     });
+    documentLibrary.attachSession(session);
 
-    const autosave = createAutosave(() => documentStore.document);
-    const unsubscribe = documentStore.subscribe(autosave);
+    void session
+      .start()
+      .then(() => {
+        if (disposed) {
+          return;
+        }
+        setSessionReady(true);
+        markDocumentReady();
+        ensureDocumentFonts();
+        const migrationNotice = documentLibrary.snapshot.notice;
+        if (migrationNotice) {
+          useEditorStore.getState().setToast(migrationNotice);
+        }
+        // Documents can reference catalog-only families; once the full
+        // index is in, resolve any that the built-in list couldn't.
+        void Effect.runPromise(fontCatalog.init()).then(() => {
+          if (!disposed) {
+            ensureDocumentFonts();
+          }
+        });
+      })
+      .catch((error: unknown) => {
+        if (disposed) {
+          return;
+        }
+        console.error("Document session failed to start", error);
+        useEditorStore.getState().setDocumentSessionState("error");
+        useEditorStore
+          .getState()
+          .setToast(
+            "OpenLogo could not restore local work. Autosave is paused; use ⌘S to save a copy.",
+          );
+        setSessionReady(true);
+        markDocumentReady();
+      });
 
     return () => {
       disposed = true;
-      unsubscribe();
+      documentLibrary.detachSession(session);
+      session.dispose();
     };
   }, []);
 
   // Global keyboard shortcuts.
   useEffect(() => {
+    if (!sessionReady) {
+      return;
+    }
+
     function onKeyDown(event: KeyboardEvent) {
       if (isEditableTarget(event.target)) {
         return;
       }
 
       const state = useEditorStore.getState();
+      if (state.documentLibraryOpen || documentLibrary.snapshot.operation) {
+        return;
+      }
       const key = event.key.toLowerCase();
 
       if ((event.metaKey || event.ctrlKey) && key === "z") {
@@ -172,6 +283,97 @@ export default function App() {
             if (ids && ids.length > 0) {
               state.setSelection(ids);
             }
+          }
+          return;
+        }
+
+        // ⌥⌘7 / Alt+Ctrl+7 = Release Clipping Mask. The mask and every
+        // content node return as siblings in one undoable operation.
+        if (event.code === "Digit7" && event.altKey && !event.shiftKey) {
+          event.preventDefault();
+          if (!state.editingPathId && selection.length === 1) {
+            const ids = releaseClippingMask(selection);
+            if (ids) {
+              state.setSelection(ids);
+            } else {
+              state.setToast("Select one unlocked clipping group to release.");
+            }
+          }
+          return;
+        }
+
+        // ⌘7 = Make Clipping Mask (Illustrator). The topmost selected
+        // vector shape becomes the path; sources stay editable and intact.
+        if (
+          event.code === "Digit7" &&
+          !event.altKey &&
+          !event.shiftKey
+        ) {
+          event.preventDefault();
+          if (!state.editingPathId) {
+            const groupId = makeClippingMask(selection);
+            if (groupId) {
+              state.setSelection([groupId]);
+            } else {
+              state.setToast(clippingMaskFailureMessage(selection));
+            }
+          }
+          return;
+        }
+
+        // ⌥⇧⌘8 / Alt+Shift+Ctrl+8 = Release Compound Path (Illustrator).
+        // All contours are prepared before the source node is replaced.
+        if (
+          event.code === "Digit8" &&
+          event.shiftKey &&
+          event.altKey
+        ) {
+          event.preventDefault();
+          if (!state.editingPathId && selection.length === 1) {
+            try {
+              const ids = releaseCompoundPath(selection);
+              if (ids) {
+                state.setSelection(ids);
+              } else {
+                state.setToast("Select one editable compound path.");
+              }
+            } catch (error: unknown) {
+              console.warn("Release compound path failed", error);
+              state.setToast(
+                "Release compound path failed. The original path was preserved.",
+              );
+            }
+          }
+          return;
+        }
+
+        // ⌘8 = Make Compound Path (Illustrator). Conversion is atomic: an
+        // unsupported operand or engine failure leaves every source intact.
+        if (
+          event.code === "Digit8" &&
+          !event.shiftKey &&
+          !event.altKey
+        ) {
+          event.preventDefault();
+          if (!state.editingPathId && selection.length >= 2) {
+            void makeCompoundPath(selection)
+              .then((id) => {
+                if (id) {
+                  useEditorStore.getState().setSelection([id]);
+                } else {
+                  useEditorStore
+                    .getState()
+                    .setToast("Select two or more sibling vector shapes.");
+                }
+              })
+              .catch((error: unknown) => {
+                console.warn("Compound path failed", error);
+                useEditorStore
+                  .getState()
+                  .setToast(
+                    "Compound path failed. The original shapes were preserved.",
+                  );
+              });
           }
           return;
         }
@@ -356,7 +558,29 @@ export default function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [sessionReady]);
+
+  if (!sessionReady) {
+    return (
+      <main
+        className="grid h-screen place-items-center bg-chrome text-chrome-text"
+        aria-busy="true"
+        aria-label="Restoring OpenLogo workspace"
+      >
+        <div className="flex items-center gap-12 rounded-panel border border-chrome-hairline bg-[rgb(255_255_255/0.035)] px-18 py-14 shadow-[0_12px_40px_rgb(8_6_12/0.35)]">
+          <span className="grid h-36 w-36 place-items-center rounded-[10px] bg-[linear-gradient(135deg,#6a82f8,var(--color-accent)_55%,var(--color-accent-deep))] text-[13px] font-extrabold tracking-[-0.05em] text-white">
+            OL
+          </span>
+          <span>
+            <strong className="block text-[14px]">OpenLogo</strong>
+            <span className="mt-2 block text-[12px] text-chrome-dim">
+              Restoring your workspace…
+            </span>
+          </span>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="app-shell grid h-screen grid-rows-[52px_1fr]">
@@ -398,8 +622,15 @@ export default function App() {
         </section>
         <Inspector />
       </div>
-      <TransformDialog />
-      <ExportDialog />
+      <Suspense fallback={null}>
+        {transformDialogOpen || loadedDialogs.transform ? (
+          <TransformDialog />
+        ) : null}
+        {exportDialogOpen || loadedDialogs.export ? <ExportDialog /> : null}
+        {documentLibraryOpen || loadedDialogs.library ? (
+          <DocumentLibraryDialog />
+        ) : null}
+      </Suspense>
       <Toast />
     </main>
   );
