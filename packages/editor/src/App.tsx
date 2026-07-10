@@ -624,7 +624,7 @@ export default function App() {
       <TopBar />
       {/* The whole workspace shares one textured surface; the GPU canvas
           clears to transparent so panels genuinely sit on the same material. */}
-      <div className="app-main grid min-h-0 grid-cols-[72px_minmax(0,1fr)_304px] bg-surface bg-[radial-gradient(var(--color-canvas-dot)_1px,transparent_1.15px)] bg-[size:20px_20px]">
+      <div className="app-main grid min-h-0 grid-cols-[72px_minmax(0,1fr)_336px] bg-surface bg-[radial-gradient(var(--color-canvas-dot)_1px,transparent_1.15px)] bg-[size:20px_20px]">
         <Toolbar />
         <section
           className="canvas-area relative min-h-0 min-w-0"

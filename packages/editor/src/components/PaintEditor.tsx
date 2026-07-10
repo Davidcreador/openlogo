@@ -9,6 +9,7 @@ import {
   withStopPatched,
   withStopRemoved,
 } from "@openlogo/core";
+import { Plus, Trash2 } from "lucide-react";
 import { ColorInfoChip } from "./ColorInfo";
 
 /**
@@ -19,7 +20,7 @@ import { ColorInfoChip } from "./ColorInfo";
  */
 
 const FILL_SWATCH =
-  "fill-swatch h-28 w-28 flex-none cursor-pointer rounded-field border border-field-border bg-transparent p-2";
+  "fill-swatch h-32 w-32 flex-none cursor-pointer rounded-field border border-field-border bg-transparent p-2";
 
 function stopColor(stop: GradientStop): string {
   const alpha = stop.alpha ?? 1;
@@ -37,6 +38,20 @@ function rampBackground(stops: GradientStop[]): string {
   return `linear-gradient(90deg, ${sorted
     .map((stop) => `${stopColor(stop)} ${stop.offset * 100}%`)
     .join(", ")})`;
+}
+
+/** CSS preview used by paint controls and compact inspector swatches. */
+export function paintPreviewBackground(paint: Paint): string {
+  if (paint.type === "solid") {
+    return paint.color;
+  }
+  const stops = [...paint.stops]
+    .sort((a, b) => a.offset - b.offset)
+    .map((stop) => `${stopColor(stop)} ${stop.offset * 100}%`)
+    .join(", ");
+  return paint.type === "radial-gradient"
+    ? `radial-gradient(circle, ${stops})`
+    : `linear-gradient(${paint.angle + 90}deg, ${stops})`;
 }
 
 /** Midpoint of the largest empty interval: predictable keyboard stop add. */
@@ -62,6 +77,7 @@ function SmallNumber({
   value,
   onCommit,
   ariaLabel,
+  prefix,
   min,
   max,
   step = 1,
@@ -70,6 +86,7 @@ function SmallNumber({
   value: number;
   onCommit: (value: number) => void;
   ariaLabel: string;
+  prefix?: string;
   min?: number;
   max?: number;
   step?: number;
@@ -78,10 +95,13 @@ function SmallNumber({
   const [draft, setDraft] = useState(String(value));
   useEffect(() => setDraft(String(value)), [value]);
   return (
-    <label className="flex h-28 min-w-0 items-center gap-3 rounded-field border border-field-border bg-field px-6 text-[11px] text-ink-dim">
+    <label className="flex h-30 min-w-0 flex-1 items-center gap-5 rounded-field border border-field-border bg-field px-7 text-[10.5px] text-ink-dim transition-[border-color,background-color,box-shadow] focus-within:border-accent focus-within:bg-card focus-within:shadow-ring">
+      {prefix && (
+        <span className="flex-none font-[600] text-ink-dim">{prefix}</span>
+      )}
       <input
         type="number"
-        className="w-40 min-w-0 border-0 bg-transparent text-[12px] tabular-nums text-ink outline-none"
+        className="w-full min-w-0 border-0 bg-transparent p-0 text-right text-[11.5px] tabular-nums text-ink outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
         value={draft}
         step={step}
         min={min}
@@ -113,6 +133,56 @@ function SmallNumber({
       />
       {suffix && <span>{suffix}</span>}
     </label>
+  );
+}
+
+function HexColorField({
+  value,
+  ariaLabel,
+  onCommit,
+}: {
+  value: string;
+  ariaLabel: string;
+  onCommit: (value: string) => void;
+}) {
+  const normalized = value.toUpperCase();
+  const [draft, setDraft] = useState(normalized);
+
+  useEffect(() => setDraft(normalized), [normalized]);
+
+  const commit = () => {
+    const candidate = draft.trim();
+    const withHash = candidate.startsWith("#") ? candidate : `#${candidate}`;
+    if (/^#[0-9a-fA-F]{6}$/.test(withHash)) {
+      const next = withHash.toUpperCase();
+      setDraft(next);
+      if (next !== normalized) {
+        onCommit(next);
+      }
+    } else {
+      setDraft(normalized);
+    }
+  };
+
+  return (
+    <input
+      className="fill-hex h-32 min-w-0 flex-1 rounded-field border border-field-border bg-field px-9 text-[11.5px] uppercase tabular-nums outline-none transition-[border-color,background-color,box-shadow] duration-140 ease-studio focus:border-accent focus:bg-card focus:shadow-ring"
+      value={draft}
+      maxLength={7}
+      spellCheck={false}
+      aria-label={ariaLabel}
+      onFocus={(event) => event.currentTarget.select()}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.currentTarget.blur();
+        } else if (event.key === "Escape") {
+          setDraft(normalized);
+          event.currentTarget.blur();
+        }
+      }}
+    />
   );
 }
 
@@ -169,7 +239,7 @@ export function PaintEditor({
   };
 
   const toggleButton =
-    "min-h-24 flex-1 rounded-[6px] py-4 text-[11.5px] transition-[background-color,color,box-shadow] duration-120 ease-studio";
+    "min-h-28 flex-1 rounded-[6px] py-4 text-[11.5px] transition-[background-color,color,box-shadow] duration-120 ease-studio";
   const toggleActive =
     "bg-card font-semibold text-ink shadow-[0_1px_2px_rgb(28_25_33/0.1)]";
 
@@ -188,9 +258,9 @@ export function PaintEditor({
   };
 
   return (
-    <>
+    <div className="paint-editor">
       <div
-        className="mb-8 flex gap-2 rounded-m border border-field-border bg-field p-2"
+        className="mb-12 flex gap-2 rounded-m border border-field-border bg-field p-2"
         role="group"
         aria-label={`${label} type`}
       >
@@ -223,16 +293,21 @@ export function PaintEditor({
       </div>
 
       {gradient ? (
-        <div className="mb-10">
-          <div className="mb-6 flex items-center justify-between gap-8">
-            <span className="text-[10.5px] text-ink-dim">Gradient stops</span>
+        <div>
+          <div className="mb-8 flex items-center justify-between gap-8">
+            <span className="text-[10.5px] font-[600] text-ink-dim">
+              Gradient stops
+              <span className="ml-5 font-normal tabular-nums text-ink-dim">
+                {gradient.stops.length}
+              </span>
+            </span>
             <button
               type="button"
-              className="h-24 rounded-field border border-field-border bg-card px-7 text-[10.5px] text-ink-dim transition-[border-color,color] duration-140 ease-studio hover:border-accent hover:text-accent"
+              className="inline-flex h-26 items-center gap-4 rounded-field border border-field-border bg-card px-7 text-[10.5px] text-ink-dim transition-[border-color,color] duration-140 ease-studio hover:border-accent hover:text-accent"
               aria-controls={rampId}
               onClick={() => addStop(nextGradientStopOffset(gradient.stops))}
             >
-              Add stop
+              <Plus size={11} strokeWidth={2} /> Add stop
             </button>
           </div>
           {/* The ramp: click adds a stop, chips drag to reposition. */}
@@ -240,10 +315,11 @@ export function PaintEditor({
             ref={rampRef}
             id={rampId}
             data-testid="gradient-ramp"
-            className="relative mb-14 h-16 cursor-copy rounded-[7px] border border-field-border"
+            className="relative mb-18 h-18 cursor-crosshair rounded-[7px] border border-[rgb(28_25_33/0.14)] shadow-[inset_0_1px_2px_rgb(28_25_33/0.08)]"
             style={{ background: rampBackground(gradient.stops) }}
             role="group"
             aria-label={`${label} gradient stops`}
+            title="Click to add a gradient stop"
             onPointerDown={(event) => {
               if ((event.target as HTMLElement).dataset.stopChip) {
                 return; // chip drags handle themselves
@@ -257,7 +333,7 @@ export function PaintEditor({
                 type="button"
                 data-stop-chip={index}
                 data-selected={index === stopIndex || undefined}
-                className="absolute top-[9px] grid h-24 w-24 -translate-x-1/2 cursor-ew-resize place-items-center rounded-full"
+                className="absolute top-[10px] grid h-26 w-26 -translate-x-1/2 cursor-ew-resize place-items-center rounded-full"
                 style={{ left: `${item.offset * 100}%` }}
                 aria-label={`${label} gradient stop ${index + 1}, ${Math.round(
                   item.offset * 100,
@@ -325,8 +401,10 @@ export function PaintEditor({
                 onLostPointerCapture={() => finishDrag(false)}
               >
                 <span
-                  className={`h-14 w-14 rounded-full border-2 shadow-[0_1px_3px_rgb(28_25_33/0.3)] ${
-                    index === stopIndex ? "border-accent" : "border-white"
+                  className={`h-15 w-15 rounded-full border-2 shadow-[0_1px_3px_rgb(28_25_33/0.32)] ${
+                    index === stopIndex
+                      ? "border-accent ring-2 ring-white"
+                      : "border-white"
                   }`}
                   style={{ background: item.color }}
                   aria-hidden="true"
@@ -336,74 +414,96 @@ export function PaintEditor({
           </div>
 
           {stop && (
-            <div className="mb-8 flex items-center gap-6">
-              <input
-                type="color"
-                className={FILL_SWATCH}
-                value={stop.color}
-                aria-label={`${label} stop color`}
-                onChange={(event) => {
-                  const next = withStopPatched(gradient, stopIndex, {
-                    color: event.target.value,
-                  });
-                  if (next) {
-                    onCommit(next);
-                  }
-                }}
-              />
-              <SmallNumber
-                value={Math.round((stop.alpha ?? 1) * 100)}
-                min={0}
-                max={100}
-                step={5}
-                suffix="%"
-                ariaLabel={`${label} stop alpha`}
-                onCommit={(percent) => {
-                  const next = withStopPatched(gradient, stopIndex, {
-                    alpha: percent / 100,
-                  });
-                  if (next) {
-                    onCommit(next);
-                  }
-                }}
-              />
-              <SmallNumber
-                value={Math.round(stop.offset * 100)}
-                min={0}
-                max={100}
-                step={1}
-                suffix="%"
-                ariaLabel={`${label} stop position`}
-                onCommit={(percent) => {
-                  const moved = withStopMoved(gradient, stopIndex, percent / 100);
-                  if (moved) {
-                    setSelectedStop(moved.index);
-                    onCommit(moved.paint);
-                  }
-                }}
-              />
-              <ColorInfoChip color={stop.color} />
-              <button
-                type="button"
-                className="ml-auto h-28 flex-none cursor-pointer rounded-field border border-field-border bg-card px-8 text-[11px] text-ink-dim transition-[border-color,color] duration-140 ease-studio hover:enabled:border-danger hover:enabled:text-danger disabled:cursor-not-allowed disabled:opacity-40"
-                disabled={gradient.stops.length <= 2}
-                aria-label={`Remove ${label.toLowerCase()} stop`}
-                onClick={() => {
-                  const next = withStopRemoved(gradient, stopIndex);
-                  if (next) {
-                    setSelectedStop(Math.max(0, stopIndex - 1));
-                    onCommit(next);
-                  }
-                }}
-              >
-                Remove
-              </button>
+            <div className="mb-10 grid gap-7 rounded-m border border-field-border bg-[rgb(241_239_236/0.56)] p-7">
+              <div className="flex min-w-0 items-center gap-6">
+                <input
+                  type="color"
+                  className={FILL_SWATCH}
+                  value={stop.color}
+                  aria-label={`${label} stop color`}
+                  onChange={(event) => {
+                    const next = withStopPatched(gradient, stopIndex, {
+                      color: event.target.value,
+                    });
+                    if (next) {
+                      onCommit(next);
+                    }
+                  }}
+                />
+                <HexColorField
+                  value={stop.color}
+                  ariaLabel={`${label} stop hex`}
+                  onCommit={(color) => {
+                    const next = withStopPatched(gradient, stopIndex, { color });
+                    if (next) {
+                      onCommit(next);
+                    }
+                  }}
+                />
+                <ColorInfoChip color={stop.color} />
+                <button
+                  type="button"
+                  className="grid h-28 w-28 flex-none cursor-pointer place-items-center rounded-field border border-field-border bg-card text-ink-dim transition-[border-color,color] duration-140 ease-studio hover:enabled:border-danger hover:enabled:text-danger disabled:cursor-not-allowed disabled:opacity-35"
+                  disabled={gradient.stops.length <= 2}
+                  title="Remove stop"
+                  aria-label={`Remove ${label.toLowerCase()} stop`}
+                  onClick={() => {
+                    const next = withStopRemoved(gradient, stopIndex);
+                    if (next) {
+                      setSelectedStop(Math.max(0, stopIndex - 1));
+                      onCommit(next);
+                    }
+                  }}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+              <div className="flex min-w-0 gap-6">
+                <SmallNumber
+                  prefix="Opacity"
+                  value={Math.round((stop.alpha ?? 1) * 100)}
+                  min={0}
+                  max={100}
+                  step={5}
+                  suffix="%"
+                  ariaLabel={`${label} stop alpha`}
+                  onCommit={(percent) => {
+                    const next = withStopPatched(gradient, stopIndex, {
+                      alpha: percent / 100,
+                    });
+                    if (next) {
+                      onCommit(next);
+                    }
+                  }}
+                />
+                <SmallNumber
+                  prefix="Location"
+                  value={Math.round(stop.offset * 100)}
+                  min={0}
+                  max={100}
+                  step={1}
+                  suffix="%"
+                  ariaLabel={`${label} stop position`}
+                  onCommit={(percent) => {
+                    const moved = withStopMoved(
+                      gradient,
+                      stopIndex,
+                      percent / 100,
+                    );
+                    if (moved) {
+                      setSelectedStop(moved.index);
+                      onCommit(moved.paint);
+                    }
+                  }}
+                />
+              </div>
             </div>
           )}
 
           {gradient.type === "linear-gradient" ? (
             <div className="flex items-center gap-6">
               <SmallNumber
+                prefix="Angle"
                 value={Math.round(gradient.angle)}
                 step={15}
                 suffix="°"
@@ -415,8 +515,8 @@ export function PaintEditor({
                   onCommit({ ...rest, angle });
                 }}
               />
-              <span className="text-[10.5px] text-ink-dim">
-                G on canvas drags the gradient line
+              <span className="text-[10.5px] leading-[1.35] text-ink-dim">
+                Press <kbd>G</kbd> to edit on canvas
               </span>
             </div>
           ) : (
@@ -438,12 +538,12 @@ export function PaintEditor({
                   }
                 }}
               />
-              Focal point (drag on canvas with G)
+              Focal point · press G to edit on canvas
             </label>
           )}
         </div>
       ) : (
-        <div className="mb-10 flex items-center gap-6">
+        <div className="flex items-center gap-7">
           <input
             type="color"
             className={FILL_SWATCH}
@@ -453,20 +553,14 @@ export function PaintEditor({
             }
             aria-label={`${label} color`}
           />
-          <input
-            className="fill-hex h-28 w-72 flex-none rounded-field border border-field-border bg-field px-8 text-[12px] uppercase tabular-nums outline-none transition-[border-color,box-shadow] duration-140 ease-studio focus:border-accent focus:bg-card focus:shadow-ring"
-            value={solidColor.toUpperCase()}
-            onChange={(event) => {
-              const value = event.target.value.trim();
-              if (/^#[0-9a-fA-F]{6}$/.test(value)) {
-                onCommit({ type: "solid", color: value });
-              }
-            }}
-            aria-label={`${label} hex`}
+          <HexColorField
+            value={solidColor}
+            ariaLabel={`${label} hex`}
+            onCommit={(color) => onCommit({ type: "solid", color })}
           />
           <ColorInfoChip color={solidColor} />
         </div>
       )}
-    </>
+    </div>
   );
 }
