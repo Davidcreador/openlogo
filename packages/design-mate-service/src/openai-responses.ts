@@ -734,26 +734,45 @@ export function createOpenAIResponsesTransport(
           } else if (
             event.type === "response.function_call_arguments.done"
           ) {
-            const itemId = event.value.item_id;
+            const doneItem = isPlainRecord(event.value.item)
+              ? event.value.item
+              : undefined;
+            const itemId = isFunctionCallId(event.value.item_id)
+              ? event.value.item_id
+              : doneItem && isFunctionCallId(doneItem.id)
+                ? doneItem.id
+                : undefined;
             const state = isFunctionCallId(itemId)
               ? functionCalls.get(itemId)
               : undefined;
+            const doneName =
+              typeof event.value.name === "string"
+                ? event.value.name
+                : doneItem && typeof doneItem.name === "string"
+                  ? doneItem.name
+                  : undefined;
+            const doneArguments =
+              typeof event.value.arguments === "string"
+                ? event.value.arguments
+                : doneItem && typeof doneItem.arguments === "string"
+                  ? doneItem.arguments
+                  : undefined;
             if (
               !state ||
               state.done ||
-              event.value.name !== state.name ||
+              (doneName !== undefined && doneName !== state.name) ||
               !isNonNegativeInteger(event.value.output_index) ||
               event.value.output_index !== state.outputIndex ||
-              !boundedFunctionArguments(event.value.arguments) ||
+              !boundedFunctionArguments(doneArguments) ||
               (state.arguments.length > 0 &&
-                state.arguments !== event.value.arguments) ||
+                state.arguments !== doneArguments) ||
               proposalCount >= DESIGN_MATE_CHAT_LIMITS.proposalCandidates
             ) {
               throw new OpenAIStreamProtocolError();
             }
             let parsedArguments: unknown;
             try {
-              parsedArguments = JSON.parse(event.value.arguments);
+              parsedArguments = JSON.parse(doneArguments);
             } catch {
               throw new OpenAIStreamProtocolError();
             }
@@ -771,7 +790,7 @@ export function createOpenAIResponsesTransport(
             if (!chunk) {
               throw new OpenAIStreamProtocolError();
             }
-            state.arguments = event.value.arguments;
+            state.arguments = doneArguments;
             state.done = true;
             proposalCount += 1;
             yield chunk satisfies DesignMateChatProviderChunk;
@@ -785,7 +804,8 @@ export function createOpenAIResponsesTransport(
                 !state ||
                 !state.done ||
                 state.outputDone ||
-                item.name !== state.name ||
+                (typeof item.name === "string" &&
+                  item.name !== state.name) ||
                 !isNonNegativeInteger(event.value.output_index) ||
                 event.value.output_index !== state.outputIndex
               ) {

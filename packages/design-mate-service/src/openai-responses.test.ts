@@ -257,7 +257,6 @@ describe("OpenAI Responses model transport", () => {
       frame("response.function_call_arguments.done", {
         item_id: "function-call-1",
         output_index: 0,
-        name: DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
         arguments: argumentsJson,
       }),
       frame("response.output_item.done", {
@@ -297,6 +296,46 @@ describe("OpenAI Responses model transport", () => {
       chunks[0]?.type === "proposal-candidate" &&
         Object.isFrozen(chunks[0].proposal),
     ).toBe(true);
+  });
+
+  it("accepts item-wrapped final arguments and optional output-item names", async () => {
+    const argumentsJson = JSON.stringify(proposalArguments());
+    const payload = [
+      frame("response.output_item.added", {
+        output_index: 0,
+        item: {
+          id: "function-call-wrapped",
+          type: "function_call",
+          name: DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
+          arguments: "",
+        },
+      }),
+      frame("response.function_call_arguments.done", {
+        output_index: 0,
+        item: {
+          id: "function-call-wrapped",
+          name: DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
+          arguments: argumentsJson,
+        },
+      }),
+      frame("response.output_item.done", {
+        output_index: 0,
+        item: {
+          id: "function-call-wrapped",
+          type: "function_call",
+          arguments: argumentsJson,
+        },
+      }),
+      frame("response.completed", {
+        response: { status: "completed" },
+      }),
+    ].join("");
+    const candidate = transport(
+      vi.fn(async () => sseResponse(payload)) as unknown as typeof fetch,
+    );
+    await expect(collectChunks(candidate)).resolves.toEqual([
+      expect.objectContaining({ type: "proposal-candidate" }),
+    ]);
   });
 
   it("fails closed on unknown, malformed, mismatched, and incomplete function calls", async () => {
