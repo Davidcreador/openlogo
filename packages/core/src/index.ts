@@ -15,3 +15,4 @@ export * from "./typography";
 export * from "./snapping";
 export * from "./precision";
 export * from "./review";
+export * from "./variants";

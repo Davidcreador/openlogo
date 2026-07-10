@@ -1,4 +1,5 @@
 import type {
+  Command,
   DesignBrief,
   DesignReview,
   LogoDocument,
@@ -9,6 +10,95 @@ import type {
 } from "@openlogo/core";
 import type { Effect } from "effect";
 import type { DocumentIdentity } from "./identity";
+
+export type DesignMateRisk = "low" | "medium" | "high";
+
+export type SetTextContentDesignMateAction = {
+  readonly type: "set-text-content";
+  readonly nodeId: string;
+  readonly content: string;
+};
+
+export type SetFillColorDesignMateAction = {
+  readonly type: "set-fill-color";
+  readonly nodeId: string;
+  /** Opaque solid color; proposal validation currently accepts hex colors. */
+  readonly color: string;
+};
+
+export type SetLetterSpacingDesignMateAction = {
+  readonly type: "set-letter-spacing";
+  readonly nodeId: string;
+  readonly letterSpacing: number;
+};
+
+export type CreateLogoVariantDesignMateAction = {
+  readonly type: "create-logo-variant";
+  readonly sourceArtboardId: string;
+  readonly purpose: LogoVariant;
+};
+
+/** Closed mutation surface accepted from a future model-backed provider. */
+export type DesignMateAction =
+  | SetTextContentDesignMateAction
+  | SetFillColorDesignMateAction
+  | SetLetterSpacingDesignMateAction
+  | CreateLogoVariantDesignMateAction;
+
+export type DesignMateProposal = {
+  readonly id: string;
+  readonly label: string;
+  readonly rationale?: string;
+  readonly risk: DesignMateRisk;
+  readonly sourceFindingIds?: readonly string[];
+  readonly actions: readonly DesignMateAction[];
+};
+
+export type DesignMateMutationToolMetadata = {
+  readonly risk: DesignMateRisk;
+  readonly description: string;
+};
+
+export type DesignMateProposalImpact = {
+  readonly changedNodeIds: readonly string[];
+  readonly createdArtboardIds: readonly string[];
+  readonly summaries: readonly string[];
+};
+
+export type DesignMateBatchCommand = Extract<Command, { type: "batch" }>;
+
+export type PreparedDesignMateProposal = {
+  readonly proposal: DesignMateProposal;
+  readonly identity: DocumentIdentity;
+  /** A single history entry; its child commands are applied in order. */
+  readonly command: DesignMateBatchCommand;
+  readonly previewDocument: LogoDocument;
+  readonly impact: DesignMateProposalImpact;
+};
+
+export type DesignMateProposalErrorCode =
+  | "invalid-proposal"
+  | "precondition-failed"
+  | "no-op"
+  | "preparation-failed";
+
+export type DesignMateProposalError = {
+  readonly _tag: "DesignMateProposalError";
+  readonly code: DesignMateProposalErrorCode;
+  /** Bounded, non-provider-authored message suitable for display or logs. */
+  readonly message: string;
+  readonly actionIndex?: number;
+};
+
+export type PrepareDesignMateProposalResult =
+  | {
+      readonly ok: true;
+      readonly prepared: PreparedDesignMateProposal;
+    }
+  | {
+      readonly ok: false;
+      readonly error: DesignMateProposalError;
+    };
 
 export type DesignMateSelection = {
   readonly selectedNodeIds: readonly string[];

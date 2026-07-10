@@ -1,4 +1,14 @@
-import { useEffect, useId, useRef, useState } from "react";
+import {
+  Component,
+  lazy,
+  Suspense,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ErrorInfo,
+  type ReactNode,
+} from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -13,7 +23,12 @@ import {
   type ReviewFinding,
   type ReviewScope,
 } from "@openlogo/core";
-import { collectDesignMateReview } from "@openlogo/design-mate";
+import {
+  buildHeuristicDesignMateProposals,
+  collectDesignMateReview,
+  prepareDesignMateProposal,
+  type PreparedDesignMateProposal,
+} from "@openlogo/design-mate";
 import { fitBounds } from "@openlogo/renderer";
 import {
   designBriefFromDraft,
@@ -28,6 +43,48 @@ import {
 } from "../lib/design-mate-review";
 import { documentStore, useDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
+
+const DesignMateProposalPanel = lazy(() =>
+  import("./DesignMateProposalPanel").then((module) => ({
+    default: module.DesignMateProposalPanel,
+  })),
+);
+
+class DesignMateProposalErrorBoundary extends Component<
+  { children: ReactNode; resetKey: string },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("Design Mate suggestions failed to load.", error, info);
+  }
+
+  componentDidUpdate(previous: { children: ReactNode; resetKey: string }) {
+    if (this.state.failed && previous.resetKey !== this.props.resetKey) {
+      this.setState({ failed: false });
+    }
+  }
+
+  render() {
+    if (this.state.failed) {
+      return (
+        <div
+          role="alert"
+          className="rounded-[7px] border border-[rgb(194_70_62/0.28)] bg-[#fdf1f0] px-9 py-7 text-[10.5px] leading-[1.45] text-danger"
+        >
+          Suggested changes are unavailable. The review findings above are
+          still safe to use.
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const SECTION =
   "inspector-section shrink-0 rounded-card border border-panel-hairline bg-card p-12 shadow-[0_1px_2px_rgb(28_25_33/0.04)]";
@@ -168,12 +225,22 @@ export function DesignMateSection() {
     generation: documentGeneration,
   });
   const latestRun = useRef(0);
+  const latestProposalAction = useRef(0);
+  const applyingProposalRef = useRef<string | null>(null);
   const [expanded, setExpanded] = useState(true);
   const [briefExpanded, setBriefExpanded] = useState(false);
   const [draft, setDraft] = useState<DesignBriefDraft>(() =>
     designBriefToDraft(document.designBrief),
   );
   const [briefDirty, setBriefDirty] = useState(false);
+  const [preparedProposals, setPreparedProposals] = useState<
+    readonly PreparedDesignMateProposal[]
+  >([]);
+  const [proposalBaseDocument, setProposalBaseDocument] =
+    useState<LogoDocument | null>(null);
+  const [applyingProposalId, setApplyingProposalId] = useState<string | null>(
+    null,
+  );
 
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   const keyObjectId = useEditorStore((state) => state.keyObjectId);
@@ -186,6 +253,7 @@ export function DesignMateSection() {
   const setReview = useEditorStore((state) => state.setDesignMateReview);
   const setStatus = useEditorStore((state) => state.setDesignMateStatus);
   const setError = useEditorStore((state) => state.setDesignMateError);
+  const setToast = useEditorStore((state) => state.setToast);
 
   useEffect(() => {
     setDraft(designBriefToDraft(document.designBrief));
@@ -203,6 +271,11 @@ export function DesignMateSection() {
       setReview(null);
       setStatus("idle");
       setError(null);
+      latestProposalAction.current += 1;
+      applyingProposalRef.current = null;
+      setPreparedProposals([]);
+      setProposalBaseDocument(null);
+      setApplyingProposalId(null);
     }
   }, [
     document.designBrief,
@@ -256,6 +329,12 @@ export function DesignMateSection() {
   }
 
   async function runReview(): Promise<void> {
+    latestProposalAction.current += 1;
+    applyingProposalRef.current = null;
+    setPreparedProposals([]);
+    setProposalBaseDocument(null);
+    setApplyingProposalId(null);
+
     if (briefDirty) {
       saveBrief();
     }
@@ -318,20 +397,101 @@ export function DesignMateSection() {
         setStatus("idle");
         return;
       }
+      const nextPreparedProposals: PreparedDesignMateProposal[] = [];
+      for (const proposal of buildHeuristicDesignMateProposals(
+        committedDocument,
+        result.review.findings,
+        result.scope,
+      )) {
+        const preparation = prepareDesignMateProposal(
+          committedDocument,
+          proposal,
+          { generation, revision },
+        );
+        if (preparation.ok) {
+          nextPreparedProposals.push(preparation.prepared);
+        }
+      }
       setReview({
         review: result.review,
         identity: result.identity,
         scope: result.scope,
         request: requestSignature,
       });
+      setPreparedProposals(nextPreparedProposals);
+      setProposalBaseDocument(committedDocument);
+      setApplyingProposalId(null);
       setStatus("complete");
     } catch (cause) {
       if (latestRun.current !== runId) {
         return;
       }
+      setPreparedProposals([]);
+      setProposalBaseDocument(null);
+      setApplyingProposalId(null);
+      setReview(null);
       setError(providerErrorMessage(cause));
       setStatus("error");
     }
+  }
+
+  async function applyProposal(
+    prepared: PreparedDesignMateProposal,
+  ): Promise<void> {
+    if (applyingProposalRef.current !== null) {
+      return;
+    }
+
+    const proposalId = prepared.proposal.id;
+    const actionId = latestProposalAction.current + 1;
+    latestProposalAction.current = actionId;
+    applyingProposalRef.current = proposalId;
+    setApplyingProposalId(proposalId);
+    try {
+      const { applyPreparedDesignMateProposal } = await import(
+        "../lib/design-mate-proposal"
+      );
+      if (latestProposalAction.current !== actionId) {
+        return;
+      }
+      const outcome = applyPreparedDesignMateProposal(documentStore, prepared);
+      if (outcome.status === "applied") {
+        setPreparedProposals((current) =>
+          current.filter((item) => item.proposal.id !== proposalId),
+        );
+        setToast(
+          "Proposal applied as one undoable step. Press Ctrl/Cmd+Z to undo.",
+        );
+      } else if (outcome.status === "stale") {
+        setToast(
+          "This proposal is out of date and was not applied. Re-run the design review.",
+        );
+      } else {
+        setToast(
+          "This proposal could not be applied safely. Re-run the design review and try again.",
+        );
+      }
+    } catch {
+      if (latestProposalAction.current !== actionId) {
+        return;
+      }
+      setToast(
+        "This proposal could not be applied safely. Re-run the design review and try again.",
+      );
+    } finally {
+      if (latestProposalAction.current === actionId) {
+        applyingProposalRef.current = null;
+        setApplyingProposalId((current) =>
+          current === proposalId ? null : current,
+        );
+      }
+    }
+  }
+
+  function dismissProposal(proposalId: string): void {
+    setPreparedProposals((current) =>
+      current.filter((item) => item.proposal.id !== proposalId),
+    );
   }
 
   function focusFinding(finding: ReviewFinding): void {
@@ -646,6 +806,37 @@ export function DesignMateSection() {
               )}
             </div>
           )}
+
+          {reviewSnapshot &&
+            proposalBaseDocument &&
+            preparedProposals.length > 0 && (
+              <DesignMateProposalErrorBoundary
+                resetKey={preparedProposals
+                  .map((item) => item.proposal.id)
+                  .join("\u0000")}
+              >
+                <Suspense
+                  fallback={
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      className="rounded-[7px] border border-panel-hairline bg-field px-9 py-7 text-[10.5px] text-ink-dim"
+                    >
+                      Loading suggested changes…
+                    </div>
+                  }
+                >
+                  <DesignMateProposalPanel
+                    baseDocument={proposalBaseDocument}
+                    proposals={preparedProposals}
+                    stale={stale}
+                    applyingId={applyingProposalId}
+                    onApply={applyProposal}
+                    onDismiss={dismissProposal}
+                  />
+                </Suspense>
+              </DesignMateProposalErrorBoundary>
+            )}
         </div>
       )}
     </section>

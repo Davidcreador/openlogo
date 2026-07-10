@@ -26,6 +26,7 @@ import {
 import {
   type Artboard,
   type LogoVariant,
+  buildAddVariantCommand,
   cloneArtboardForVariant,
   createArtboard,
   getActiveArtboard,
@@ -332,20 +333,14 @@ function ArtboardMenu() {
 
   function createVariant(purpose: LogoVariant) {
     const doc = documentStore.document;
-    const { artboard: next, nodes } = cloneArtboardForVariant(
+    const command = buildAddVariantCommand(
       doc,
       doc.activeArtboardId,
       purpose,
     );
-    const position = nextArtboardPosition(doc, doc.activeArtboardId, {
-      width: next.width,
-      height: next.height,
-    });
-    next.x = position.x;
-    next.y = position.y;
-    documentStore.apply({ type: "add-artboard", artboard: next, nodes });
+    documentStore.apply(command);
     setSelection([]);
-    ensureArtboardVisible(next.id);
+    ensureArtboardVisible(command.artboard.id);
     setOpen(false);
   }
 
