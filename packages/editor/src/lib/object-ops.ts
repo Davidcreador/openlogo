@@ -1,11 +1,14 @@
 import {
+  type AlignEdge,
   type Bounds,
   type LogoDocument,
   type LogoNode,
   type NodePatch,
   type PathNode,
+  alignUnitOffsets,
   collectLeafNodeIds,
   createId,
+  distributeEvenGapOffsets,
   distributeSpacingOffsets,
   findContainerId,
   getActiveArtboard,
@@ -20,14 +23,6 @@ import { expandStroke } from "@openlogo/renderer";
 import { getCanvasKit } from "./canvaskit";
 import { recordTransform } from "./transform-again";
 import { documentStore } from "../state/document";
-
-export type AlignEdge =
-  | "left"
-  | "centerX"
-  | "right"
-  | "top"
-  | "centerY"
-  | "bottom";
 
 type Unit = { id: string; bounds: Bounds };
 
@@ -101,47 +96,17 @@ export function alignNodes(
   const keyUnit =
     units.length > 1 ? units.find((unit) => unit.id === keyId) : undefined;
   const artboard = getActiveArtboard(document);
-  const reference = keyUnit
-    ? keyUnit.bounds
-    : units.length > 1
-      ? unionBounds(units)!
-      : { x: 0, y: 0, width: artboard.width, height: artboard.height };
-
-  const movable = keyUnit
-    ? units.filter((unit) => unit.id !== keyUnit.id)
-    : units;
-  const updates = movable.flatMap((unit) => {
-    let dx = 0;
-    let dy = 0;
-    switch (edge) {
-      case "left":
-        dx = reference.x - unit.bounds.x;
-        break;
-      case "centerX":
-        dx =
-          reference.x +
-          (reference.width - unit.bounds.width) / 2 -
-          unit.bounds.x;
-        break;
-      case "right":
-        dx = reference.x + reference.width - unit.bounds.width - unit.bounds.x;
-        break;
-      case "top":
-        dy = reference.y - unit.bounds.y;
-        break;
-      case "centerY":
-        dy =
-          reference.y +
-          (reference.height - unit.bounds.height) / 2 -
-          unit.bounds.y;
-        break;
-      case "bottom":
-        dy =
-          reference.y + reference.height - unit.bounds.height - unit.bounds.y;
-        break;
-    }
-    return translateUnit(document, unit.id, dx, dy);
-  });
+  const offsets = alignUnitOffsets(
+    units,
+    edge,
+    units.length === 1
+      ? { x: 0, y: 0, width: artboard.width, height: artboard.height }
+      : undefined,
+    keyUnit?.id,
+  );
+  const updates = offsets.flatMap((offset) =>
+    translateUnit(document, offset.id, offset.dx, offset.dy),
+  );
 
   if (updates.length > 0) {
     documentStore.apply({ type: "update-nodes", updates });
@@ -159,28 +124,10 @@ export function distributeNodes(
     return;
   }
 
-  const horizontal = axis === "horizontal";
-  const sorted = [...units].sort((a, b) =>
-    horizontal ? a.bounds.x - b.bounds.x : a.bounds.y - b.bounds.y,
+  const offsets = distributeEvenGapOffsets(units, axis);
+  const updates = offsets.flatMap((offset) =>
+    translateUnit(document, offset.id, offset.dx, offset.dy),
   );
-  const first = sorted[0]!;
-  const last = sorted[sorted.length - 1]!;
-  const span = horizontal
-    ? last.bounds.x + last.bounds.width - first.bounds.x
-    : last.bounds.y + last.bounds.height - first.bounds.y;
-  const totalSize = sorted.reduce(
-    (sum, unit) => sum + (horizontal ? unit.bounds.width : unit.bounds.height),
-    0,
-  );
-  const gap = (span - totalSize) / (sorted.length - 1);
-
-  let cursor = horizontal ? first.bounds.x : first.bounds.y;
-  const updates = sorted.flatMap((unit) => {
-    const dx = horizontal ? cursor - unit.bounds.x : 0;
-    const dy = horizontal ? 0 : cursor - unit.bounds.y;
-    cursor += (horizontal ? unit.bounds.width : unit.bounds.height) + gap;
-    return translateUnit(document, unit.id, dx, dy);
-  });
 
   if (updates.length > 0) {
     documentStore.apply({ type: "update-nodes", updates });

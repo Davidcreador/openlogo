@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { distributeSpacingOffsets, pixelSnapPatch } from "./precision";
+import {
+  alignUnitOffsets,
+  distributeEvenGapOffsets,
+  distributeSpacingOffsets,
+  pixelSnapPatch,
+} from "./precision";
 
 describe("pixelSnapPatch", () => {
   it("rounds position and dimensions to whole pixels", () => {
@@ -39,6 +44,80 @@ describe("pixelSnapPatch", () => {
 const unit = (id: string, x: number, y: number, w = 20, h = 20) => ({
   id,
   bounds: { x, y, width: w, height: h },
+});
+
+describe("alignUnitOffsets", () => {
+  it("aligns to a supplied artboard reference", () => {
+    expect(
+      alignUnitOffsets(
+        [unit("a", 20, 30, 40, 20)],
+        "centerX",
+        { x: 0, y: 0, width: 200, height: 100 },
+      ),
+    ).toEqual([{ id: "a", dx: 60, dy: 0 }]);
+  });
+
+  it("aligns a selection to its union and preserves a key object", () => {
+    const units = [
+      unit("a", 10, 20, 20, 10),
+      unit("b", 70, 60, 30, 30),
+    ];
+    expect(alignUnitOffsets(units, "top")).toEqual([
+      { id: "b", dx: 0, dy: -40 },
+    ]);
+    expect(alignUnitOffsets(units, "right", undefined, "a")).toEqual([
+      { id: "b", dx: -70, dy: 0 },
+    ]);
+  });
+
+  it("omits no-ops and fails closed for invalid bounds", () => {
+    expect(
+      alignUnitOffsets(
+        [unit("a", 0, 0), unit("b", 20, 0)],
+        "top",
+      ),
+    ).toEqual([]);
+    expect(
+      alignUnitOffsets(
+        [unit("a", Number.NaN, 0)],
+        "left",
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("distributeEvenGapOffsets", () => {
+  it("distributes mixed-width units while fixing the endpoints", () => {
+    expect(
+      distributeEvenGapOffsets(
+        [
+          unit("a", 0, 0, 10),
+          unit("b", 30, 0, 20),
+          unit("c", 100, 0, 10),
+        ],
+        "horizontal",
+      ),
+    ).toEqual([{ id: "b", dx: 15, dy: 0 }]);
+  });
+
+  it("supports vertical distribution and rejects insufficient units", () => {
+    expect(
+      distributeEvenGapOffsets(
+        [
+          unit("a", 0, 0, 10, 10),
+          unit("b", 0, 90, 10, 20),
+          unit("c", 0, 200, 10, 10),
+        ],
+        "vertical",
+      ),
+    ).toEqual([{ id: "b", dx: 0, dy: 5 }]);
+    expect(
+      distributeEvenGapOffsets(
+        [unit("a", 0, 0), unit("b", 40, 0)],
+        "horizontal",
+      ),
+    ).toEqual([]);
+  });
 });
 
 describe("distributeSpacingOffsets", () => {
