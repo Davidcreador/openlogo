@@ -15,6 +15,7 @@ import {
   type DesignMateChatEvent,
   type DesignMateChatResult,
   type DesignMateChatTurnRequest,
+  type DesignMateProposal,
   type DesignMateVisualAttachment,
 } from "./index";
 
@@ -78,6 +79,26 @@ function makeRequest(withImage = false): DesignMateChatTurnRequest {
     },
     { ...options, scope: "selection" },
   );
+}
+
+function variantProposal(
+  request: DesignMateChatTurnRequest,
+  id = "chat-variant-proposal",
+  purpose: "primary" | "icon" = "icon",
+): DesignMateProposal {
+  return {
+    id,
+    label: `Create ${purpose} variant`,
+    risk: "low",
+    rationale: "Prepare a focused logo-system variant for review.",
+    actions: [
+      {
+        type: "create-logo-variant",
+        sourceArtboardId: request.document.activeArtboardId,
+        purpose,
+      },
+    ],
+  };
 }
 
 async function drain(
@@ -144,8 +165,13 @@ describe("chat providers and orchestration", () => {
     const request = makeRequest();
     const provider = createHeuristicDesignMateChatProvider();
     const deltas: string[] = [];
+    const proposals: DesignMateProposal[] = [];
     for await (const chunk of provider.stream(request)) {
-      deltas.push(chunk.delta);
+      if (chunk.type === "text-delta") {
+        deltas.push(chunk.delta);
+      } else {
+        proposals.push(chunk.proposal);
+      }
     }
     const response = deltas.join("");
 
@@ -153,6 +179,9 @@ describe("chat providers and orchestration", () => {
     expect(response).toContain("No canvas changes were made");
     expect(response).toContain("proposal approval pipeline");
     expect(deltas.every((delta) => delta.length > 0)).toBe(true);
+    expect(proposals.every((proposal) => proposal.actions.length > 0)).toBe(
+      true,
+    );
   });
 
   it("emits stable success order, increasing indices, and a frozen message", async () => {
@@ -196,6 +225,153 @@ describe("chat providers and orchestration", () => {
           event.type === "cancelled",
       ),
     ).toHaveLength(1);
+  });
+
+  it("prepares interleaved proposal candidates against the frozen turn snapshot", async () => {
+    const request = makeRequest();
+    const proposal = variantProposal(request);
+    const provider = createFakeDesignMateChatProvider({
+      chunks: [
+        { type: "text-delta", delta: "I recommend " },
+        { type: "proposal-candidate", proposal },
+        { type: "text-delta", delta: "an icon variant." },
+      ],
+    });
+    const { events, result } = await drain(
+      orchestrateDesignMateChat(request, provider),
+    );
+
+    expect(events.map((event) => event.type)).toEqual([
+      "started",
+      "context",
+      "message-start",
+      "text-delta",
+      "proposal-prepared",
+      "text-delta",
+      "message-end",
+      "completed",
+    ]);
+    const prepared = events.find(
+      (event) => event.type === "proposal-prepared",
+    );
+    expect(prepared).toMatchObject({
+      type: "proposal-prepared",
+      index: 0,
+      prepared: {
+        proposal: { id: proposal.id },
+        command: { type: "batch" },
+      },
+    });
+    expect(
+      prepared?.type === "proposal-prepared" &&
+        Object.isFrozen(prepared.prepared.previewDocument),
+    ).toBe(true);
+    expect(result).toMatchObject({
+      status: "completed",
+      message: { text: "I recommend an icon variant." },
+      preparedProposals: [{ proposal: { id: proposal.id } }],
+      rejectedProposals: [],
+    });
+  });
+
+  it("completes proposal-only turns and reports safe preparation rejection", async () => {
+    const request = makeRequest();
+    const proposalOnly = await drain(
+      orchestrateDesignMateChat(
+        request,
+        createFakeDesignMateChatProvider({
+          chunks: [
+            {
+              type: "proposal-candidate",
+              proposal: variantProposal(request),
+            },
+          ],
+        }),
+      ),
+    );
+    expect(proposalOnly.events.map((event) => event.type)).toEqual([
+      "started",
+      "context",
+      "message-start",
+      "proposal-prepared",
+      "message-end",
+      "completed",
+    ]);
+    expect(proposalOnly.result).toMatchObject({
+      status: "completed",
+      message: { text: expect.stringContaining("Nothing has been applied") },
+    });
+
+    const rejected = await drain(
+      orchestrateDesignMateChat(
+        request,
+        createFakeDesignMateChatProvider({
+          chunks: [
+            {
+              type: "proposal-candidate",
+              proposal: variantProposal(request, "duplicate-primary", "primary"),
+            },
+          ],
+        }),
+      ),
+    );
+    expect(rejected.events.map((event) => event.type)).toEqual([
+      "started",
+      "context",
+      "message-start",
+      "proposal-rejected",
+      "message-end",
+      "completed",
+    ]);
+    expect(rejected.result).toMatchObject({
+      status: "completed",
+      preparedProposals: [],
+      rejectedProposals: [
+        {
+          proposalId: "duplicate-primary",
+          error: { code: "precondition-failed" },
+        },
+      ],
+    });
+  });
+
+  it("fails closed on duplicate or excessive proposal candidates", async () => {
+    const request = makeRequest();
+    const duplicate = variantProposal(request);
+    const duplicateResult = await drain(
+      orchestrateDesignMateChat(
+        request,
+        createFakeDesignMateChatProvider({
+          chunks: [
+            { type: "proposal-candidate", proposal: duplicate },
+            { type: "proposal-candidate", proposal: duplicate },
+          ],
+        }),
+      ),
+    );
+    expect(duplicateResult.result).toMatchObject({
+      status: "failed",
+      error: { code: "invalid-chat-response" },
+    });
+
+    const excessiveResult = await drain(
+      orchestrateDesignMateChat(
+        request,
+        createFakeDesignMateChatProvider({
+          chunks: Array.from(
+            { length: DESIGN_MATE_CHAT_LIMITS.proposalCandidates + 1 },
+            (_, index) => ({
+              type: "proposal-candidate" as const,
+              proposal: variantProposal(request, `proposal-${index}`),
+            }),
+          ),
+        }),
+      ),
+    );
+    expect(excessiveResult.result).toMatchObject({
+      status: "failed",
+      error: { code: "invalid-chat-response" },
+    });
   });
 
   it("fails closed on oversized output and invalid provider chunks", async () => {

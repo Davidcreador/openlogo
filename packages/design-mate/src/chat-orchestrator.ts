@@ -7,8 +7,10 @@ import {
   type DesignMateChatProvider,
   type DesignMateChatProviderChunk,
   type DesignMateChatResult,
+  type DesignMateChatRejectedProposal,
   type DesignMateChatTurnRequest,
   type DesignMateSelection,
+  type PreparedDesignMateProposal,
 } from "./contracts";
 import {
   prepareDesignMateChatRequest,
@@ -20,6 +22,7 @@ import {
   normalizeDesignMateChatProviderError,
 } from "./chat-provider";
 import { makeDesignMateProviderError } from "./provider";
+import { prepareDesignMateProposal } from "./proposals";
 import { deepFreeze } from "./snapshot";
 import { snapshotValidDesignMateChatProviderChunk } from "./chat-validation";
 
@@ -131,7 +134,9 @@ function baseResult(request: DesignMateChatTurnRequest): {
 
 /**
  * Success order is:
- * started → context → message-start → text-delta+ → message-end → completed.
+ * started → context → message-start →
+ * (text-delta | proposal-prepared | proposal-rejected)+ →
+ * message-end → completed.
  * Failure and cancellation emit exactly one terminal `failed`/`cancelled`
  * event, and never emit message-end or completed.
  */
@@ -172,7 +177,11 @@ export async function* orchestrateDesignMateChat(
   let iterator: AsyncIterator<DesignMateChatProviderChunk> | undefined;
   let iteratorDone = false;
   const deltas: string[] = [];
+  const preparedProposals: PreparedDesignMateProposal[] = [];
+  const rejectedProposals: DesignMateChatRejectedProposal[] = [];
+  const seenProposalIds = new Set<string>();
   let textLength = 0;
+  let proposalCount = 0;
 
   try {
     const iterable = provider.stream(request, options.signal);
@@ -207,42 +216,88 @@ export async function* orchestrateDesignMateChat(
       if (!chunk) {
         throw makeDesignMateProviderError(
           providerId,
-          "The Design Mate chat provider returned an invalid text delta.",
+          "The Design Mate chat provider returned an invalid output chunk.",
           { code: "invalid-chat-response", retryable: false },
         );
       }
-      if (deltas.length >= DESIGN_MATE_CHAT_LIMITS.deltas) {
-        throw makeDesignMateProviderError(
-          providerId,
-          "The Design Mate chat provider returned too many text deltas.",
-          { code: "invalid-chat-response", retryable: false },
-        );
+      if (chunk.type === "text-delta") {
+        if (deltas.length >= DESIGN_MATE_CHAT_LIMITS.deltas) {
+          throw makeDesignMateProviderError(
+            providerId,
+            "The Design Mate chat provider returned too many text deltas.",
+            { code: "invalid-chat-response", retryable: false },
+          );
+        }
+        if (
+          textLength + chunk.delta.length >
+          DESIGN_MATE_CHAT_LIMITS.assistantTextLength
+        ) {
+          throw makeDesignMateProviderError(
+            providerId,
+            "The Design Mate chat response exceeded the text limit.",
+            { code: "invalid-chat-response", retryable: false },
+          );
+        }
+        const index = deltas.length;
+        deltas.push(chunk.delta);
+        textLength += chunk.delta.length;
+        yield deepFreeze({
+          type: "text-delta",
+          messageId: request.assistantMessageId,
+          index,
+          delta: chunk.delta,
+        });
+        continue;
       }
+
       if (
-        textLength + chunk.delta.length >
-        DESIGN_MATE_CHAT_LIMITS.assistantTextLength
+        proposalCount >= DESIGN_MATE_CHAT_LIMITS.proposalCandidates ||
+        seenProposalIds.has(chunk.proposal.id)
       ) {
         throw makeDesignMateProviderError(
           providerId,
-          "The Design Mate chat response exceeded the text limit.",
+          "The Design Mate chat provider returned invalid proposal candidates.",
           { code: "invalid-chat-response", retryable: false },
         );
       }
-      const index = deltas.length;
-      deltas.push(chunk.delta);
-      textLength += chunk.delta.length;
-      yield deepFreeze({
-        type: "text-delta",
-        messageId: request.assistantMessageId,
-        index,
-        delta: chunk.delta,
-      });
+      const index = proposalCount;
+      proposalCount += 1;
+      seenProposalIds.add(chunk.proposal.id);
+      const preparation = prepareDesignMateProposal(
+        request.document,
+        chunk.proposal,
+        {
+          generation: request.identity.generation,
+          revision: request.identity.revision,
+        },
+      );
+      if (preparation.ok) {
+        preparedProposals.push(preparation.prepared);
+        yield deepFreeze({
+          type: "proposal-prepared",
+          messageId: request.assistantMessageId,
+          index,
+          prepared: preparation.prepared,
+        });
+      } else {
+        const rejected = deepFreeze({
+          index,
+          proposalId: chunk.proposal.id,
+          error: preparation.error,
+        });
+        rejectedProposals.push(rejected);
+        yield deepFreeze({
+          type: "proposal-rejected",
+          messageId: request.assistantMessageId,
+          ...rejected,
+        });
+      }
     }
 
-    if (deltas.length === 0) {
+    if (deltas.length === 0 && proposalCount === 0) {
       throw makeDesignMateProviderError(
         providerId,
-        "The Design Mate chat provider returned no text.",
+        "The Design Mate chat provider returned no usable output.",
         { code: "invalid-chat-response", retryable: false },
       );
     }
@@ -250,10 +305,16 @@ export async function* orchestrateDesignMateChat(
       throw makeDesignMateChatCancelledError(providerId);
     }
 
+    const messageText =
+      deltas.length > 0
+        ? deltas.join("")
+        : preparedProposals.length > 0
+          ? `I prepared ${preparedProposals.length === 1 ? "a suggested change" : `${preparedProposals.length} suggested changes`} for your review. Nothing has been applied.`
+          : "I could not prepare the suggested change safely. Nothing has been applied.";
     const message = deepFreeze({
       id: request.assistantMessageId,
       role: "assistant" as const,
-      text: deltas.join(""),
+      text: messageText,
       createdAt,
     });
     yield deepFreeze({ type: "message-end", message });
@@ -262,6 +323,8 @@ export async function* orchestrateDesignMateChat(
       ...baseResult(request),
       status: "completed",
       message,
+      preparedProposals: [...preparedProposals],
+      rejectedProposals: [...rejectedProposals],
     });
   } catch (cause) {
     const error = normalizeDesignMateChatProviderError(

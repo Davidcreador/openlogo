@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   DESIGN_MATE_CHAT_LIMITS,
   buildDocumentIdentity,
+  isValidDesignMateChatProviderChunk,
   isValidDesignMateChatWireRequest,
   prepareDesignMateChatRequest,
   snapshotValidDesignMateChatWireRequest,
+  snapshotValidDesignMateChatProviderChunk,
   toDesignMateChatWireRequest,
   type DesignMateChatTurnInput,
   type DesignMateVisualAttachment,
@@ -153,6 +155,57 @@ describe("chat request preparation", () => {
         { generation: 0, revision: 0 },
       ),
     ).toThrow(TypeError);
+  });
+});
+
+describe("Design Mate chat provider chunk validation", () => {
+  const candidate = {
+    type: "proposal-candidate" as const,
+    proposal: {
+      id: "validated-proposal",
+      label: "Create icon variant",
+      risk: "low" as const,
+      actions: [
+        {
+          type: "create-logo-variant" as const,
+          sourceArtboardId: "artboard-1",
+          purpose: "icon" as const,
+        },
+      ],
+    },
+  };
+
+  it("accepts, snapshots, and freezes closed proposal candidates", () => {
+    expect(isValidDesignMateChatProviderChunk(candidate)).toBe(true);
+    const snapshot = snapshotValidDesignMateChatProviderChunk(candidate);
+    expect(snapshot).toEqual(candidate);
+    expectDeepFrozen(snapshot);
+  });
+
+  it("rejects extra keys, arbitrary commands, and oversized candidates", () => {
+    expect(
+      isValidDesignMateChatProviderChunk({ ...candidate, command: {} }),
+    ).toBe(false);
+    expect(
+      isValidDesignMateChatProviderChunk({
+        ...candidate,
+        proposal: {
+          ...candidate.proposal,
+          actions: [{ type: "batch", commands: [] }],
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isValidDesignMateChatProviderChunk({
+        ...candidate,
+        proposal: {
+          ...candidate.proposal,
+          rationale: "x".repeat(
+            DESIGN_MATE_CHAT_LIMITS.proposalSerializedBytes,
+          ),
+        },
+      }),
+    ).toBe(false);
   });
 });
 

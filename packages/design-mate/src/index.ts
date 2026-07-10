@@ -4,6 +4,7 @@ export * from "./chat-prompt";
 export * from "./chat-provider";
 export * from "./chat-request";
 export * from "./chat-sse";
+export * from "./chat-tools";
 export * from "./chat-validation";
 export * from "./contracts";
 export * from "./context";

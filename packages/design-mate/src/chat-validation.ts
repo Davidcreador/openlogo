@@ -10,6 +10,7 @@ import {
 } from "./contracts";
 import { DESIGN_CONTEXT_LIMITS } from "./context";
 import type { DocumentIdentity } from "./identity";
+import { isValidDesignMateProposal } from "./proposal-validation";
 import { deepFreeze } from "./snapshot";
 
 type UnknownRecord = Record<string, unknown>;
@@ -1076,16 +1077,32 @@ export function isValidDesignMateChatProviderChunk(
   value: unknown,
 ): value is DesignMateChatProviderChunk {
   try {
+    if (!isPlainRecord(value) || typeof value.type !== "string") {
+      return false;
+    }
+    if (value.type === "text-delta") {
+      return (
+        hasExactKeys(value, ["type", "delta"]) &&
+        isBoundedString(
+          value.delta,
+          DESIGN_MATE_CHAT_LIMITS.deltaTextLength,
+          true,
+        ) &&
+        value.delta.length > 0
+      );
+    }
+    if (
+      value.type !== "proposal-candidate" ||
+      !hasExactKeys(value, ["type", "proposal"]) ||
+      !isValidDesignMateProposal(value.proposal)
+    ) {
+      return false;
+    }
+    const serialized = JSON.stringify(value);
     return (
-      isPlainRecord(value) &&
-      hasExactKeys(value, ["type", "delta"]) &&
-      value.type === "text-delta" &&
-      isBoundedString(
-        value.delta,
-        DESIGN_MATE_CHAT_LIMITS.deltaTextLength,
-        true,
-      ) &&
-      value.delta.length > 0
+      serialized !== undefined &&
+      utf8ByteLength(serialized) <=
+        DESIGN_MATE_CHAT_LIMITS.proposalSerializedBytes
     );
   } catch {
     return false;

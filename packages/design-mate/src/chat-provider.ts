@@ -11,6 +11,7 @@ import {
   isDesignMateProviderError,
   makeDesignMateProviderError,
 } from "./provider";
+import { buildHeuristicDesignMateProposals } from "./heuristic-proposals";
 import { toDesignMateChatWireRequest } from "./chat-request";
 import { decodeDesignMateChatSse } from "./chat-sse";
 
@@ -159,6 +160,14 @@ export function createHeuristicDesignMateChatProvider(): DesignMateChatProvider 
       for (const delta of splitResponse(heuristicResponse(request, review))) {
         throwIfAborted(id, signal);
         yield { type: "text-delta", delta };
+      }
+      for (const proposal of buildHeuristicDesignMateProposals(
+        request.document,
+        review.findings,
+        request.scope,
+      ).slice(0, DESIGN_MATE_CHAT_LIMITS.proposalCandidates)) {
+        throwIfAborted(id, signal);
+        yield { type: "proposal-candidate", proposal };
       }
       throwIfAborted(id, signal);
     },
@@ -407,7 +416,10 @@ export function createRemoteDesignMateChatProvider(
               "The Design Mate chat provider emitted data after completion.",
             );
           }
-          if (event.type === "text-delta") {
+          if (
+            event.type === "text-delta" ||
+            event.type === "proposal-candidate"
+          ) {
             yield event;
           } else if (event.type === "completed") {
             terminal = true;

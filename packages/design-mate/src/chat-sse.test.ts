@@ -9,8 +9,10 @@ import {
   makeDesignMateProviderError,
   prepareDesignMateChatRequest,
   type DesignMateChatProvider,
+  type DesignMateChatProviderChunk,
   type DesignMateChatTransportEvent,
   type DesignMateChatTurnRequest,
+  type DesignMateProposal,
   type DesignMateProviderError,
 } from "./index";
 
@@ -34,6 +36,21 @@ function makeRequest(): DesignMateChatTurnRequest {
     },
     { generation: 0, revision: 1 },
   );
+}
+
+function proposal(request = makeRequest()): DesignMateProposal {
+  return {
+    id: "remote-proposal",
+    label: "Create icon variant",
+    risk: "low",
+    actions: [
+      {
+        type: "create-logo-variant",
+        sourceArtboardId: request.document.activeArtboardId,
+        purpose: "icon",
+      },
+    ],
+  };
 }
 
 async function collectDecoded(
@@ -69,7 +86,9 @@ async function collectProvider(
 ): Promise<string> {
   const deltas: string[] = [];
   for await (const chunk of provider.stream(request, signal)) {
-    deltas.push(chunk.delta);
+    if (chunk.type === "text-delta") {
+      deltas.push(chunk.delta);
+    }
   }
   return deltas.join("");
 }
@@ -167,6 +186,22 @@ describe("Design Mate chat SSE codec", () => {
     expect(decoded).toEqual([{ type: "failed", error }]);
     expect(Object.isFrozen(decoded[0])).toBe(true);
   });
+
+  it("round-trips bounded proposal candidates", async () => {
+    const event = {
+      type: "proposal-candidate" as const,
+      proposal: proposal(),
+    };
+    const decoded = await collectDecoded([
+      new TextEncoder().encode(encodeDesignMateChatSseEvent(event)),
+    ]);
+    expect(decoded).toEqual([event]);
+    expect(Object.isFrozen(decoded[0])).toBe(true);
+    expect(
+      decoded[0]?.type === "proposal-candidate" &&
+        Object.isFrozen(decoded[0].proposal.actions),
+    ).toBe(true);
+  });
 });
 
 describe("remote Design Mate chat provider", () => {
@@ -205,6 +240,31 @@ describe("remote Design Mate chat provider", () => {
     >;
     expect(body).not.toHaveProperty("document");
     expect(body).toHaveProperty("context");
+  });
+
+  it("streams validated proposal candidates from the remote service", async () => {
+    const request = makeRequest();
+    const candidate = {
+      type: "proposal-candidate" as const,
+      proposal: proposal(request),
+    };
+    const provider = createRemoteDesignMateChatProvider({
+      endpoint: "https://example.test/design-mate/chat",
+      fetch: vi.fn(
+        async () =>
+          sseResponse(
+            [
+              encodeDesignMateChatSseEvent(candidate),
+              encodeDesignMateChatSseEvent({ type: "completed" }),
+            ].join(""),
+          ),
+      ) as unknown as typeof fetch,
+    });
+    const chunks: DesignMateChatProviderChunk[] = [];
+    for await (const chunk of provider.stream(request)) {
+      chunks.push(chunk);
+    }
+    expect(chunks).toEqual([candidate]);
   });
 
   it.each([
