@@ -5,12 +5,71 @@ import type {
   LogoDocument,
 } from "@openlogo/core";
 import { Effect } from "effect";
-import type {
-  DesignMateProvider,
-  DesignMateProviderError,
-  DesignMateProviderErrorCode,
-  DesignMateReviewRequest,
+import {
+  DESIGN_MATE_CHAT_LIMITS,
+  type DesignMateProvider,
+  type DesignMateProviderError,
+  type DesignMateProviderErrorCode,
+  type DesignMateReviewRequest,
 } from "./contracts";
+
+const PROVIDER_ERROR_CODES = new Set<DesignMateProviderErrorCode>([
+  "provider-failed",
+  "invalid-review",
+  "invalid-chat-response",
+  "invalid-request",
+  "rate-limited",
+  "cancelled",
+]);
+
+function boundedNonEmptyText(
+  value: string,
+  maximumLength: number,
+  fallback: string,
+): string {
+  const bounded = value.slice(0, maximumLength);
+  return bounded.trim().length > 0 ? bounded : fallback;
+}
+
+export function isDesignMateProviderError(
+  value: unknown,
+): value is DesignMateProviderError {
+  try {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      return false;
+    }
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      return false;
+    }
+    const keys = Reflect.ownKeys(value);
+    if (
+      keys.length !== 5 ||
+      !keys.every(
+        (key) =>
+          typeof key === "string" &&
+          ["_tag", "code", "providerId", "message", "retryable"].includes(key),
+      )
+    ) {
+      return false;
+    }
+    const candidate = value as Partial<DesignMateProviderError>;
+    return (
+      candidate._tag === "DesignMateProviderError" &&
+      typeof candidate.code === "string" &&
+      PROVIDER_ERROR_CODES.has(candidate.code as DesignMateProviderErrorCode) &&
+      typeof candidate.providerId === "string" &&
+      candidate.providerId.trim().length > 0 &&
+      candidate.providerId.length <= DESIGN_MATE_CHAT_LIMITS.providerIdLength &&
+      typeof candidate.message === "string" &&
+      candidate.message.trim().length > 0 &&
+      candidate.message.length <= DESIGN_MATE_CHAT_LIMITS.errorMessageLength &&
+      typeof candidate.retryable === "boolean"
+    );
+  } catch {
+    return false;
+  }
+}
 
 export type DesignMateProviderErrorOptions = {
   readonly code?: DesignMateProviderErrorCode;
@@ -22,13 +81,21 @@ export function makeDesignMateProviderError(
   message: string,
   options: DesignMateProviderErrorOptions = {},
 ): DesignMateProviderError {
-  return {
+  return Object.freeze({
     _tag: "DesignMateProviderError",
     code: options.code ?? "provider-failed",
-    providerId,
-    message,
+    providerId: boundedNonEmptyText(
+      providerId,
+      DESIGN_MATE_CHAT_LIMITS.providerIdLength,
+      "unknown-provider",
+    ),
+    message: boundedNonEmptyText(
+      message,
+      DESIGN_MATE_CHAT_LIMITS.errorMessageLength,
+      "The Design Mate provider could not complete the request.",
+    ),
     retryable: options.retryable ?? false,
-  };
+  });
 }
 
 function failureMessage(cause: unknown): string {

@@ -319,7 +319,11 @@ export type DesignMateReviewRequest = {
 
 export type DesignMateProviderErrorCode =
   | "provider-failed"
-  | "invalid-review";
+  | "invalid-review"
+  | "invalid-chat-response"
+  | "invalid-request"
+  | "rate-limited"
+  | "cancelled";
 
 export type DesignMateProviderError = {
   readonly _tag: "DesignMateProviderError";
@@ -403,3 +407,237 @@ export type CollectedDesignMateReview = {
   readonly review: DesignReview;
   readonly events: readonly DesignMateReviewEvent[];
 };
+
+/**
+ * Hard limits shared by chat preparation, untrusted wire validation, provider
+ * output validation, and the SSE transport. Aliases are intentionally avoided:
+ * every limit has one unambiguous unit in its name.
+ */
+export const DESIGN_MATE_CHAT_LIMITS = Object.freeze({
+  chatIdLength: 256,
+  referenceIdLength: 2_048,
+  providerIdLength: 128,
+  fingerprintLength: 128,
+  timestampLength: 32,
+  historyMessages: 24,
+  userTextLength: 4_000,
+  assistantTextLength: 16_000,
+  deltaTextLength: 4_000,
+  deltas: 512,
+  attachments: 3,
+  attachmentBytes: 700 * 1_024,
+  attachmentMinimumDimension: 32,
+  attachmentMaximumDimension: 1_024,
+  attachmentPixels: 1_000_000,
+  attachmentLabelLength: 160,
+  selectionIds: 512,
+  contextStringLength: 4_000,
+  contextSerializedBytes: 128 * 1_024,
+  sseFrameBytes: 64 * 1_024,
+  errorMessageLength: 1_000,
+} as const);
+
+export type DesignMateChatRole = "user" | "assistant";
+
+export type DesignMateChatMessage = {
+  readonly id: string;
+  readonly role: DesignMateChatRole;
+  readonly text: string;
+  readonly createdAt: string;
+};
+
+export type DesignMateVisualAttachmentKind =
+  | "selection"
+  | "active-artboard"
+  | "document-overview";
+
+export type DesignMateVisualAttachment = {
+  readonly id: string;
+  readonly kind: DesignMateVisualAttachmentKind;
+  readonly mimeType: "image/png";
+  /** Raw base64 payload without a data-URL prefix. */
+  readonly dataBase64: string;
+  readonly width: number;
+  readonly height: number;
+  readonly byteLength: number;
+  readonly identity: DocumentIdentity;
+  readonly label?: string;
+};
+
+export type DesignMateChatTurnInput = {
+  readonly conversationId: string;
+  readonly turnId: string;
+  readonly assistantMessageId: string;
+  readonly history: readonly DesignMateChatMessage[];
+  readonly userMessage: DesignMateChatMessage;
+  readonly attachments?: readonly DesignMateVisualAttachment[];
+};
+
+/** Shorter alias for callers that model one chat submission as an input. */
+export type DesignMateChatInput = DesignMateChatTurnInput;
+
+export type DesignMateChatTurnRequest = {
+  /** Detached, deeply frozen snapshot. It must never cross a remote boundary. */
+  readonly document: LogoDocument;
+  readonly conversationId: string;
+  readonly turnId: string;
+  readonly assistantMessageId: string;
+  readonly identity: DocumentIdentity;
+  readonly context: DesignContext;
+  readonly selection: DesignMateSelection;
+  readonly scope: ReviewScope;
+  readonly history: readonly DesignMateChatMessage[];
+  readonly userMessage: DesignMateChatMessage;
+  readonly attachments: readonly DesignMateVisualAttachment[];
+};
+
+/**
+ * Provider-neutral remote request. `document?: never` makes accidental
+ * forwarding a type error while the runtime validator rejects the key even
+ * when its value is undefined.
+ */
+export type DesignMateChatWireRequest = {
+  readonly conversationId: string;
+  readonly turnId: string;
+  readonly assistantMessageId: string;
+  readonly identity: DocumentIdentity;
+  readonly context: DesignContext;
+  readonly selection: DesignMateSelection;
+  readonly scope: ReviewScope;
+  readonly history: readonly DesignMateChatMessage[];
+  readonly userMessage: DesignMateChatMessage;
+  readonly attachments: readonly DesignMateVisualAttachment[];
+  readonly document?: never;
+};
+
+export type DesignMateChatProviderChunk = {
+  readonly type: "text-delta";
+  readonly delta: string;
+};
+
+export interface DesignMateChatProvider {
+  readonly id: string;
+  stream(
+    request: DesignMateChatTurnRequest,
+    signal?: AbortSignal,
+  ): AsyncIterable<DesignMateChatProviderChunk>;
+}
+
+export type DesignMateChatPromptMessage = {
+  readonly role: DesignMateChatRole;
+  readonly text: string;
+};
+
+export type DesignMateChatPromptImage = {
+  readonly id: string;
+  readonly role: "user";
+  readonly kind: DesignMateVisualAttachmentKind;
+  readonly mimeType: "image/png";
+  readonly dataUrl: string;
+  readonly width: number;
+  readonly height: number;
+  readonly label?: string;
+};
+
+export type DesignMateChatPrompt = {
+  readonly system: string;
+  readonly messages: readonly DesignMateChatPromptMessage[];
+  readonly images: readonly DesignMateChatPromptImage[];
+};
+
+export type DesignMateChatStartedEvent = {
+  readonly type: "started";
+  readonly providerId: string;
+  readonly conversationId: string;
+  readonly turnId: string;
+  readonly scope: ReviewScope;
+  readonly identity: DocumentIdentity;
+};
+
+export type DesignMateChatContextEvent = {
+  readonly type: "context";
+  readonly context: DesignContext;
+};
+
+export type DesignMateChatMessageStartEvent = {
+  readonly type: "message-start";
+  readonly messageId: string;
+  readonly role: "assistant";
+  readonly createdAt: string;
+};
+
+export type DesignMateChatTextDeltaEvent = {
+  readonly type: "text-delta";
+  readonly messageId: string;
+  readonly index: number;
+  readonly delta: string;
+};
+
+export type DesignMateChatMessageEndEvent = {
+  readonly type: "message-end";
+  readonly message: DesignMateChatMessage;
+};
+
+export type DesignMateChatCompletedEvent = {
+  readonly type: "completed";
+  readonly message: DesignMateChatMessage;
+};
+
+export type DesignMateChatFailedEvent = {
+  readonly type: "failed";
+  readonly error: DesignMateProviderError;
+};
+
+export type DesignMateChatCancelledEvent = {
+  readonly type: "cancelled";
+  readonly error: DesignMateProviderError;
+};
+
+export type DesignMateChatEvent =
+  | DesignMateChatStartedEvent
+  | DesignMateChatContextEvent
+  | DesignMateChatMessageStartEvent
+  | DesignMateChatTextDeltaEvent
+  | DesignMateChatMessageEndEvent
+  | DesignMateChatCompletedEvent
+  | DesignMateChatFailedEvent
+  | DesignMateChatCancelledEvent;
+
+type DesignMateChatResultBase = {
+  readonly conversationId: string;
+  readonly turnId: string;
+  readonly scope: ReviewScope;
+  readonly context: DesignContext;
+  readonly identity: DocumentIdentity;
+};
+
+export type DesignMateChatResult =
+  | (DesignMateChatResultBase & {
+      readonly status: "completed";
+      readonly message: DesignMateChatMessage;
+    })
+  | (DesignMateChatResultBase & {
+      readonly status: "failed";
+      readonly error: DesignMateProviderError;
+    })
+  | (DesignMateChatResultBase & {
+      readonly status: "cancelled";
+      readonly error: DesignMateProviderError;
+    });
+
+export type CollectedDesignMateChat = DesignMateChatResult & {
+  readonly events: readonly DesignMateChatEvent[];
+};
+
+export type DesignMateChatTransportEvent =
+  | DesignMateChatProviderChunk
+  | {
+      readonly type: "completed";
+    }
+  | {
+      readonly type: "failed";
+      readonly error: DesignMateProviderError;
+    };
+
+export type DesignMateChatSseEvent = DesignMateChatTransportEvent;
+export type DesignMateChatSSEEvent = DesignMateChatTransportEvent;
