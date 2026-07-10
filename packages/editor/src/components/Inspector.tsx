@@ -235,6 +235,169 @@ function NumberField({
   );
 }
 
+function OpacityField({
+  value,
+  ariaLabel = "Opacity",
+  onPreview,
+  onCommit,
+  onCancel,
+}: {
+  value: number;
+  ariaLabel?: string;
+  onPreview: (value: number) => void;
+  onCommit: (value: number) => void;
+  onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const draftRef = useRef(value);
+  const activeRef = useRef(false);
+
+  useEffect(() => {
+    if (!activeRef.current) {
+      draftRef.current = value;
+      setDraft(value);
+    }
+  }, [value]);
+  useEffect(
+    () => () => {
+      if (activeRef.current) {
+        onCancel();
+      }
+    },
+    // The cancel callback is an imperative document-store boundary.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  const preview = (next: number) => {
+    const bounded = Math.min(1, Math.max(0, next));
+    activeRef.current = true;
+    draftRef.current = bounded;
+    setDraft(bounded);
+    onPreview(bounded);
+  };
+
+  const finish = (commit: boolean) => {
+    if (!activeRef.current) {
+      return;
+    }
+    activeRef.current = false;
+    if (commit && draftRef.current !== value) {
+      onCommit(draftRef.current);
+    } else {
+      draftRef.current = value;
+      setDraft(value);
+      onCancel();
+    }
+  };
+
+  return (
+    <>
+      <input
+        type="range"
+        min="0"
+        max="1"
+        step="0.01"
+        className="min-w-0 flex-1 accent-accent"
+        value={draft}
+        onPointerDown={(event) => {
+          activeRef.current = true;
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onChange={(event) => preview(Number(event.target.value))}
+        onPointerUp={() => finish(true)}
+        onPointerCancel={() => finish(false)}
+        onBlur={() => finish(true)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.currentTarget.blur();
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            finish(false);
+            event.currentTarget.blur();
+          }
+        }}
+        aria-label={ariaLabel}
+      />
+      <span className={OPACITY_PCT}>{Math.round(draft * 100)}%</span>
+    </>
+  );
+}
+
+function TextContentField({
+  value,
+  onPreview,
+  onCommit,
+  onCancel,
+}: {
+  value: string;
+  onPreview: (value: string) => void;
+  onCommit: (value: string) => void;
+  onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const activeRef = useRef(false);
+  const draftRef = useRef(value);
+
+  useEffect(() => {
+    if (!activeRef.current) {
+      draftRef.current = value;
+      setDraft(value);
+    }
+  }, [value]);
+  useEffect(
+    () => () => {
+      if (activeRef.current) {
+        onCancel();
+      }
+    },
+    // See OpacityField: cancel any transient preview when selection unmounts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  const finish = (commit: boolean) => {
+    if (!activeRef.current) {
+      return;
+    }
+    activeRef.current = false;
+    if (commit && draftRef.current !== value) {
+      onCommit(draftRef.current);
+    } else {
+      draftRef.current = value;
+      setDraft(value);
+      onCancel();
+    }
+  };
+
+  return (
+    <input
+      className={TEXT_INPUT}
+      value={draft}
+      onFocus={() => {
+        activeRef.current = true;
+      }}
+      onChange={(event) => {
+        const next = event.target.value;
+        activeRef.current = true;
+        draftRef.current = next;
+        setDraft(next);
+        onPreview(next);
+      }}
+      onBlur={() => finish(true)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.currentTarget.blur();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          finish(false);
+          event.currentTarget.blur();
+        }
+      }}
+    />
+  );
+}
+
 function AlignPanel({ nodeIds }: { nodeIds: readonly string[] }) {
   const canDistribute = nodeIds.length >= 3;
   const setTransformDialogOpen = useEditorStore(
@@ -396,19 +559,12 @@ function FillEditor({
         onCancelPreview={cancelPreview}
       />
       <div className={`${OPACITY_FIELD} mb-10`}>
-        <input
-          type="range"
-          min="0"
-          max="1"
-          step="0.01"
-          className="min-w-0 flex-1 accent-accent"
+        <OpacityField
           value={node.opacity}
-          onChange={(event) =>
-            patchSelection({ opacity: Number(event.target.value) })
-          }
-          aria-label="Opacity"
+          onPreview={(opacity) => previewSelection({ opacity })}
+          onCommit={(opacity) => patchSelection({ opacity })}
+          onCancel={cancelPreview}
         />
-        <span className={OPACITY_PCT}>{Math.round(node.opacity * 100)}%</span>
       </div>
     </>
   );
@@ -535,6 +691,7 @@ function DesignSection({
 }) {
   const document = useDocument();
   const setSelection = useEditorStore((state) => state.setSelection);
+  const setToast = useEditorStore((state) => state.setToast);
   const [copiesCount, setCopiesCount] = useState(6);
   const [offsetAmount, setOffsetAmount] = useState(10);
 
@@ -732,11 +889,18 @@ function DesignSection({
             title="New path offset outward (+) or inward (−) from this one"
             aria-label="Offset path"
             onClick={() => {
-              void offsetPathOp(node.id, offsetAmount).then((newId) => {
-                if (newId) {
-                  setSelection([newId]);
-                }
-              });
+              void offsetPathOp(node.id, offsetAmount)
+                .then((newId) => {
+                  if (newId) {
+                    setSelection([newId]);
+                  }
+                })
+                .catch((error: unknown) => {
+                  console.warn("Offset path failed", error);
+                  setToast(
+                    "Offset path failed. The original shape was preserved.",
+                  );
+                });
             }}
           >
             <Spline size={12} /> Offset path
@@ -764,12 +928,12 @@ function DesignSection({
         <div className="mt-12 grid gap-8">
           <label className="grid gap-4 text-[11px] text-ink-dim">
             <span>Text</span>
-            <input
-              className={TEXT_INPUT}
+            <TextContentField
+              key={node.id}
               value={node.content}
-              onChange={(event) =>
-                patchSelection({ content: event.target.value })
-              }
+              onPreview={(content) => previewSelection({ content })}
+              onCommit={(content) => patchSelection({ content })}
+              onCancel={cancelPreview}
             />
           </label>
 
@@ -903,11 +1067,23 @@ function DesignSection({
               node.onPath ? "Detach from path first" : "Convert to outlines"
             }
             onClick={() => {
-              void Fx.runPromise(convertTextToPath(node.id)).then((newId) => {
-                if (newId) {
-                  setSelection([newId]);
-                }
-              });
+              void Fx.runPromise(convertTextToPath(node.id))
+                .then((newId) => {
+                  if (newId) {
+                    setSelection([newId]);
+                  }
+                })
+                .catch((error: unknown) => {
+                  console.warn("Convert to outlines failed", error);
+                  setToast(
+                    error &&
+                      typeof error === "object" &&
+                      "reason" in error &&
+                      typeof error.reason === "string"
+                      ? error.reason
+                      : "Could not convert this text. The original was preserved.",
+                  );
+                });
             }}
           >
             Convert to outlines
@@ -1480,27 +1656,27 @@ function GroupSection({ group }: { group: GroupNode }) {
 
       <div className={FILL_ROW}>
         <div className={OPACITY_FIELD}>
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            className="min-w-0 flex-1 accent-accent"
+          <OpacityField
             value={group.opacity}
-            onChange={(event) =>
+            onPreview={(opacity) =>
+              documentStore.preview([
+                { nodeId: group.id, patch: { opacity } },
+              ])
+            }
+            onCommit={(opacity) =>
               documentStore.apply({
                 type: "update-nodes",
                 updates: [
                   {
                     nodeId: group.id,
-                    patch: { opacity: Number(event.target.value) },
+                    patch: { opacity },
                   },
                 ],
               })
             }
-            aria-label="Group opacity"
+            onCancel={() => documentStore.cancelPreview()}
+            ariaLabel="Group opacity"
           />
-          <span className={OPACITY_PCT}>{Math.round(group.opacity * 100)}%</span>
         </div>
       </div>
 
@@ -2195,7 +2371,9 @@ function AssistantSection() {
       <button
         type="button"
         className="flex w-full items-center justify-center gap-7 rounded-m bg-linear-to-b from-[#5d77f7] to-accent px-10 py-8 text-[12.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.22),0_1px_3px_rgb(79_107_246/0.35)] transition-[filter] duration-140 ease-studio hover:brightness-[1.08]"
-        onClick={() => setReview(analyzeLogoDocument(documentStore.document))}
+        onClick={() =>
+          setReview(analyzeLogoDocument(documentStore.committedDocument))
+        }
       >
         <Sparkles size={14} />
         Review active logo
@@ -2234,9 +2412,13 @@ function AssistantSection() {
 function MultiDesignSection({
   nodes,
   patchSelection,
+  previewSelection,
+  cancelPreview,
 }: {
   nodes: LogoNode[];
   patchSelection: (patch: NodePatch) => void;
+  previewSelection: (patch: NodePatch) => void;
+  cancelPreview: () => void;
 }) {
   const document = useDocument();
   const setSelection = useEditorStore((state) => state.setSelection);
@@ -2285,19 +2467,12 @@ function MultiDesignSection({
           aria-label="Fill color"
         />
         <div className={OPACITY_FIELD}>
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            className="min-w-0 flex-1 accent-accent"
+          <OpacityField
             value={first.opacity}
-            onChange={(event) =>
-              patchSelection({ opacity: Number(event.target.value) })
-            }
-            aria-label="Opacity"
+            onPreview={(opacity) => previewSelection({ opacity })}
+            onCommit={(opacity) => patchSelection({ opacity })}
+            onCancel={cancelPreview}
           />
-          <span className={OPACITY_PCT}>{Math.round(first.opacity * 100)}%</span>
         </div>
       </div>
       <div className={FIELD_ROW}>
@@ -2364,6 +2539,8 @@ export function Inspector() {
         <MultiDesignSection
           nodes={selectedNodes}
           patchSelection={patchSelection}
+          previewSelection={previewSelection}
+          cancelPreview={() => documentStore.cancelPreview()}
         />
       ) : selectedNodes.length === 1 && selectedNodes[0]!.type === "group" ? (
         <>

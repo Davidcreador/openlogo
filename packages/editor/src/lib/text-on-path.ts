@@ -50,7 +50,11 @@ export function attachTextToPath(textId: string, pathId: string): void {
 
   // The renderer needs a per-weight Typeface for glyph layout; kick the
   // fetch off now (invalidate() re-renders when it lands).
-  void fontStore.ensure(text.fontFamily, text.fontWeight);
+  void fontStore.ensure(
+    text.fontFamily,
+    text.fontWeight,
+    text.fontStyle ?? "normal",
+  );
 
   documentStore.apply({
     type: "update-nodes",

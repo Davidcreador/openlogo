@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw, TriangleAlert } from "lucide-react";
 import { getCanvasKit } from "../lib/canvaskit";
+import {
+  cancelActiveCanvasSessions,
+  registerCanvasSessionCanceler,
+} from "../lib/canvas-sessions";
 import { fontStore } from "../lib/font-store";
 import { markRendererReady } from "../lib/performance";
 import {
@@ -83,6 +87,8 @@ import {
   patchFromLocalGeometry,
 } from "../lib/path-node-geometry";
 import { recordTransform } from "../lib/transform-again";
+import { shouldBlockWorkspaceShortcuts } from "../lib/keyboard-shortcuts";
+import { resolveMarqueeSelection } from "../lib/selection-ops";
 import {
   type ShapeBuilderSession,
   commitShapeBuilder,
@@ -187,7 +193,13 @@ type DragState =
       patches: Array<{ nodeId: string; patch: NodePatch }>;
       moved: boolean;
     }
-  | { kind: "marquee"; startLocal: Vec2; current: Bounds | null }
+  | {
+      kind: "marquee";
+      startLocal: Vec2;
+      current: Bounds | null;
+      baseSelection: string[];
+      addToSelection: boolean;
+    }
   | { kind: "guide"; axis: "v" | "h"; index: number; value: number }
   | {
       /** Repositioning an artboard on the shared canvas by its label. */
@@ -1058,6 +1070,11 @@ export function CanvasStage() {
       ) {
         return;
       }
+      if (
+        shouldBlockWorkspaceShortcuts(useEditorStore.getState(), false)
+      ) {
+        return;
+      }
 
       const consume = () => {
         event.preventDefault();
@@ -1069,10 +1086,7 @@ export function CanvasStage() {
       // still-held pointer can't re-commit pre-undo state (or wipe redo).
       // Not consumed — App's handler performs the actual undo/redo.
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
-        if (editRef.current) {
-          cancelPathEdit();
-        }
-        cancelActiveDrag();
+        cancelActiveCanvasSessions();
         return;
       }
 
@@ -2196,7 +2210,13 @@ export function CanvasStage() {
       if (!event.shiftKey) {
         setSelection([]);
       }
-      dragRef.current = { kind: "marquee", startLocal: local, current: null };
+      dragRef.current = {
+        kind: "marquee",
+        startLocal: local,
+        current: null,
+        baseSelection: [...state.selectedNodeIds],
+        addToSelection: event.shiftKey,
+      };
       syncScene();
       return;
     }
@@ -2973,7 +2993,13 @@ export function CanvasStage() {
             hits.push(nodeId);
           }
         }
-        setSelection(hits);
+        setSelection(
+          resolveMarqueeSelection(
+            hits,
+            drag.baseSelection,
+            drag.addToSelection,
+          ),
+        );
       }
       syncScene();
       return;
@@ -3166,6 +3192,28 @@ export function CanvasStage() {
     }
     syncScene();
   }
+
+  useEffect(
+    () =>
+      registerCanvasSessionCanceler(() => {
+        if (editRef.current) {
+          cancelPathEdit();
+        }
+        cancelPen();
+        cancelActiveDrag();
+        if (sbRef.current) {
+          disposeShapeBuilderSession(sbRef.current);
+          sbRef.current = null;
+          useEditorStore.getState().setTool("select");
+          setHandleHint(null);
+          syncScene();
+        }
+      }),
+    // The session functions deliberately read refs, so the latest session is
+    // always canceled even though registration follows the renderer callback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [syncScene],
+  );
 
   return (
     <div

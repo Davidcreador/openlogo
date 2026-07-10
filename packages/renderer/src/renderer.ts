@@ -163,19 +163,51 @@ export class SceneRenderer {
    * Culled boards carry no rect — their labels are offscreen anyway.
    */
   private labelRects = new Map<string, Bounds>();
+  private readonly onContextLost = (event: Event) => {
+    event.preventDefault();
+    this.releaseSurface();
+    this.clearRenderCaches();
+  };
+  private readonly onContextRestored = () => {
+    if (!this.disposed && this.recover()) {
+      this.invalidate();
+    }
+  };
 
   constructor(
     private readonly canvasKit: CanvasKit,
     private readonly canvas: HTMLCanvasElement,
     readonly fonts: FontRegistry,
   ) {
-    this.createSurface();
     this.frameScheduler = new InvalidationScheduler(() => {
       const scene = this.scene;
-      if (scene && this.surface) {
+      if (!scene || (!this.surface && !this.createSurface(false))) {
+        return;
+      }
+      try {
         this.draw(scene);
+      } catch (error) {
+        // A driver may report context loss only when flush/draw is attempted.
+        // Drop the unusable surface; the restore event or next invalidation
+        // will rebuild it without losing the document.
+        console.warn("CanvasKit render surface failed; awaiting recovery.", error);
+        this.releaseSurface();
+        this.clearRenderCaches();
       }
     });
+    this.canvas.addEventListener("webglcontextlost", this.onContextLost);
+    this.canvas.addEventListener("webglcontextrestored", this.onContextRestored);
+    try {
+      this.createSurface(true);
+    } catch (error) {
+      this.canvas.removeEventListener("webglcontextlost", this.onContextLost);
+      this.canvas.removeEventListener(
+        "webglcontextrestored",
+        this.onContextRestored,
+      );
+      this.frameScheduler.dispose();
+      throw error;
+    }
   }
 
   setScene(scene: Scene): void {
@@ -227,6 +259,14 @@ export class SceneRenderer {
     this.frameScheduler.invalidate();
   }
 
+  /** Recreate a missing surface after WebGL context loss. */
+  recover(): boolean {
+    if (this.disposed) {
+      return false;
+    }
+    return Boolean(this.surface) || this.createSurface(false);
+  }
+
   /** Resize backing store to CSS size * devicePixelRatio. */
   resize(cssWidth: number, cssHeight: number, dpr: number): void {
     if (this.disposed) {
@@ -235,7 +275,7 @@ export class SceneRenderer {
     this.dpr = dpr;
     this.canvas.width = Math.max(1, Math.round(cssWidth * dpr));
     this.canvas.height = Math.max(1, Math.round(cssHeight * dpr));
-    this.createSurface();
+    this.createSurface(false);
     this.invalidate();
   }
 
@@ -245,25 +285,13 @@ export class SceneRenderer {
     }
     this.disposed = true;
     this.frameScheduler.dispose();
-    for (const path of this.pathCache.values()) {
-      path.delete();
-    }
-    for (const entry of this.clipPathCache.values()) {
-      entry.path.delete();
-    }
-    for (const entry of this.paragraphCache.values()) {
-      entry.paragraph.delete();
-    }
-    for (const entry of this.labelCache.values()) {
-      entry.paragraph.delete();
-    }
-    this.pathCache.clear();
-    this.clipPathCache.clear();
-    this.paragraphCache.clear();
-    this.labelCache.clear();
-    this.labelRects.clear();
-    this.surface?.delete();
-    this.surface = null;
+    this.canvas.removeEventListener("webglcontextlost", this.onContextLost);
+    this.canvas.removeEventListener(
+      "webglcontextrestored",
+      this.onContextRestored,
+    );
+    this.clearRenderCaches();
+    this.releaseSurface();
   }
 
   /**
@@ -381,14 +409,71 @@ export class SceneRenderer {
     return true;
   }
 
-  private createSurface(): void {
-    this.surface?.delete();
-    this.surface =
-      this.canvasKit.MakeWebGLCanvasSurface(this.canvas) ??
-      this.canvasKit.MakeSWCanvasSurface(this.canvas);
+  private releaseSurface(): void {
+    const surface = this.surface;
+    this.surface = null;
+    try {
+      surface?.delete();
+    } catch {
+      // A lost WebGL context can invalidate the embind wrapper first.
+    }
+  }
+
+  private clearRenderCaches(): void {
+    for (const path of this.pathCache.values()) {
+      try {
+        path.delete();
+      } catch {
+        // Context loss may already have released the backing object.
+      }
+    }
+    for (const entry of this.clipPathCache.values()) {
+      try {
+        entry.path.delete();
+      } catch {
+        // See above.
+      }
+    }
+    for (const entry of this.paragraphCache.values()) {
+      try {
+        entry.paragraph.delete();
+      } catch {
+        // See above.
+      }
+    }
+    for (const entry of this.labelCache.values()) {
+      try {
+        entry.paragraph.delete();
+      } catch {
+        // See above.
+      }
+    }
+    this.pathCache.clear();
+    this.clipPathCache.clear();
+    this.paragraphCache.clear();
+    this.textPathLayouts.clear();
+    this.labelCache.clear();
+    this.labelRects.clear();
+  }
+
+  private createSurface(throwOnFailure: boolean): boolean {
+    this.releaseSurface();
+    try {
+      this.surface = this.canvasKit.MakeWebGLCanvasSurface(this.canvas);
+    } catch {
+      this.surface = null;
+    }
     if (!this.surface) {
+      try {
+        this.surface = this.canvasKit.MakeSWCanvasSurface(this.canvas);
+      } catch {
+        this.surface = null;
+      }
+    }
+    if (!this.surface && throwOnFailure) {
       throw new Error("CanvasKit could not create a rendering surface.");
     }
+    return this.surface !== null;
   }
 
   private draw(scene: Scene): void {

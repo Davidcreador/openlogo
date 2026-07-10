@@ -18,6 +18,7 @@ import {
 import { fitBounds, zoomAt } from "@openlogo/renderer";
 import { copyNodes, cutNodes, pasteNodes } from "./lib/clipboard";
 import { getCanvasKit } from "./lib/canvaskit";
+import { cancelActiveCanvasSessions } from "./lib/canvas-sessions";
 import {
   clippingMaskFailureMessage,
   makeClippingMask,
@@ -32,6 +33,7 @@ import {
   saveDocumentFile,
 } from "./lib/document-file";
 import { joinSelectedPaths } from "./lib/path-surgery";
+import { shouldBlockWorkspaceShortcuts } from "./lib/keyboard-shortcuts";
 import { recordTransform, transformAgain } from "./lib/transform-again";
 import {
   deleteSelection,
@@ -193,6 +195,38 @@ export default function App() {
     };
   }, []);
 
+  // Commands and document switches can remove nodes without going through a
+  // selection-specific UI path. Keep every editor reference inside the
+  // committed scene so renderer and inspector queries never chase stale ids.
+  useEffect(
+    () =>
+      documentStore.subscribe((document, kind) => {
+        if (kind !== "committed") {
+          return;
+        }
+        const state = useEditorStore.getState();
+        const selection = state.selectedNodeIds.filter(
+          (id) => document.nodes[id] !== undefined,
+        );
+        if (selection.length !== state.selectedNodeIds.length) {
+          state.setSelection(selection);
+        }
+        if (
+          state.activeGroupId &&
+          document.nodes[state.activeGroupId]?.type !== "group"
+        ) {
+          state.setActiveGroupId(null);
+        }
+        if (
+          state.editingPathId &&
+          document.nodes[state.editingPathId]?.type !== "path"
+        ) {
+          state.setEditingPathId(null);
+        }
+      }),
+    [],
+  );
+
   // Global keyboard shortcuts.
   useEffect(() => {
     if (!sessionReady) {
@@ -205,16 +239,19 @@ export default function App() {
       }
 
       const state = useEditorStore.getState();
-      if (state.documentLibraryOpen || documentLibrary.snapshot.operation) {
+      if (
+        shouldBlockWorkspaceShortcuts(
+          state,
+          Boolean(documentLibrary.snapshot.operation),
+        )
+      ) {
         return;
       }
       const key = event.key.toLowerCase();
 
       if ((event.metaKey || event.ctrlKey) && key === "z") {
         event.preventDefault();
-        if (state.tool === "shapeBuilder") {
-          state.setTool("select"); // regions would go stale — cancel first
-        }
+        cancelActiveCanvasSessions();
         if (event.shiftKey) {
           documentStore.redo();
         } else {
