@@ -3,15 +3,12 @@ import {
   lazy,
   Suspense,
   useEffect,
-  useId,
   useRef,
   useState,
   type ErrorInfo,
   type ReactNode,
 } from "react";
 import {
-  ChevronDown,
-  ChevronRight,
   LocateFixed,
   RefreshCw,
   Save,
@@ -148,10 +145,6 @@ class DesignMateChatErrorBoundary extends Component<
   }
 }
 
-const SECTION =
-  "inspector-section shrink-0 rounded-card border border-panel-hairline bg-card p-12 shadow-[0_1px_2px_rgb(28_25_33/0.04)]";
-const HEADING =
-  "m-0 text-[10.5px] font-[650] uppercase tracking-[0.08em] text-ink-dim";
 const LABEL = "grid gap-4 text-[10.5px] font-[600] text-ink-dim";
 const FIELD =
   "min-h-28 w-full rounded-field border border-field-border bg-field px-8 py-6 text-[12px] leading-[1.4] text-ink outline-none transition-[border-color,box-shadow,background-color] duration-140 ease-studio placeholder:text-ink-faint focus:border-accent focus:bg-card focus:shadow-ring";
@@ -284,7 +277,6 @@ function FindingCard({
 export function DesignMateSection() {
   const document = useDocument();
   const documentGeneration = documentStore.documentGeneration;
-  const contentId = useId();
   const previousDocumentHead = useRef({
     documentId: document.id,
     generation: documentGeneration,
@@ -292,7 +284,6 @@ export function DesignMateSection() {
   const latestRun = useRef(0);
   const latestProposalAction = useRef(0);
   const applyingProposalRef = useRef<ApplyingProposal | null>(null);
-  const [expanded, setExpanded] = useState(true);
   const [briefExpanded, setBriefExpanded] = useState(false);
   const [draft, setDraft] = useState<DesignBriefDraft>(() =>
     designBriefToDraft(document.designBrief),
@@ -735,36 +726,29 @@ export function DesignMateSection() {
   const findings = reviewSnapshot?.review.findings ?? [];
 
   return (
-    <section className={SECTION}>
-      <header className="flex items-center justify-between gap-8">
-        <h2 className={`${HEADING} min-w-0 flex-1`}>
-          <button
-            type="button"
-            className="flex w-full items-center gap-6 text-left"
-            onClick={() => setExpanded((value) => !value)}
-            aria-expanded={expanded}
-            aria-controls={contentId}
-          >
-            {expanded ? (
-              <ChevronDown size={13} aria-hidden="true" />
-            ) : (
-              <ChevronRight size={13} aria-hidden="true" />
-            )}
-            <Sparkles size={13} className="text-accent" aria-hidden="true" />
-            <span>Design mate</span>
-          </button>
-        </h2>
-        <span className="rounded-full border border-panel-hairline bg-field px-6 py-2 text-[8.5px] font-[650] uppercase tracking-[0.06em] text-ink-dim">
-          {designMateChatHeaderLabel(DESIGN_MATE_CHAT_ENDPOINT)}
-        </span>
-      </header>
+    <section
+      className="grid gap-10"
+      aria-label="Design Mate review workspace"
+    >
+      <div className="rounded-[10px] border border-[rgb(79_107_246/0.18)] bg-[linear-gradient(145deg,#f7f8ff,var(--color-accent-soft))] p-11 shadow-[0_1px_2px_rgb(79_107_246/0.08)]">
+        <div className="flex items-start justify-between gap-10">
+          <div>
+            <h2 className="m-0 flex items-center gap-6 text-[12px] font-[680] text-ink">
+              <Sparkles size={14} className="text-accent" aria-hidden="true" />
+              Review before you ship
+            </h2>
+            <p className="mb-0 mt-4 text-[10.5px] leading-[1.5] text-ink-dim">
+              Check craft, consistency, and brand fit without leaving the
+              canvas.
+            </p>
+          </div>
+          <span className="shrink-0 rounded-full border border-[rgb(79_107_246/0.14)] bg-card/80 px-6 py-2 text-[8.5px] font-[650] uppercase tracking-[0.06em] text-accent-deep">
+            {designMateChatHeaderLabel(DESIGN_MATE_CHAT_ENDPOINT)}
+          </span>
+        </div>
+      </div>
 
-      <div
-        id={contentId}
-        hidden={!expanded}
-        className={`mt-10 grid gap-10 ${expanded ? "" : "hidden"}`}
-      >
-          <div className="rounded-[8px] border border-panel-hairline bg-field p-8">
+      <div className="rounded-[10px] border border-panel-hairline bg-card p-10 shadow-[0_1px_2px_rgb(28_25_33/0.04)]">
             <div className="flex items-start justify-between gap-8">
               <div>
                 <strong className="block text-[11.5px] font-[650] text-ink">
@@ -908,7 +892,15 @@ export function DesignMateSection() {
             )}
           </div>
 
-          <div>
+          <div className="rounded-[10px] border border-panel-hairline bg-card p-10 shadow-[0_1px_2px_rgb(28_25_33/0.04)]">
+            <div className="mb-7 flex items-center justify-between gap-8">
+              <strong className="text-[11.5px] font-[650] text-ink">
+                Review scope
+              </strong>
+              <span className="text-[9.5px] text-ink-dim">
+                Review + conversation
+              </span>
+            </div>
             <div
               className="flex rounded-[8px] border border-field-border bg-field p-3"
               role="group"
@@ -971,72 +963,6 @@ export function DesignMateSection() {
             </button>
           </div>
 
-          <DesignMateChatErrorBoundary
-            resetKey={`${document.id}\u0000${documentGeneration}`}
-          >
-            <Suspense
-              fallback={
-                <div
-                  role="status"
-                  aria-live="polite"
-                  className="rounded-[7px] border border-panel-hairline bg-field px-9 py-7 text-[10.5px] text-ink-dim"
-                >
-                  Loading conversation…
-                </div>
-              }
-            >
-              <DesignMateChatPanel
-                disabled={applyingProposal !== null}
-                onRunningChange={setChatRunning}
-                onProposalsClear={clearChatProposals}
-                onProposalsReady={receiveChatProposals}
-              />
-            </Suspense>
-          </DesignMateChatErrorBoundary>
-
-          {chatProposalBaseDocument &&
-            chatPreparedProposals.length > 0 && (
-              <DesignMateProposalErrorBoundary
-                resetKey={`chat\u0000${chatPreparedProposals
-                  .map((item) => item.proposal.id)
-                  .join("\u0000")}`}
-              >
-                <Suspense
-                  fallback={
-                    <div
-                      role="status"
-                      aria-live="polite"
-                      className="rounded-[7px] border border-panel-hairline bg-field px-9 py-7 text-[10.5px] text-ink-dim"
-                    >
-                      Loading conversation suggestions…
-                    </div>
-                  }
-                >
-                  <DesignMateProposalPanel
-                    baseDocument={chatProposalBaseDocument}
-                    proposals={chatPreparedProposals}
-                    stale={chatProposalsStale}
-                    applyingId={
-                      applyingProposal?.source === "chat"
-                        ? applyingProposal.id
-                        : null
-                    }
-                    busy={applyingProposal !== null || chatRunning}
-                    heading="Conversation suggestions"
-                    description="Prepared from the latest completed Design Mate answer."
-                    staleMessage="The canvas or conversation scope changed. Ask Design Mate again to refresh these suggestions."
-                    defaultRationale="A suggested change from your latest Design Mate conversation."
-                    onApply={(prepared) =>
-                      applyProposal(prepared, "chat")
-                    }
-                    onDismiss={(proposalId) =>
-                      dismissProposal("chat", proposalId)
-                    }
-                  />
-                </Suspense>
-              </DesignMateProposalErrorBoundary>
-            )}
-
           {stale && (
             <div
               role="status"
@@ -1057,12 +983,21 @@ export function DesignMateSection() {
           )}
 
           {reviewSnapshot && (
-            <div aria-live="polite" aria-atomic="false">
+            <div
+              className="rounded-[10px] border border-panel-hairline bg-card p-10 shadow-[0_1px_2px_rgb(28_25_33/0.04)]"
+              aria-live="polite"
+              aria-atomic="false"
+            >
               <div className="mb-8 flex items-start justify-between gap-8">
-                <p className="m-0 text-[11px] leading-[1.5] text-ink-dim">
-                  {reviewSnapshot.review.summary}
-                </p>
-                <span className="shrink-0 text-[9.5px] tabular-nums text-ink-dim">
+                <div>
+                  <h3 className="m-0 text-[10.5px] font-[680] uppercase tracking-[0.07em] text-ink">
+                    Latest review
+                  </h3>
+                  <p className="mb-0 mt-3 text-[11px] leading-[1.5] text-ink-dim">
+                    {reviewSnapshot.review.summary}
+                  </p>
+                </div>
+                <span className="shrink-0 rounded-full bg-field px-6 py-2 text-[9px] tabular-nums text-ink-dim">
                   {findings.length} {findings.length === 1 ? "finding" : "findings"}
                 </span>
               </div>
@@ -1129,7 +1064,72 @@ export function DesignMateSection() {
                 </Suspense>
               </DesignMateProposalErrorBoundary>
             )}
-      </div>
+
+          <DesignMateChatErrorBoundary
+            resetKey={`${document.id}\u0000${documentGeneration}`}
+          >
+            <Suspense
+              fallback={
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="rounded-[7px] border border-panel-hairline bg-field px-9 py-7 text-[10.5px] text-ink-dim"
+                >
+                  Loading conversation…
+                </div>
+              }
+            >
+              <DesignMateChatPanel
+                disabled={applyingProposal !== null}
+                onRunningChange={setChatRunning}
+                onProposalsClear={clearChatProposals}
+                onProposalsReady={receiveChatProposals}
+              />
+            </Suspense>
+          </DesignMateChatErrorBoundary>
+
+          {chatProposalBaseDocument &&
+            chatPreparedProposals.length > 0 && (
+              <DesignMateProposalErrorBoundary
+                resetKey={`chat\u0000${chatPreparedProposals
+                  .map((item) => item.proposal.id)
+                  .join("\u0000")}`}
+              >
+                <Suspense
+                  fallback={
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      className="rounded-[7px] border border-panel-hairline bg-field px-9 py-7 text-[10.5px] text-ink-dim"
+                    >
+                      Loading conversation suggestions…
+                    </div>
+                  }
+                >
+                  <DesignMateProposalPanel
+                    baseDocument={chatProposalBaseDocument}
+                    proposals={chatPreparedProposals}
+                    stale={chatProposalsStale}
+                    applyingId={
+                      applyingProposal?.source === "chat"
+                        ? applyingProposal.id
+                        : null
+                    }
+                    busy={applyingProposal !== null || chatRunning}
+                    heading="Conversation suggestions"
+                    description="Prepared from the latest completed Design Mate answer."
+                    staleMessage="The canvas or conversation scope changed. Ask Design Mate again to refresh these suggestions."
+                    defaultRationale="A suggested change from your latest Design Mate conversation."
+                    onApply={(prepared) =>
+                      applyProposal(prepared, "chat")
+                    }
+                    onDismiss={(proposalId) =>
+                      dismissProposal("chat", proposalId)
+                    }
+                  />
+                </Suspense>
+              </DesignMateProposalErrorBoundary>
+            )}
     </section>
   );
 }
