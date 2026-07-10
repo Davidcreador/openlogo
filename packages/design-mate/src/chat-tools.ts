@@ -336,13 +336,8 @@ const actionSchemas = [
 export const DESIGN_MATE_CHAT_PROPOSAL_TOOL = deepFreeze({
   type: "function",
   name: DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
-  description: [
-    "Submit one conservative logo change for explicit user preview and approval.",
-    ...Object.entries(DESIGN_MATE_MUTATION_TOOLS).map(
-      ([type, metadata]) => `${type}: ${metadata.description}`,
-    ),
-    "Calling this tool never applies the change.",
-  ].join(" "),
+  description:
+    "Submit one conservative, preview-only logo change for explicit user approval. Supported actions edit text, solid fills, tracking, typography, opacity, existing solid strokes, selected-node position/scale/rotation/alignment/distribution, or clone one logo variant. Geometry must use visible selected ids from one artboard; scale and rotation use the selection centre. Never invent ids, key objects, strokes, or font families. Calling this tool never applies a change.",
   strict: true,
   parameters: {
     type: "object",
