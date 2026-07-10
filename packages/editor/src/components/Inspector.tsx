@@ -26,7 +26,6 @@ import {
   PenTool,
   RotateCw,
   Shapes,
-  Sparkles,
   Spline,
   Square,
   Type,
@@ -44,7 +43,6 @@ import {
   type Paint,
   type Stroke,
   type TextNode,
-  analyzeLogoDocument,
   collectLeafNodeIds,
   findContainerId,
   getClippingMaskOwnerId,
@@ -56,6 +54,7 @@ import {
 } from "@openlogo/core";
 import { catalogEntry, nearestWeight } from "../lib/font-catalog";
 import { fontStore } from "../lib/font-store";
+import { DesignMateSection } from "./DesignMateSection";
 import { FontPicker } from "./FontPicker";
 import { PaintEditor } from "./PaintEditor";
 import {
@@ -2359,56 +2358,6 @@ function LayersSection() {
   );
 }
 
-function AssistantSection() {
-  const review = useEditorStore((state) => state.review);
-  const setReview = useEditorStore((state) => state.setReview);
-
-  return (
-    <section className={SECTION}>
-      <header className={SECTION_HEAD}>
-        <h2 className={SECTION_H2}>Design mate</h2>
-      </header>
-      <button
-        type="button"
-        className="flex w-full items-center justify-center gap-7 rounded-m bg-linear-to-b from-[#5d77f7] to-accent px-10 py-8 text-[12.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.22),0_1px_3px_rgb(79_107_246/0.35)] transition-[filter] duration-140 ease-studio hover:brightness-[1.08]"
-        onClick={() =>
-          setReview(analyzeLogoDocument(documentStore.committedDocument))
-        }
-      >
-        <Sparkles size={14} />
-        Review active logo
-      </button>
-      {review && (
-        <div className="mt-10" aria-live="polite" aria-atomic="true">
-          {review.findings.length === 0 ? (
-            <p className={MUTED}>No issues found in this pass.</p>
-          ) : (
-            <ul className="m-0 grid list-none gap-8 p-0">
-              {review.findings.map((finding) => (
-                <li
-                  key={`${finding.title}-${finding.detail}`}
-                  data-severity={finding.severity}
-                  className={`rounded-[7px] border-l-[3px] px-10 py-8 text-[12px] ${
-                    finding.severity === "warning"
-                      ? "border-[#f59e0b] bg-[#fdf6e9]"
-                      : finding.severity === "strong"
-                        ? "border-danger bg-[#fdf1f0]"
-                        : "border-accent bg-accent-soft"
-                  }`}
-                >
-                  <span className="font-[650]">{finding.title}</span>
-                  <p className="mx-0 my-4 text-[#55515c]">{finding.detail}</p>
-                  <em className="text-[11.5px] text-ink-dim">{finding.action}</em>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-    </section>
-  );
-}
-
 function MultiDesignSection({
   nodes,
   patchSelection,
@@ -2600,7 +2549,7 @@ export function Inspector() {
         </section>
       )}
       <SwatchesSection />
-      <AssistantSection />
+      <DesignMateSection />
       </div>
       {/* Bottom-anchored and never squeezed by the card above: layout
           changes there must not move the rows (double-click rename
