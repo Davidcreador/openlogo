@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DESIGN_MATE_CHAT_PROPOSAL_TOOL,
+  DESIGN_MATE_CHAT_PROPOSAL_TOOL_LIMITS,
   DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
   snapshotDesignMateChatProposalToolArguments,
 } from "./index";
@@ -104,6 +105,25 @@ describe("Design Mate chat proposal tool", () => {
         {
           ...validArguments(),
           sourceFindingIds: ["duplicate", "duplicate"],
+        },
+        "service-owned",
+      ),
+    ).toBeNull();
+    expect(
+      snapshotDesignMateChatProposalToolArguments(
+        {
+          ...validArguments(),
+          actions: Array.from(
+            {
+              length:
+                DESIGN_MATE_CHAT_PROPOSAL_TOOL_LIMITS.actions + 1,
+            },
+            (_, index) => ({
+              type: "set-letter-spacing",
+              nodeId: `wordmark-${index}`,
+              letterSpacing: index,
+            }),
+          ),
         },
         "service-owned",
       ),

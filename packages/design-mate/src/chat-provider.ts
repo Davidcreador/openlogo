@@ -165,7 +165,7 @@ export function createHeuristicDesignMateChatProvider(): DesignMateChatProvider 
         request.document,
         review.findings,
         request.scope,
-      ).slice(0, DESIGN_MATE_CHAT_LIMITS.proposalCandidates)) {
+      ).slice(0, 1)) {
         throwIfAborted(id, signal);
         yield { type: "proposal-candidate", proposal };
       }

@@ -1,4 +1,7 @@
-import type { DesignMateProposal } from "./contracts";
+import {
+  DESIGN_MATE_CHAT_LIMITS,
+  type DesignMateProposal,
+} from "./contracts";
 import { DESIGN_MATE_MUTATION_TOOLS } from "./actions";
 import {
   DESIGN_MATE_PROPOSAL_LIMITS,
@@ -8,6 +11,11 @@ import { deepFreeze } from "./snapshot";
 
 export const DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME =
   "submit_design_mate_proposal";
+
+export const DESIGN_MATE_CHAT_PROPOSAL_TOOL_LIMITS = Object.freeze({
+  actions: 4,
+  sourceFindingIds: 4,
+});
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -31,6 +39,22 @@ function hasExactKeys(
     ) &&
     keys.every((key) => typeof key === "string" && allowed.has(key))
   );
+}
+
+function utf8ByteLength(value: string): number {
+  let bytes = 0;
+  for (const character of value) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    bytes +=
+      codePoint <= 0x7f
+        ? 1
+        : codePoint <= 0x7ff
+          ? 2
+          : codePoint <= 0xffff
+            ? 3
+            : 4;
+  }
+  return bytes;
 }
 
 const referenceId = {
@@ -136,14 +160,14 @@ export const DESIGN_MATE_CHAT_PROPOSAL_TOOL = deepFreeze({
       },
       sourceFindingIds: {
         type: ["array", "null"],
-        maxItems: DESIGN_MATE_PROPOSAL_LIMITS.sourceFindingIds,
+        maxItems: DESIGN_MATE_CHAT_PROPOSAL_TOOL_LIMITS.sourceFindingIds,
         uniqueItems: true,
         items: referenceId,
       },
       actions: {
         type: "array",
         minItems: 1,
-        maxItems: DESIGN_MATE_PROPOSAL_LIMITS.actions,
+        maxItems: DESIGN_MATE_CHAT_PROPOSAL_TOOL_LIMITS.actions,
         items: { anyOf: actionSchemas },
       },
     },
@@ -191,12 +215,18 @@ export function snapshotDesignMateChatProposalToolArguments(
       (snapshot.rationale !== null &&
         typeof snapshot.rationale !== "string") ||
       (snapshot.sourceFindingIds !== null &&
-        !Array.isArray(snapshot.sourceFindingIds))
+        !Array.isArray(snapshot.sourceFindingIds)) ||
+      !Array.isArray(snapshot.actions) ||
+      snapshot.actions.length >
+        DESIGN_MATE_CHAT_PROPOSAL_TOOL_LIMITS.actions ||
+      (Array.isArray(snapshot.sourceFindingIds) &&
+        snapshot.sourceFindingIds.length >
+          DESIGN_MATE_CHAT_PROPOSAL_TOOL_LIMITS.sourceFindingIds)
     ) {
       return null;
     }
 
-    return snapshotValidDesignMateProposal({
+    const proposal = snapshotValidDesignMateProposal({
       id: proposalId,
       label: snapshot.label,
       risk: snapshot.risk,
@@ -208,6 +238,17 @@ export function snapshotDesignMateChatProposalToolArguments(
         ? {}
         : { sourceFindingIds: snapshot.sourceFindingIds }),
     });
+    if (!proposal) {
+      return null;
+    }
+    const serialized = JSON.stringify({
+      type: "proposal-candidate",
+      proposal,
+    });
+    return utf8ByteLength(serialized) <=
+      DESIGN_MATE_CHAT_LIMITS.proposalSerializedBytes
+      ? proposal
+      : null;
   } catch {
     return null;
   }

@@ -246,8 +246,8 @@ describe("chat providers and orchestration", () => {
       "context",
       "message-start",
       "text-delta",
-      "proposal-prepared",
       "text-delta",
+      "proposal-prepared",
       "message-end",
       "completed",
     ]);
@@ -353,6 +353,13 @@ describe("chat providers and orchestration", () => {
       status: "failed",
       error: { code: "invalid-chat-response" },
     });
+    expect(
+      duplicateResult.events.some(
+        (event) =>
+          event.type === "proposal-prepared" ||
+          event.type === "proposal-rejected",
+      ),
+    ).toBe(false);
 
     const excessiveResult = await drain(
       orchestrateDesignMateChat(
@@ -372,6 +379,13 @@ describe("chat providers and orchestration", () => {
       status: "failed",
       error: { code: "invalid-chat-response" },
     });
+    expect(
+      excessiveResult.events.some(
+        (event) =>
+          event.type === "proposal-prepared" ||
+          event.type === "proposal-rejected",
+      ),
+    ).toBe(false);
   });
 
   it("fails closed on oversized output and invalid provider chunks", async () => {

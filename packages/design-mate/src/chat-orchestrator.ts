@@ -6,6 +6,8 @@ import {
   type DesignMateChatInput,
   type DesignMateChatProvider,
   type DesignMateChatProviderChunk,
+  type DesignMateChatProposalPreparedEvent,
+  type DesignMateChatProposalRejectedEvent,
   type DesignMateChatResult,
   type DesignMateChatRejectedProposal,
   type DesignMateChatTurnRequest,
@@ -135,7 +137,7 @@ function baseResult(request: DesignMateChatTurnRequest): {
 /**
  * Success order is:
  * started → context → message-start →
- * (text-delta | proposal-prepared | proposal-rejected)+ →
+ * text-delta* → (proposal-prepared | proposal-rejected)* →
  * message-end → completed.
  * Failure and cancellation emit exactly one terminal `failed`/`cancelled`
  * event, and never emit message-end or completed.
@@ -179,6 +181,9 @@ export async function* orchestrateDesignMateChat(
   const deltas: string[] = [];
   const preparedProposals: PreparedDesignMateProposal[] = [];
   const rejectedProposals: DesignMateChatRejectedProposal[] = [];
+  const proposalEvents: Array<
+    DesignMateChatProposalPreparedEvent | DesignMateChatProposalRejectedEvent
+  > = [];
   const seenProposalIds = new Set<string>();
   let textLength = 0;
   let proposalCount = 0;
@@ -273,12 +278,12 @@ export async function* orchestrateDesignMateChat(
       );
       if (preparation.ok) {
         preparedProposals.push(preparation.prepared);
-        yield deepFreeze({
+        proposalEvents.push(deepFreeze({
           type: "proposal-prepared",
           messageId: request.assistantMessageId,
           index,
           prepared: preparation.prepared,
-        });
+        }));
       } else {
         const rejected = deepFreeze({
           index,
@@ -286,11 +291,11 @@ export async function* orchestrateDesignMateChat(
           error: preparation.error,
         });
         rejectedProposals.push(rejected);
-        yield deepFreeze({
+        proposalEvents.push(deepFreeze({
           type: "proposal-rejected",
           messageId: request.assistantMessageId,
           ...rejected,
-        });
+        }));
       }
     }
 
@@ -303,6 +308,9 @@ export async function* orchestrateDesignMateChat(
     }
     if (options.signal?.aborted) {
       throw makeDesignMateChatCancelledError(providerId);
+    }
+    for (const event of proposalEvents) {
+      yield event;
     }
 
     const messageText =
