@@ -21,6 +21,7 @@ export const OPENAI_RESPONSES_STREAM_LIMITS = Object.freeze({
   streamBytes: 4 * 1_024 * 1_024,
   deltas: DESIGN_MATE_CHAT_LIMITS.deltas,
 } as const);
+export const OPENAI_RESPONSES_DEFAULT_MAX_OUTPUT_TOKENS = 1_200;
 
 export type OpenAIResponsesImageDetail = "low" | "auto";
 
@@ -29,6 +30,7 @@ export type OpenAIResponsesTransportOptions = {
   readonly baseUrl: string;
   readonly model: string;
   readonly imageDetail?: OpenAIResponsesImageDetail;
+  readonly maxOutputTokens?: number;
   readonly id?: string;
   readonly fetch?: typeof fetch;
 };
@@ -151,6 +153,18 @@ function validateModel(value: string): void {
   }
 }
 
+function validateMaxOutputTokens(value: unknown): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 16 ||
+    value > 16_000
+  ) {
+    throw new TypeError("The provider output token limit is invalid.");
+  }
+  return value;
+}
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return (
     typeof value === "object" &&
@@ -174,6 +188,7 @@ function isAbortLike(value: unknown): boolean {
 
 function firstFrameBoundary(
   value: string,
+  startIndex: number,
   final: boolean,
 ): { readonly index: number; readonly length: number } | null {
   const lineEndingLength = (index: number): number => {
@@ -190,7 +205,13 @@ function firstFrameBoundary(
     return index + 1 < value.length || final ? 1 : -1;
   };
 
-  for (let index = 0; index < value.length; index += 1) {
+  const scanStart =
+    startIndex > 0 &&
+    value[startIndex] === "\n" &&
+    value[startIndex - 1] === "\r"
+      ? startIndex - 1
+      : startIndex;
+  for (let index = scanStart; index < value.length; index += 1) {
     const firstLength = lineEndingLength(index);
     if (firstLength < 0) {
       return null;
@@ -307,17 +328,26 @@ async function* decodeResponseFrames(
   const reader = body.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: true });
   let pending = "";
+  let pendingBytes = 0;
+  let scanOffset = 0;
   let frameCount = 0;
   let streamBytes = 0;
 
   const consume = function* (final: boolean): Generator<SseFrame, void, void> {
     while (true) {
-      const boundary = firstFrameBoundary(pending, final);
+      const boundary = firstFrameBoundary(pending, scanOffset, final);
       if (!boundary) {
+        scanOffset = Math.max(0, pending.length - 3);
         break;
       }
       const rawFrame = pending.slice(0, boundary.index);
-      pending = pending.slice(boundary.index + boundary.length);
+      const consumedLength = boundary.index + boundary.length;
+      pendingBytes -= Buffer.byteLength(
+        pending.slice(0, consumedLength),
+        "utf8",
+      );
+      pending = pending.slice(consumedLength);
+      scanOffset = 0;
       frameCount += 1;
       if (frameCount > OPENAI_RESPONSES_STREAM_LIMITS.frames) {
         throw new OpenAIStreamProtocolError();
@@ -327,10 +357,7 @@ async function* decodeResponseFrames(
         yield frame;
       }
     }
-    if (
-      Buffer.byteLength(pending, "utf8") >
-      OPENAI_RESPONSES_STREAM_LIMITS.frameBytes
-    ) {
+    if (pendingBytes > OPENAI_RESPONSES_STREAM_LIMITS.frameBytes) {
       throw new OpenAIStreamProtocolError();
     }
   };
@@ -346,6 +373,7 @@ async function* decodeResponseFrames(
         throw new OpenAIStreamProtocolError();
       }
       streamBytes += result.value.byteLength;
+      pendingBytes += result.value.byteLength;
       if (streamBytes > OPENAI_RESPONSES_STREAM_LIMITS.streamBytes) {
         throw new OpenAIStreamProtocolError();
       }
@@ -369,6 +397,8 @@ async function* decodeResponseFrames(
       }
       const finalFrame = pending.replace(/(?:\r\n|\r|\n)$/, "");
       pending = "";
+      pendingBytes = 0;
+      scanOffset = 0;
       const frame = parseSseFrame(finalFrame);
       if (frame) {
         yield frame;
@@ -395,6 +425,10 @@ function buildOpenAIInput(
   if (
     typeof prompt.system !== "string" ||
     prompt.system.length === 0 ||
+    !isPlainRecord(prompt.contextMessage) ||
+    prompt.contextMessage.role !== "user" ||
+    typeof prompt.contextMessage.text !== "string" ||
+    prompt.contextMessage.text.length === 0 ||
     !Array.isArray(prompt.messages) ||
     prompt.messages.length === 0 ||
     !Array.isArray(prompt.images)
@@ -403,7 +437,7 @@ function buildOpenAIInput(
   }
 
   const lastIndex = prompt.messages.length - 1;
-  return prompt.messages.map((message, index) => {
+  const messages = prompt.messages.map((message, index) => {
     if (
       (message.role !== "user" && message.role !== "assistant") ||
       typeof message.text !== "string"
@@ -439,6 +473,18 @@ function buildOpenAIInput(
     }
     return { role: message.role, content };
   });
+  return [
+    {
+      role: "user",
+      content: [
+        {
+          type: "input_text",
+          text: prompt.contextMessage.text,
+        },
+      ],
+    },
+    ...messages,
+  ];
 }
 
 function httpError(providerId: string, status: number): DesignMateProviderError {
@@ -501,6 +547,10 @@ export function createOpenAIResponsesTransport(
   if (imageDetail !== "auto" && imageDetail !== "low") {
     throw new TypeError("The provider image detail is invalid.");
   }
+  const maxOutputTokens = validateMaxOutputTokens(
+    options.maxOutputTokens ??
+      OPENAI_RESPONSES_DEFAULT_MAX_OUTPUT_TOKENS,
+  );
   const id = options.id ?? "openai-responses";
   if (!isValidTransportId(id)) {
     throw new TypeError("The provider id is invalid.");
@@ -520,6 +570,7 @@ export function createOpenAIResponsesTransport(
           model: options.model,
           instructions: prompt.system,
           input: buildOpenAIInput(prompt, imageDetail),
+          max_output_tokens: maxOutputTokens,
           stream: true,
           store: false,
         });
@@ -597,9 +648,17 @@ export function createOpenAIResponsesTransport(
             }
             yield chunk satisfies DesignMateChatProviderChunk;
           } else if (event.type === "response.completed") {
+            if (
+              !isPlainRecord(event.value.response) ||
+              event.value.response.status !== "completed"
+            ) {
+              throw new OpenAIStreamProtocolError();
+            }
             completed = true;
           } else if (
             event.type === "response.failed" ||
+            event.type === "response.incomplete" ||
+            event.type === "response.cancelled" ||
             event.type === "error"
           ) {
             throw failedResponse(id);
@@ -618,7 +677,7 @@ export function createOpenAIResponsesTransport(
         }
         throw invalidResponse(id);
       }
-      if (!completed) {
+      if (!completed || deltaCount === 0) {
         throw invalidResponse(id);
       }
     },

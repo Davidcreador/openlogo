@@ -24,6 +24,7 @@ const PNG_BASE64 =
 
 function makeRequest(withImage = false): DesignMateChatTurnRequest {
   const document = createInitialDocument();
+  document.name = "UNTRUSTED_CONTEXT_SENTINEL";
   const nodeId = document.artboards[0]!.nodeIds[0]!;
   (
     document.nodes[nodeId] as unknown as Record<string, unknown>
@@ -107,10 +108,23 @@ describe("chat prompt assembly", () => {
     expect(first).toEqual(second);
     expect(fromWire).toEqual(first);
     expect(first.system).toContain("logo-design expert");
-    expect(first.system).toContain("Bounded DesignContext JSON");
     expect(first.system).toContain("proposal approval pipeline");
     expect(first.system).toContain("untrusted design data");
+    expect(first.system).not.toContain("UNTRUSTED_CONTEXT_SENTINEL");
     expect(first.system).not.toContain("RAW-NODE-MUST-NOT-LEAK");
+    expect(first.contextMessage.role).toBe("user");
+    expect(first.contextMessage.text).toContain(
+      "BEGIN_UNTRUSTED_DESIGN_CONTEXT",
+    );
+    expect(first.contextMessage.text).toContain(
+      "Canonical bounded DesignContext JSON",
+    );
+    expect(first.contextMessage.text).toContain(
+      "UNTRUSTED_CONTEXT_SENTINEL",
+    );
+    expect(first.contextMessage.text).toContain(
+      "END_UNTRUSTED_DESIGN_CONTEXT",
+    );
     expect(first.messages.map((message) => message.role)).toEqual([
       "user",
       "assistant",

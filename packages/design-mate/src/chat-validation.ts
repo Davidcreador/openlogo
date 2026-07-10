@@ -1027,7 +1027,12 @@ function validateDesignMateChatWireRequest(
   ) {
     return false;
   }
-  return true;
+  const serialized = JSON.stringify(value);
+  return (
+    serialized !== undefined &&
+    utf8ByteLength(serialized) <=
+      DESIGN_MATE_CHAT_LIMITS.wireSerializedBytes
+  );
 }
 
 /** Fail-closed runtime guard for untrusted remote chat requests. */

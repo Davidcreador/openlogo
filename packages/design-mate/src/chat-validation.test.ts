@@ -22,6 +22,23 @@ function base64ByteLength(value: string): number {
   );
 }
 
+function pngBase64WithByteLength(byteLength: number): string {
+  const headerBytes = 33;
+  const headerBase64 = PNG_BASE64.slice(0, 44);
+  const remaining = byteLength - headerBytes;
+  const groups = Math.floor(remaining / 3);
+  const remainder = remaining % 3;
+  return (
+    headerBase64 +
+    "AAAA".repeat(groups) +
+    (remainder === 1 ? "AA==" : remainder === 2 ? "AAA=" : "")
+  );
+}
+
+function utf8Bytes(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
 function expectDeepFrozen(value: unknown, seen = new WeakSet<object>()): void {
   if (typeof value !== "object" || value === null || seen.has(value)) {
     return;
@@ -339,6 +356,94 @@ describe("untrusted chat wire validation", () => {
         context: oversizedContext,
       }),
     ).toBe(false);
+  });
+
+  it("accepts the total wire-byte boundary and rejects one byte over it", () => {
+    const baseWire = structuredClone(
+      toDesignMateChatWireRequest(makeFixture().request),
+    );
+    const maximumAttachment = {
+      ...baseWire.attachments[0]!,
+      dataBase64: pngBase64WithByteLength(
+        DESIGN_MATE_CHAT_LIMITS.attachmentBytes,
+      ),
+      byteLength: DESIGN_MATE_CHAT_LIMITS.attachmentBytes,
+    };
+    const suffixes = Array.from(
+      { length: DESIGN_MATE_CHAT_LIMITS.selectionIds },
+      (_, index) => `-${index}`,
+    );
+    const fillerLengths = suffixes.map(
+      (suffix) =>
+        DESIGN_MATE_CHAT_LIMITS.referenceIdLength - suffix.length,
+    );
+    let wire = {
+      ...baseWire,
+      attachments: Array.from(
+        { length: DESIGN_MATE_CHAT_LIMITS.attachments },
+        (_, index) => ({
+          ...maximumAttachment,
+          id: `maximum-attachment-${index}`,
+        }),
+      ),
+      history: Array.from(
+        { length: DESIGN_MATE_CHAT_LIMITS.historyMessages },
+        (_, index) => ({
+          id: `maximum-history-${index}`,
+          role: "assistant" as const,
+          text: "h".repeat(DESIGN_MATE_CHAT_LIMITS.assistantTextLength),
+          createdAt: CREATED_AT,
+        }),
+      ),
+      selection: {
+        ...baseWire.selection,
+        selectedNodeIds: suffixes.map(
+          (suffix, index) =>
+            `${"a".repeat(fillerLengths[index]!)}${suffix}`,
+        ),
+      },
+    };
+
+    const asciiBytes = utf8Bytes(JSON.stringify(wire));
+    let bytesToAdd =
+      DESIGN_MATE_CHAT_LIMITS.wireSerializedBytes - asciiBytes;
+    expect(bytesToAdd).toBeGreaterThan(0);
+    expect(bytesToAdd).toBeLessThanOrEqual(
+      fillerLengths.reduce((total, length) => total + length, 0),
+    );
+    wire = {
+      ...wire,
+      selection: {
+        ...wire.selection,
+        selectedNodeIds: suffixes.map((suffix, index) => {
+          const replacements = Math.min(
+            fillerLengths[index]!,
+            bytesToAdd,
+          );
+          bytesToAdd -= replacements;
+          return `${"é".repeat(replacements)}${"a".repeat(
+            fillerLengths[index]! - replacements,
+          )}${suffix}`;
+        }),
+      },
+    };
+    expect(bytesToAdd).toBe(0);
+    expect(utf8Bytes(JSON.stringify(wire))).toBe(
+      DESIGN_MATE_CHAT_LIMITS.wireSerializedBytes,
+    );
+    expect(isValidDesignMateChatWireRequest(wire)).toBe(true);
+
+    const oneByteOver = {
+      ...wire,
+      userMessage: {
+        ...wire.userMessage,
+        text: `é${wire.userMessage.text.slice(1)}`,
+      },
+    };
+    expect(utf8Bytes(JSON.stringify(oneByteOver))).toBe(
+      DESIGN_MATE_CHAT_LIMITS.wireSerializedBytes + 1,
+    );
+    expect(isValidDesignMateChatWireRequest(oneByteOver)).toBe(false);
   });
 
   it("snapshots valid input and isolates subsequent mutation", () => {

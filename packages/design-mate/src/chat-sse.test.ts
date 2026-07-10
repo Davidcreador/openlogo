@@ -131,6 +131,28 @@ describe("Design Mate chat SSE codec", () => {
     ).toThrow(RangeError);
   });
 
+  it("enforces cumulative stream and frame limits, including comments", () => {
+    const tooManyFrames = createDesignMateChatSseDecoder();
+    expect(() =>
+      tooManyFrames.push(
+        ":\n\n".repeat(DESIGN_MATE_CHAT_LIMITS.sseFrames + 1),
+      ),
+    ).toThrow(RangeError);
+
+    const commentFrame = `:${"x".repeat(60 * 1_024)}\n\n`;
+    const frameBytes = new TextEncoder().encode(commentFrame).byteLength;
+    const framesToExceed =
+      Math.floor(DESIGN_MATE_CHAT_LIMITS.sseStreamBytes / frameBytes) + 1;
+    expect(framesToExceed).toBeLessThan(
+      DESIGN_MATE_CHAT_LIMITS.sseFrames,
+    );
+    const tooManyBytes = createDesignMateChatSseDecoder();
+    for (let index = 0; index < framesToExceed - 1; index += 1) {
+      expect(tooManyBytes.push(commentFrame)).toEqual([]);
+    }
+    expect(() => tooManyBytes.push(commentFrame)).toThrow(RangeError);
+  });
+
   it("round-trips failed transport events", async () => {
     const error = makeDesignMateProviderError(
       "remote",
@@ -173,6 +195,7 @@ describe("remote Design Mate chat provider", () => {
       "Remote guidance.",
     );
     expect(capturedInit?.method).toBe("POST");
+    expect(capturedInit?.redirect).toBe("error");
     expect(new Headers(capturedInit?.headers).get("accept")).toBe(
       "text/event-stream",
     );

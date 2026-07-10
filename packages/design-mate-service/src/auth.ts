@@ -92,9 +92,13 @@ export function createDefaultRequestAuth(
   if (config.serviceToken !== undefined) {
     return createBearerTokenRequestAuth(config.serviceToken);
   }
+  if (!config.allowAnonymousLoopback || !isLoopbackHost(config.host)) {
+    throw new TypeError(
+      "Default request auth requires a service token or anonymous loopback opt-in.",
+    );
+  }
   return {
     authenticate: ({ remoteAddress }) =>
-      isLoopbackHost(config.host) &&
       isLoopbackRemoteAddress(remoteAddress)
         ? Object.freeze({
             subject: `loopback:${remoteAddress ?? "unknown"}`,

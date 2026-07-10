@@ -94,6 +94,57 @@ class InvalidTransportOutput {
   readonly _tag = "InvalidTransportOutput";
 }
 
+type ConcurrencyDecision =
+  | {
+      readonly allowed: true;
+      readonly release: () => void;
+    }
+  | {
+      readonly allowed: false;
+      readonly reason: "global" | "subject";
+    };
+
+function createConcurrencyLimiter(
+  maximumGlobal: number,
+  maximumPerSubject: number,
+): {
+  readonly acquire: (subject: string) => ConcurrencyDecision;
+} {
+  let active = 0;
+  const activeBySubject = new Map<string, number>();
+  return {
+    acquire: (subject) => {
+      const subjectActive = activeBySubject.get(subject) ?? 0;
+      if (subjectActive >= maximumPerSubject) {
+        return Object.freeze({ allowed: false, reason: "subject" });
+      }
+      if (active >= maximumGlobal) {
+        return Object.freeze({ allowed: false, reason: "global" });
+      }
+
+      active += 1;
+      activeBySubject.set(subject, subjectActive + 1);
+      let released = false;
+      return Object.freeze({
+        allowed: true,
+        release: () => {
+          if (released) {
+            return;
+          }
+          released = true;
+          active = Math.max(0, active - 1);
+          const current = activeBySubject.get(subject) ?? 0;
+          if (current <= 1) {
+            activeBySubject.delete(subject);
+          } else {
+            activeBySubject.set(subject, current - 1);
+          }
+        },
+      });
+    },
+  };
+}
+
 function now(clock: DesignMateServiceClock): number {
   try {
     const value = clock();
@@ -654,6 +705,10 @@ export function createDesignMateService(
     config.rateLimitRequestsPerMinute,
     clock,
   );
+  const concurrencyLimiter = createConcurrencyLimiter(
+    config.maxConcurrentRequests,
+    config.maxConcurrentRequestsPerSubject,
+  );
   const allowedOrigins = new Set(config.allowedOrigins);
 
   const server = createServer(
@@ -669,6 +724,7 @@ export function createDesignMateService(
       let logStatus = 500;
       let providerId: string | undefined;
       let errorCode: DesignMateProviderErrorCode | undefined;
+      let releaseConcurrencyLease: (() => void) | undefined;
       response.setHeader("x-request-id", requestId);
 
       const requestController = new AbortController();
@@ -822,6 +878,29 @@ export function createDesignMateService(
           );
           return;
         }
+
+        const concurrency = concurrencyLimiter.acquire(identity.subject);
+        if (!concurrency.allowed) {
+          request.resume();
+          const subjectSaturated = concurrency.reason === "subject";
+          logStatus = subjectSaturated ? 429 : 503;
+          sendError(
+            response,
+            logStatus,
+            subjectSaturated
+              ? "subject-concurrency-limited"
+              : "service-concurrency-limited",
+            subjectSaturated
+              ? "Too many concurrent Design Mate requests for this subject."
+              : "The Design Mate service is temporarily at capacity.",
+            {
+              ...responseCorsHeaders,
+              "retry-after": "1",
+            },
+          );
+          return;
+        }
+        releaseConcurrencyLease = concurrency.release;
 
         if (!isJsonContentType(request.headers["content-type"])) {
           logStatus = 415;
@@ -1113,6 +1192,8 @@ export function createDesignMateService(
           }
         })
         .finally(() => {
+          releaseConcurrencyLease?.();
+          releaseConcurrencyLease = undefined;
           clearTimeout(requestTimer);
           request.removeListener("aborted", onClientAborted);
           response.removeListener("close", onResponseClose);

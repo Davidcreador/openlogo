@@ -362,6 +362,7 @@ export function createRemoteDesignMateChatProvider(
       try {
         response = await fetchImplementation(options.endpoint, {
           method: "POST",
+          redirect: "error",
           headers: {
             accept: "text/event-stream",
             "content-type": "application/json",

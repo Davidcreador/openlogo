@@ -143,6 +143,7 @@ function parseFrame(frame: string): DesignMateChatTransportEvent | null {
 
 function firstFrameBoundary(
   value: string,
+  startIndex: number,
   final = false,
 ): { readonly index: number; readonly length: number } | null {
   const lineEndingLength = (index: number): number => {
@@ -159,7 +160,13 @@ function firstFrameBoundary(
     return index + 1 < value.length || final ? 1 : -1;
   };
 
-  for (let index = 0; index < value.length; index += 1) {
+  const scanStart =
+    startIndex > 0 &&
+    value[startIndex] === "\n" &&
+    value[startIndex - 1] === "\r"
+      ? startIndex - 1
+      : startIndex;
+  for (let index = scanStart; index < value.length; index += 1) {
     const firstLength = lineEndingLength(index);
     if (firstLength < 0) {
       return null;
@@ -190,25 +197,43 @@ export type DesignMateChatSSEDecoder = DesignMateChatSseDecoder;
 export function createDesignMateChatSseDecoder(): DesignMateChatSseDecoder {
   const textDecoder = new TextDecoder("utf-8", { fatal: true });
   let pending = "";
+  let pendingBytes = 0;
+  let scanOffset = 0;
+  let streamBytes = 0;
+  let frameCount = 0;
   let finished = false;
+
+  const countFrame = (): void => {
+    frameCount += 1;
+    if (frameCount > DESIGN_MATE_CHAT_LIMITS.sseFrames) {
+      throw new RangeError(
+        "The Design Mate chat SSE stream has too many frames.",
+      );
+    }
+  };
 
   const consumeFrames = (
     final = false,
   ): DesignMateChatTransportEvent[] => {
     const events: DesignMateChatTransportEvent[] = [];
     while (true) {
-      const boundary = firstFrameBoundary(pending, final);
+      const boundary = firstFrameBoundary(pending, scanOffset, final);
       if (!boundary) {
+        scanOffset = Math.max(0, pending.length - 3);
         break;
       }
       const frame = pending.slice(0, boundary.index);
-      pending = pending.slice(boundary.index + boundary.length);
+      const consumedLength = boundary.index + boundary.length;
+      pendingBytes -= utf8ByteLength(pending.slice(0, consumedLength));
+      pending = pending.slice(consumedLength);
+      scanOffset = 0;
+      countFrame();
       const event = parseFrame(frame);
       if (event) {
         events.push(event);
       }
     }
-    if (utf8ByteLength(pending) > DESIGN_MATE_CHAT_LIMITS.sseFrameBytes) {
+    if (pendingBytes > DESIGN_MATE_CHAT_LIMITS.sseFrameBytes) {
       throw new RangeError("The Design Mate chat SSE frame is too large.");
     }
     return events;
@@ -220,9 +245,30 @@ export function createDesignMateChatSseDecoder(): DesignMateChatSseDecoder {
         throw new TypeError("The Design Mate chat SSE decoder is finished.");
       }
       if (typeof chunk === "string") {
+        const chunkBytes = utf8ByteLength(chunk);
+        if (
+          streamBytes + chunkBytes >
+          DESIGN_MATE_CHAT_LIMITS.sseStreamBytes
+        ) {
+          throw new RangeError(
+            "The Design Mate chat SSE stream is too large.",
+          );
+        }
+        streamBytes += chunkBytes;
+        pendingBytes += chunkBytes;
         pending += textDecoder.decode();
         pending += chunk;
       } else if (chunk instanceof Uint8Array) {
+        if (
+          streamBytes + chunk.byteLength >
+          DESIGN_MATE_CHAT_LIMITS.sseStreamBytes
+        ) {
+          throw new RangeError(
+            "The Design Mate chat SSE stream is too large.",
+          );
+        }
+        streamBytes += chunk.byteLength;
+        pendingBytes += chunk.byteLength;
         pending += textDecoder.decode(chunk, { stream: true });
       } else {
         throw new TypeError("The Design Mate chat SSE chunk is invalid.");
@@ -237,8 +283,11 @@ export function createDesignMateChatSseDecoder(): DesignMateChatSseDecoder {
       pending += textDecoder.decode();
       const events = consumeFrames(true);
       if (pending.length > 0) {
+        countFrame();
         const finalFrame = pending.replace(/(?:\r\n|\r|\n)$/, "");
         pending = "";
+        pendingBytes = 0;
+        scanOffset = 0;
         const event = parseFrame(finalFrame);
         if (event) {
           events.push(event);

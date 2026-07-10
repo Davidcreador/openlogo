@@ -1,4 +1,4 @@
-import type { Server } from "node:http";
+import type { IncomingMessage, Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createInitialDocument } from "@openlogo/core";
 import {
@@ -14,6 +14,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DESIGN_MATE_SERVICE_DEFAULTS,
+  createDefaultRequestAuth,
   createDesignMateService,
   createFakeDesignMateModelTransport,
   type DesignMateServiceConfig,
@@ -91,10 +92,15 @@ function config(
   return {
     host: "127.0.0.1",
     port: 0,
+    allowAnonymousLoopback: true,
     allowedOrigins: [ALLOWED_ORIGIN],
     maxBodyBytes: DESIGN_MATE_SERVICE_DEFAULTS.maxBodyBytes,
     maxJsonDepth: 32,
     rateLimitRequestsPerMinute: 100,
+    maxConcurrentRequests:
+      DESIGN_MATE_SERVICE_DEFAULTS.maxConcurrentRequests,
+    maxConcurrentRequestsPerSubject:
+      DESIGN_MATE_SERVICE_DEFAULTS.maxConcurrentRequestsPerSubject,
     requestTimeoutMs: 5_000,
     upstreamTimeoutMs: 2_000,
     ...overrides,
@@ -208,6 +214,56 @@ describe("Design Mate HTTP service", () => {
       { type: "completed" },
     ]);
     expect(transport.prompts).toHaveLength(1);
+  });
+
+  it("requires explicit anonymous loopback opt-in and checks the peer address", async () => {
+    const transport = createFakeDesignMateModelTransport();
+    expect(() =>
+      createDesignMateService({
+        config: config({ allowAnonymousLoopback: false }),
+        transport,
+      }),
+    ).toThrow(/service token, injected request auth, or explicit anonymous/i);
+    expect(() =>
+      createDesignMateService({
+        config: config({ allowAnonymousLoopback: false }),
+        auth: {
+          authenticate: () => Object.freeze({ subject: "proxy-user" }),
+        },
+        transport,
+      }),
+    ).not.toThrow();
+
+    const auth = createDefaultRequestAuth(config());
+    const request = {} as IncomingMessage;
+    const signal = new AbortController().signal;
+    await expect(
+      Promise.resolve(
+        auth.authenticate({
+          request,
+          remoteAddress: "203.0.113.10",
+          signal,
+        }),
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      Promise.resolve(
+        auth.authenticate({
+          request,
+          remoteAddress: "::ffff:127.not-an-ip",
+          signal,
+        }),
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      Promise.resolve(
+        auth.authenticate({
+          request,
+          remoteAddress: "127.0.0.8",
+          signal,
+        }),
+      ),
+    ).resolves.toMatchObject({ subject: "loopback:127.0.0.8" });
   });
 
   it("enforces the CORS allowlist and validates preflight", async () => {
@@ -338,9 +394,53 @@ describe("Design Mate HTTP service", () => {
       { type: "completed" },
     ]);
     expect(transport.prompts[0]?.images).toHaveLength(1);
-    expect(transport.prompts[0]?.system).toContain(
-      "Bounded DesignContext JSON",
+    expect(transport.prompts[0]?.system).not.toContain(
+      "Canonical bounded DesignContext JSON",
     );
+    expect(transport.prompts[0]?.contextMessage).toMatchObject({
+      role: "user",
+    });
+    expect(transport.prompts[0]?.contextMessage.text).toContain(
+      "Canonical bounded DesignContext JSON",
+    );
+  });
+
+  it("aligns the default HTTP body cap with the shared wire-byte limit", async () => {
+    const transport = createFakeDesignMateModelTransport({
+      chunks: [{ type: "text-delta", delta: "Within the body cap." }],
+    });
+    const baseUrl = await listen(
+      createDesignMateService({ config: config(), transport }),
+    );
+    const serialized = JSON.stringify(makeWire());
+    const serializedBytes = new TextEncoder().encode(serialized).byteLength;
+    const padding =
+      DESIGN_MATE_CHAT_LIMITS.wireSerializedBytes - serializedBytes;
+    expect(padding).toBeGreaterThan(0);
+
+    const atBoundary = await fetch(
+      `${baseUrl}/v1/design-mate/chat`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: `${serialized}${" ".repeat(padding)}`,
+      },
+    );
+    expect(atBoundary.status).toBe(200);
+    expect((await transportEvents(atBoundary)).at(-1)).toEqual({
+      type: "completed",
+    });
+
+    const overBoundary = await fetch(
+      `${baseUrl}/v1/design-mate/chat`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: `${serialized}${" ".repeat(padding + 1)}`,
+      },
+    );
+    expect(overBoundary.status).toBe(413);
+    expect(transport.prompts).toHaveLength(1);
   });
 
   it("fails closed on empty and cumulatively oversized model output", async () => {
@@ -413,14 +513,128 @@ describe("Design Mate HTTP service", () => {
     expect(transport.prompts).toHaveLength(1);
   });
 
-  it("propagates client disconnect to the model transport", async () => {
+  it("limits concurrent requests per subject and releases successful leases", async () => {
+    let releaseFirst: (() => void) | undefined;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const transport = createFakeDesignMateModelTransport({
+      respond: async function* (_prompt, index) {
+        if (index === 0) {
+          await firstGate;
+        }
+        yield { type: "text-delta", delta: `Response ${index}.` };
+      },
+    });
+    const baseUrl = await listen(
+      createDesignMateService({
+        config: config({
+          maxConcurrentRequests: 2,
+          maxConcurrentRequestsPerSubject: 1,
+        }),
+        transport,
+      }),
+    );
+
+    const first = await postWire(baseUrl, makeWire());
+    expect(first.status).toBe(200);
+    const saturated = await postWire(baseUrl, makeWire());
+    expect(saturated.status).toBe(429);
+    expect(saturated.headers.get("retry-after")).toBe("1");
+    expect(await saturated.json()).toMatchObject({
+      error: { code: "subject-concurrency-limited" },
+    });
+    expect(transport.prompts).toHaveLength(1);
+
+    releaseFirst?.();
+    await expect(transportEvents(first)).resolves.toMatchObject([
+      { type: "text-delta" },
+      { type: "completed" },
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const afterRelease = await postWire(baseUrl, makeWire());
+    expect(afterRelease.status).toBe(200);
+    await transportEvents(afterRelease);
+    expect(transport.prompts).toHaveLength(2);
+  });
+
+  it("limits global concurrency across subjects and releases validation failures", async () => {
+    let releaseFirst: (() => void) | undefined;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const transport = createFakeDesignMateModelTransport({
+      respond: async function* (_prompt, index) {
+        if (index === 0) {
+          await firstGate;
+        }
+        yield { type: "text-delta", delta: "Available." };
+      },
+    });
+    const auth: RequestAuth = {
+      authenticate: ({ request }) => {
+        const subject = request.headers["x-test-subject"];
+        return typeof subject === "string"
+          ? Object.freeze({ subject })
+          : null;
+      },
+    };
+    const baseUrl = await listen(
+      createDesignMateService({
+        config: config({
+          allowAnonymousLoopback: false,
+          maxConcurrentRequests: 1,
+          maxConcurrentRequestsPerSubject: 1,
+        }),
+        auth,
+        transport,
+      }),
+    );
+    const postAs = (subject: string, wire: unknown): Promise<Response> =>
+      fetch(`${baseUrl}/v1/design-mate/chat`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-test-subject": subject,
+        },
+        body: JSON.stringify(wire),
+      });
+
+    const first = await postAs("subject-a", makeWire());
+    expect(first.status).toBe(200);
+    const saturated = await postAs("subject-b", makeWire());
+    expect(saturated.status).toBe(503);
+    expect(saturated.headers.get("retry-after")).toBe("1");
+    expect(await saturated.json()).toMatchObject({
+      error: { code: "service-concurrency-limited" },
+    });
+    expect(transport.prompts).toHaveLength(1);
+
+    releaseFirst?.();
+    await transportEvents(first);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const invalid = await postAs("subject-b", {});
+    expect(invalid.status).toBe(400);
+    await invalid.arrayBuffer();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const afterInvalid = await postAs("subject-c", makeWire());
+    expect(afterInvalid.status).toBe(200);
+    await transportEvents(afterInvalid);
+    expect(transport.prompts).toHaveLength(2);
+  });
+
+  it("propagates client disconnect and releases its concurrency lease", async () => {
     let observeAbort: (() => void) | undefined;
     const aborted = new Promise<void>((resolve) => {
       observeAbort = resolve;
     });
     const respond: NonNullable<
       FakeDesignMateModelTransportOptions["respond"]
-    > = async function* (_prompt, _index, signal) {
+    > = async function* (_prompt, index, signal) {
+      if (index > 0) {
+        yield { type: "text-delta", delta: "Lease released." };
+        return;
+      }
       await new Promise<void>((resolve) => {
         if (signal?.aborted) {
           resolve();
@@ -435,7 +649,13 @@ describe("Design Mate HTTP service", () => {
     };
     const transport = createFakeDesignMateModelTransport({ respond });
     const baseUrl = await listen(
-      createDesignMateService({ config: config(), transport }),
+      createDesignMateService({
+        config: config({
+          maxConcurrentRequests: 1,
+          maxConcurrentRequestsPerSubject: 1,
+        }),
+        transport,
+      }),
     );
     const controller = new AbortController();
     const response = await fetch(
@@ -458,6 +678,14 @@ describe("Design Mate HTTP service", () => {
         ),
       ]),
     ).resolves.toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const afterDisconnect = await postWire(baseUrl, makeWire());
+    expect(afterDisconnect.status).toBe(200);
+    expect(await transportEvents(afterDisconnect)).toEqual([
+      { type: "text-delta", delta: "Lease released." },
+      { type: "completed" },
+    ]);
   });
 
   it("turns an upstream timeout into one sanitized failed event", async () => {

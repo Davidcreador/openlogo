@@ -433,7 +433,10 @@ export const DESIGN_MATE_CHAT_LIMITS = Object.freeze({
   selectionIds: 512,
   contextStringLength: 4_000,
   contextSerializedBytes: 128 * 1_024,
+  wireSerializedBytes: 5 * 1_024 * 1_024,
   sseFrameBytes: 64 * 1_024,
+  sseFrames: 2_048,
+  sseStreamBytes: 4 * 1_024 * 1_024,
   errorMessageLength: 1_000,
 } as const);
 
@@ -528,6 +531,11 @@ export type DesignMateChatPromptMessage = {
   readonly text: string;
 };
 
+export type DesignMateChatPromptContextMessage = {
+  readonly role: "user";
+  readonly text: string;
+};
+
 export type DesignMateChatPromptImage = {
   readonly id: string;
   readonly role: "user";
@@ -541,6 +549,7 @@ export type DesignMateChatPromptImage = {
 
 export type DesignMateChatPrompt = {
   readonly system: string;
+  readonly contextMessage: DesignMateChatPromptContextMessage;
   readonly messages: readonly DesignMateChatPromptMessage[];
   readonly images: readonly DesignMateChatPromptImage[];
 };

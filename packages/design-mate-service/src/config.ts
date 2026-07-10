@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { DESIGN_MATE_CHAT_LIMITS } from "@openlogo/design-mate";
 import { normalizeOpenAIResponsesBaseUrl } from "./openai-responses";
 
 export const DESIGN_MATE_SERVICE_VERSION = "0.1.0";
@@ -6,13 +7,17 @@ export const DESIGN_MATE_SERVICE_VERSION = "0.1.0";
 export const DESIGN_MATE_SERVICE_DEFAULTS = Object.freeze({
   host: "127.0.0.1",
   port: 8_787,
-  maxBodyBytes: 3 * 1_024 * 1_024,
+  allowAnonymousLoopback: false,
+  maxBodyBytes: DESIGN_MATE_CHAT_LIMITS.wireSerializedBytes,
   maxJsonDepth: 32,
   rateLimitRequestsPerMinute: 30,
+  maxConcurrentRequests: 16,
+  maxConcurrentRequestsPerSubject: 4,
   requestTimeoutMs: 90_000,
   upstreamTimeoutMs: 60_000,
   providerBaseUrl: "https://api.openai.com/v1",
   providerImageDetail: "auto" as const,
+  providerMaxOutputTokens: 1_200,
 } as const);
 
 export type DesignMateProviderConfig = {
@@ -20,15 +25,19 @@ export type DesignMateProviderConfig = {
   readonly baseUrl: string;
   readonly model: string;
   readonly imageDetail: "low" | "auto";
+  readonly maxOutputTokens: number;
 };
 
 export type DesignMateServiceConfig = {
   readonly host: string;
   readonly port: number;
+  readonly allowAnonymousLoopback: boolean;
   readonly allowedOrigins: readonly string[];
   readonly maxBodyBytes: number;
   readonly maxJsonDepth: number;
   readonly rateLimitRequestsPerMinute: number;
+  readonly maxConcurrentRequests: number;
+  readonly maxConcurrentRequestsPerSubject: number;
   readonly requestTimeoutMs: number;
   readonly upstreamTimeoutMs: number;
   readonly serviceToken?: string;
@@ -87,6 +96,23 @@ function parseInteger(
   return parsed;
 }
 
+function parseBoolean(
+  value: string | undefined,
+  fallback: boolean,
+  label: string,
+): boolean {
+  if (value === undefined) {
+    return fallback;
+  }
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  throw new TypeError(`${label} is invalid.`);
+}
+
 function validateHost(value: unknown): string {
   if (
     typeof value !== "string" ||
@@ -114,11 +140,12 @@ function validateHost(value: unknown): string {
 
 export function isLoopbackHost(value: string): boolean {
   const normalized = value.toLowerCase();
+  const ipVersion = isIP(normalized);
   return (
     normalized === "localhost" ||
     normalized === "::1" ||
-    normalized.startsWith("::ffff:127.") ||
-    (isIP(normalized) === 4 && normalized.startsWith("127."))
+    (ipVersion === 6 && normalized.startsWith("::ffff:127.")) ||
+    (ipVersion === 4 && normalized.startsWith("127."))
   );
 }
 
@@ -129,10 +156,11 @@ export function isLoopbackRemoteAddress(
     return false;
   }
   const withoutZone = value.split("%", 1)[0]?.toLowerCase() ?? "";
+  const ipVersion = isIP(withoutZone);
   return (
     withoutZone === "::1" ||
-    withoutZone.startsWith("::ffff:127.") ||
-    (isIP(withoutZone) === 4 && withoutZone.startsWith("127."))
+    (ipVersion === 6 && withoutZone.startsWith("::ffff:127.")) ||
+    (ipVersion === 4 && withoutZone.startsWith("127."))
   );
 }
 
@@ -242,6 +270,15 @@ export function validateDesignMateServiceConfig(
     65_535,
     "The service port",
   );
+  if (typeof config.allowAnonymousLoopback !== "boolean") {
+    throw new TypeError("The anonymous loopback setting is invalid.");
+  }
+  const allowAnonymousLoopback = config.allowAnonymousLoopback;
+  if (allowAnonymousLoopback && !isLoopbackHost(host)) {
+    throw new TypeError(
+      "Anonymous loopback access requires a loopback service host.",
+    );
+  }
   if (
     !Array.isArray(config.allowedOrigins) ||
     config.allowedOrigins.length > 64
@@ -272,6 +309,18 @@ export function validateDesignMateServiceConfig(
     10_000,
     "The rate limit",
   );
+  const maxConcurrentRequests = validateIntegerConfig(
+    config.maxConcurrentRequests,
+    1,
+    1_000,
+    "The global concurrency limit",
+  );
+  const maxConcurrentRequestsPerSubject = validateIntegerConfig(
+    config.maxConcurrentRequestsPerSubject,
+    1,
+    1_000,
+    "The per-subject concurrency limit",
+  );
   const requestTimeoutMs = validateIntegerConfig(
     config.requestTimeoutMs,
     1,
@@ -291,11 +340,11 @@ export function validateDesignMateServiceConfig(
 
   if (
     serviceToken === undefined &&
-    !isLoopbackHost(host) &&
-    !hasInjectedAuth
+    !hasInjectedAuth &&
+    !allowAnonymousLoopback
   ) {
     throw new TypeError(
-      "A service token or injected request auth is required for a non-loopback bind.",
+      "A service token, injected request auth, or explicit anonymous loopback opt-in is required.",
     );
   }
 
@@ -314,6 +363,12 @@ export function validateDesignMateServiceConfig(
       baseUrl: normalizeOpenAIResponsesBaseUrl(config.provider.baseUrl),
       model: validateProviderText(config.provider.model, "model", 256),
       imageDetail,
+      maxOutputTokens: validateIntegerConfig(
+        config.provider.maxOutputTokens,
+        16,
+        16_000,
+        "The provider output token limit",
+      ),
     });
   } else if (requireProvider) {
     throw new TypeError("Provider configuration is required.");
@@ -322,10 +377,13 @@ export function validateDesignMateServiceConfig(
   return Object.freeze({
     host,
     port,
+    allowAnonymousLoopback,
     allowedOrigins: Object.freeze(allowedOrigins),
     maxBodyBytes,
     maxJsonDepth,
     rateLimitRequestsPerMinute,
+    maxConcurrentRequests,
+    maxConcurrentRequestsPerSubject,
     requestTimeoutMs,
     upstreamTimeoutMs,
     ...(serviceToken === undefined ? {} : { serviceToken }),
@@ -350,6 +408,13 @@ export function loadDesignMateServiceConfig(
     1,
     65_535,
     "The service port",
+  );
+  const allowAnonymousLoopback = parseBoolean(
+    readEnvironmentValue(environment, [
+      "DESIGN_MATE_ALLOW_ANONYMOUS_LOOPBACK",
+    ]),
+    DESIGN_MATE_SERVICE_DEFAULTS.allowAnonymousLoopback,
+    "The anonymous loopback setting",
   );
   const allowedOrigins = parseAllowedOrigins(
     readEnvironmentValue(environment, [
@@ -386,6 +451,26 @@ export function loadDesignMateServiceConfig(
     1,
     10_000,
     "The rate limit",
+  );
+  const maxConcurrentRequests = parseInteger(
+    readEnvironmentValue(environment, [
+      "DESIGN_MATE_SERVICE_MAX_CONCURRENT_REQUESTS",
+      "DESIGN_MATE_MAX_CONCURRENT_REQUESTS",
+    ]),
+    DESIGN_MATE_SERVICE_DEFAULTS.maxConcurrentRequests,
+    1,
+    1_000,
+    "The global concurrency limit",
+  );
+  const maxConcurrentRequestsPerSubject = parseInteger(
+    readEnvironmentValue(environment, [
+      "DESIGN_MATE_SERVICE_MAX_CONCURRENT_REQUESTS_PER_SUBJECT",
+      "DESIGN_MATE_MAX_CONCURRENT_REQUESTS_PER_SUBJECT",
+    ]),
+    DESIGN_MATE_SERVICE_DEFAULTS.maxConcurrentRequestsPerSubject,
+    1,
+    1_000,
+    "The per-subject concurrency limit",
   );
   const requestTimeoutMs = parseInteger(
     readEnvironmentValue(environment, [
@@ -436,15 +521,27 @@ export function loadDesignMateServiceConfig(
   if (imageDetail !== "low" && imageDetail !== "auto") {
     throw new TypeError("The provider image detail is invalid.");
   }
+  const maxOutputTokens = parseInteger(
+    readEnvironmentValue(environment, [
+      "DESIGN_MATE_PROVIDER_MAX_OUTPUT_TOKENS",
+    ]),
+    DESIGN_MATE_SERVICE_DEFAULTS.providerMaxOutputTokens,
+    16,
+    16_000,
+    "The provider output token limit",
+  );
 
   return validateDesignMateServiceConfig(
     {
       host,
       port,
+      allowAnonymousLoopback,
       allowedOrigins,
       maxBodyBytes,
       maxJsonDepth,
       rateLimitRequestsPerMinute,
+      maxConcurrentRequests,
+      maxConcurrentRequestsPerSubject,
       requestTimeoutMs,
       upstreamTimeoutMs,
       ...(serviceToken === undefined ? {} : { serviceToken }),
@@ -453,6 +550,7 @@ export function loadDesignMateServiceConfig(
         baseUrl,
         model,
         imageDetail,
+        maxOutputTokens,
       },
     },
     {

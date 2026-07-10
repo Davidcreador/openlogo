@@ -15,6 +15,10 @@ const IMAGE_DATA_URL =
 function prompt(): DesignMateChatPrompt {
   return Object.freeze({
     system: "INSTRUCTIONS_CONTEXT_SENTINEL",
+    contextMessage: Object.freeze({
+      role: "user" as const,
+      text: "UNTRUSTED_CONTEXT_SENTINEL",
+    }),
     messages: Object.freeze([
       Object.freeze({ role: "user" as const, text: "Earlier question" }),
       Object.freeze({
@@ -72,6 +76,7 @@ function transport(
     baseUrl: "https://provider.example/v1/",
     model: "required-model",
     imageDetail: "low",
+    maxOutputTokens: 1_234,
     fetch: fetchImplementation,
   });
 }
@@ -128,6 +133,7 @@ describe("OpenAI Responses model transport", () => {
     const body = JSON.parse(String(capturedInit?.body)) as {
       readonly model: string;
       readonly instructions: string;
+      readonly max_output_tokens: number;
       readonly input: readonly {
         readonly role: string;
         readonly content: readonly Record<string, unknown>[];
@@ -138,15 +144,21 @@ describe("OpenAI Responses model transport", () => {
     expect(body).toMatchObject({
       model: "required-model",
       instructions: "INSTRUCTIONS_CONTEXT_SENTINEL",
+      max_output_tokens: 1_234,
       stream: true,
       store: false,
     });
+    expect(capturedInit?.redirect).toBe("error");
     expect(body.input.map((message) => message.role)).toEqual([
+      "user",
       "user",
       "assistant",
       "user",
     ]);
     expect(body.input[0]?.content).toEqual([
+      { type: "input_text", text: "UNTRUSTED_CONTEXT_SENTINEL" },
+    ]);
+    expect(body.input[1]?.content).toEqual([
       { type: "input_text", text: "Earlier question" },
     ]);
     expect(body.input.at(-1)?.content).toEqual([
@@ -179,7 +191,12 @@ describe("OpenAI Responses model transport", () => {
     );
   });
 
-  it.each(["response.failed", "error"] as const)(
+  it.each([
+    "response.failed",
+    "response.incomplete",
+    "response.cancelled",
+    "error",
+  ] as const)(
     "sanitizes %s events without exposing provider content",
     async (eventType) => {
       const fetchMock = vi.fn(async () =>
@@ -208,8 +225,24 @@ describe("OpenAI Responses model transport", () => {
         delta: "x".repeat(DESIGN_MATE_CHAT_LIMITS.deltaTextLength + 1),
       }),
       [
-        frame("response.completed", {}),
+        frame("response.output_text.delta", { delta: "Before terminal" }),
+        frame("response.completed", {
+          response: { status: "completed" },
+        }),
         frame("response.output_text.delta", { delta: "Too late" }),
+      ].join(""),
+      frame("response.completed", {
+        response: { status: "completed" },
+      }),
+      [
+        frame("response.output_text.delta", { delta: "Invalid terminal" }),
+        frame("response.completed", {}),
+      ].join(""),
+      [
+        frame("response.output_text.delta", { delta: "Invalid status" }),
+        frame("response.completed", {
+          response: { status: "in_progress" },
+        }),
       ].join(""),
     ];
     for (const payload of cases) {
@@ -222,6 +255,53 @@ describe("OpenAI Responses model transport", () => {
         code: "invalid-chat-response",
         retryable: false,
       });
+    }
+  });
+
+  it("enforces cumulative OpenAI stream bytes and comment-frame counts", async () => {
+    const tooManyComments = transport(
+      vi.fn(async () =>
+        sseResponse(
+          ": heartbeat\n\n".repeat(
+            DESIGN_MATE_CHAT_LIMITS.sseFrames + 1,
+          ),
+        ),
+      ) as unknown as typeof fetch,
+    );
+    await expect(captureError(tooManyComments)).resolves.toMatchObject({
+      code: "invalid-chat-response",
+      retryable: false,
+    });
+
+    const commentFrame = `:${"x".repeat(60 * 1_024)}\n\n`;
+    const count =
+      Math.floor(
+        (4 * 1_024 * 1_024) /
+          new TextEncoder().encode(commentFrame).byteLength,
+      ) + 1;
+    expect(count).toBeLessThan(DESIGN_MATE_CHAT_LIMITS.sseFrames);
+    const tooManyBytes = transport(
+      vi.fn(async () => sseResponse(commentFrame.repeat(count))) as
+        unknown as typeof fetch,
+    );
+    await expect(captureError(tooManyBytes)).resolves.toMatchObject({
+      code: "invalid-chat-response",
+      retryable: false,
+    });
+  });
+
+  it("rejects output-token settings outside the bounded policy", () => {
+    const fetchMock = vi.fn() as unknown as typeof fetch;
+    for (const maxOutputTokens of [15, 16_001, 1.5]) {
+      expect(() =>
+        createOpenAIResponsesTransport({
+          apiKey: "test-key",
+          baseUrl: "https://provider.example/v1",
+          model: "test-model",
+          maxOutputTokens,
+          fetch: fetchMock,
+        }),
+      ).toThrow(/output token limit/i);
     }
   });
 
