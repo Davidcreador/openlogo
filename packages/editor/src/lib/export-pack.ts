@@ -8,6 +8,7 @@ import {
   downloadPngFromSvg,
   downloadTextFile,
 } from "./export";
+import { type FontEmbedError, embedDocumentFonts } from "./svg-fonts";
 
 /**
  * Production export pack from the active artboard:
@@ -42,9 +43,9 @@ function recolorDocument(
   };
 }
 
-export const exportPack: Effect.Effect<void, ExportError> = Effect.gen(
+export const exportPack: Effect.Effect<void, ExportError | FontEmbedError> = Effect.gen(
   function* () {
-    const document = documentStore.document;
+    const document = documentStore.committedDocument;
     const artboard = getActiveArtboard(document);
     const base = artboard.name.toLowerCase().replaceAll(" ", "-");
 
@@ -53,6 +54,7 @@ export const exportPack: Effect.Effect<void, ExportError> = Effect.gen(
     const reversed = documentToSvg(
       recolorDocument(document, "#ffffff", "transparent"),
     );
+    const rasterOriginal = yield* embedDocumentFonts(original, document);
 
     // The pauses keep browsers from coalescing/blocking rapid downloads.
     yield* Effect.sync(() =>
@@ -70,7 +72,7 @@ export const exportPack: Effect.Effect<void, ExportError> = Effect.gen(
     for (const size of [16, 32, 48]) {
       yield* Effect.sleep("300 millis");
       yield* downloadPngFromSvg(
-        original,
+        rasterOriginal,
         `favicon-${size}.png`,
         artboard.width,
         artboard.height,
@@ -79,7 +81,7 @@ export const exportPack: Effect.Effect<void, ExportError> = Effect.gen(
     }
     yield* Effect.sleep("300 millis");
     yield* downloadPngFromSvg(
-      original,
+      rasterOriginal,
       "icon-512.png",
       artboard.width,
       artboard.height,

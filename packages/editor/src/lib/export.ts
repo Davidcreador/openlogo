@@ -1,6 +1,7 @@
 import { Data, Effect } from "effect";
 import {
   type Artboard,
+  type Bounds,
   type LinearGradientPaint,
   type LogoDocument,
   type LogoNode,
@@ -11,6 +12,7 @@ import {
   getActiveArtboard,
   kernAt,
   kernToPx,
+  linearGradientPoints,
   paintBounds,
   pathGeometryToSvg,
   reversePathGeometry,
@@ -60,7 +62,7 @@ function effectsAttr(node: LogoNode, defs: string[]): string {
     defs.push(
       `<filter id="${id}" ${region}><feDropShadow dx="${dx}" dy="${dy}" stdDeviation="${
         effect.blur / 2
-      }" flood-color="${effect.color}" flood-opacity="${effect.opacity}" /></filter>`,
+      }" flood-color="${escapeXml(effect.color)}" flood-opacity="${effect.opacity}" /></filter>`,
     );
     return ` filter="url(#${id})"`;
   }
@@ -78,7 +80,7 @@ function effectsAttr(node: LogoNode, defs: string[]): string {
       primitives.push(
         `<feGaussianBlur in="SourceAlpha" stdDeviation="${effect.blur / 2}" result="b${step}" />`,
         `<feOffset in="b${step}" dx="${dx}" dy="${dy}" result="o${step}" />`,
-        `<feFlood flood-color="${effect.color}" flood-opacity="${effect.opacity}" result="c${step}" />`,
+        `<feFlood flood-color="${escapeXml(effect.color)}" flood-opacity="${effect.opacity}" result="c${step}" />`,
         `<feComposite in="c${step}" in2="o${step}" operator="in" result="u${step}" />`,
       );
       under.push(`u${step}`);
@@ -88,7 +90,7 @@ function effectsAttr(node: LogoNode, defs: string[]): string {
       }
       primitives.push(
         `<feMorphology in="SourceAlpha" operator="dilate" radius="${effect.width}" result="m${step}" />`,
-        `<feFlood flood-color="${effect.color}" flood-opacity="${effect.opacity}" result="c${step}" />`,
+        `<feFlood flood-color="${escapeXml(effect.color)}" flood-opacity="${effect.opacity}" result="c${step}" />`,
         `<feComposite in="c${step}" in2="m${step}" operator="in" result="u${step}" />`,
       );
       under.push(`u${step}`);
@@ -161,6 +163,10 @@ function fontFeatureDecl(node: TextNode): string | null {
     return null;
   }
   const settings = Object.entries(node.otFeatures)
+    // OpenType feature tags are exactly four ASCII alphanumerics. Besides
+    // producing valid CSS, filtering here prevents imported documents from
+    // smuggling arbitrary declarations into the inline style attribute.
+    .filter(([tag]) => /^[A-Za-z0-9]{4}$/.test(tag))
     .map(([tag, on]) => `'${tag}' ${on ? 1 : 0}`)
     .join(", ");
   return settings ? `font-feature-settings: ${settings}` : null;
@@ -212,7 +218,7 @@ function gradientStops(paint: LinearGradientPaint | RadialGradientPaint): string
   return paint.stops
     .map(
       (stop) =>
-        `<stop offset="${stop.offset}" stop-color="${stop.color}"${
+        `<stop offset="${stop.offset}" stop-color="${escapeXml(stop.color)}"${
           stop.alpha !== undefined && stop.alpha < 1
             ? ` stop-opacity="${stop.alpha}"`
             : ""
@@ -221,9 +227,9 @@ function gradientStops(paint: LinearGradientPaint | RadialGradientPaint): string
     .join("");
 }
 
-function paintAttr(paint: Paint, defs: string[]): string {
+function paintAttr(paint: Paint, defs: string[], box: Bounds): string {
   if (paint.type === "solid") {
-    return paint.color;
+    return escapeXml(paint.color);
   }
 
   gradientCounter += 1;
@@ -250,13 +256,32 @@ function paintAttr(paint: Paint, defs: string[]): string {
     return `url(#${id})`;
   }
 
-  const radians = (paint.angle * Math.PI) / 180;
-  const x2 = 50 + Math.cos(radians) * 50;
-  const y2 = 50 + Math.sin(radians) * 50;
+  // Legacy angle-only gradients use the exact same absolute-space vector as
+  // the renderer. Object-bounding-box coordinates may legitimately be
+  // outside 0..1 for non-square nodes.
+  const points = linearGradientPoints(paint, box);
+  const width = Math.max(1, box.width);
+  const height = Math.max(1, box.height);
+  const x1 = (points.start.x - box.x) / width;
+  const y1 = (points.start.y - box.y) / height;
+  const x2 = (points.end.x - box.x) / width;
+  const y2 = (points.end.y - box.y) / height;
   defs.push(
-    `<linearGradient id="${id}" x1="${100 - x2}%" y1="${100 - y2}%" x2="${x2}%" y2="${y2}%">${stops}</linearGradient>`,
+    `<linearGradient id="${id}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}">${stops}</linearGradient>`,
   );
   return `url(#${id})`;
+}
+
+/** Match the renderer's gradient coordinate space. */
+function nodePaintBox(node: Exclude<LogoNode, { type: "group" }>): Bounds {
+  return node.type === "path"
+    ? {
+        x: 0,
+        y: 0,
+        width: node.intrinsicWidth,
+        height: node.intrinsicHeight,
+      }
+    : { x: node.x, y: node.y, width: node.width, height: node.height };
 }
 
 function renderNode(
@@ -274,19 +299,26 @@ function renderNode(
       : ` transform="rotate(${node.rotation} ${node.x + node.width / 2} ${
           node.y + node.height / 2
         })"`;
-  const fill = paintAttr(node.fill, defs);
+  const paintBox = nodePaintBox(node);
+  const fill = paintAttr(node.fill, defs, paintBox);
   const stroke = node.stroke
     ? ` stroke="${
         node.stroke.paint
-          ? paintAttr(node.stroke.paint, defs)
-          : node.stroke.color
+          ? paintAttr(node.stroke.paint, defs, paintBox)
+          : escapeXml(node.stroke.color)
       }" stroke-width="${node.stroke.width}"`
     : "";
   const styleDecls = [
     node.blendMode ? `mix-blend-mode:${node.blendMode}` : null,
     node.type === "text" ? fontFeatureDecl(node) : null,
+    node.type === "text" ? `line-height:${node.lineHeight}` : null,
+    node.type === "text" ? "white-space:pre-wrap" : null,
+    node.type === "text" ? `inline-size:${node.width}px` : null,
   ].filter(Boolean);
-  const blend = styleDecls.length > 0 ? ` style="${styleDecls.join(";")}"` : "";
+  const blend =
+    styleDecls.length > 0
+      ? ` style="${escapeXml(styleDecls.join(";"))}"`
+      : "";
   const filter = effectsAttr(node, defs);
   const base = `opacity="${node.opacity}" fill="${fill}"${stroke}${blend}${filter}${rotate}`;
 
@@ -321,13 +353,24 @@ function renderNode(
           ? node.x + node.width
           : node.x;
 
-    return `<text ${base}${anchor} x="${anchorX}" y="${
-      node.y + node.fontSize
-    }" font-family="${escapeXml(node.fontFamily)}" font-size="${
+    const lines = node.content.split("\n");
+    const content =
+      lines.length === 1
+        ? escapeXml(node.content)
+        : lines
+            .map(
+              (line, index) =>
+                `<tspan x="${anchorX}" y="${
+                  node.y + index * node.fontSize * node.lineHeight
+                }">${escapeXml(line)}</tspan>`,
+            )
+            .join("");
+
+    return `<text ${base}${anchor} x="${anchorX}" y="${node.y}" dominant-baseline="text-before-edge" font-family="${escapeXml(node.fontFamily)}" font-size="${
       node.fontSize
     }" font-weight="${node.fontWeight}"${textTypographyAttrs(node)} letter-spacing="${
       node.letterSpacing
-    }">${escapeXml(node.content)}</text>`;
+    }">${content}</text>`;
   }
 
   // path
@@ -341,7 +384,7 @@ function renderNode(
           node.y + node.height / 2
         }) `;
 
-  return `<g opacity="${node.opacity}" fill="${fill}"${stroke}${filter} transform="${pathRotate}${transform}"><path fill-rule="${node.fillRule}" d="${escapeXml(
+  return `<g opacity="${node.opacity}" fill="${fill}"${stroke}${blend}${filter} transform="${pathRotate}${transform}"><path fill-rule="${node.fillRule}" d="${escapeXml(
     node.d,
   )}" /></g>`;
 }
@@ -446,7 +489,7 @@ export function documentToSvg(
   const defsBlock = defs.length > 0 ? `\n  <defs>${defs.join("")}</defs>` : "";
   const background = options.transparentBackground
     ? ""
-    : `\n  <rect width="100%" height="100%" fill="${artboard.background}" />`;
+    : `\n  <rect width="100%" height="100%" fill="${escapeXml(artboard.background)}" />`;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${artboard.width}" height="${artboard.height}" viewBox="0 0 ${artboard.width} ${artboard.height}" role="img" aria-label="${escapeXml(
     artboard.name,

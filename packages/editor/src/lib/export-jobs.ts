@@ -17,7 +17,12 @@ import {
   validateRasterSize,
 } from "./export";
 import { buildIco } from "./ico";
-import { type TextOutlineError, outlineDocumentTexts } from "./text-to-path";
+import {
+  type TextOutlineError,
+  type TextOutlineUnavailableError,
+  outlineDocumentTexts,
+} from "./text-to-path";
+import { type FontEmbedError, embedDocumentFonts } from "./svg-fonts";
 import { documentStore } from "../state/document";
 
 export type ExportScope = "active" | "all" | "selection";
@@ -141,7 +146,10 @@ export class ExportSelectionError {
   readonly reason = "Nothing exportable in the selection.";
 }
 
-type BuildError = TextOutlineError | ExportSelectionError;
+type BuildError =
+  | TextOutlineError
+  | TextOutlineUnavailableError
+  | ExportSelectionError;
 
 function hasTransparentBackground(request: ExportRequest): boolean {
   return (
@@ -172,7 +180,7 @@ export const buildExportTargets = (
   Effect.gen(function* () {
     let document = sourceDocument;
     if (request.format === "svg" && request.settings.outlineText) {
-      document = yield* outlineDocumentTexts(document);
+      document = yield* outlineDocumentTexts(document, { failOnSkip: true });
     }
 
     if (request.scope === "selection") {
@@ -342,9 +350,20 @@ export function preflightRasterTargets(
  */
 export const runExport = (
   request: ExportRequest,
-): Effect.Effect<number, BuildError | ExportError> =>
+): Effect.Effect<number, BuildError | ExportError | FontEmbedError> =>
   Effect.gen(function* () {
-    const targets = yield* buildExportTargets(documentStore.document, request);
+    const sourceDocument = documentStore.committedDocument;
+    let targets = yield* buildExportTargets(sourceDocument, request);
+    if (request.format !== "svg") {
+      targets = yield* Effect.all(
+        targets.map((target) =>
+          embedDocumentFonts(target.svg, sourceDocument).pipe(
+            Effect.map((svg) => ({ ...target, svg })),
+          ),
+        ),
+        { concurrency: 2 },
+      );
+    }
 
     if (
       request.format === "png" ||

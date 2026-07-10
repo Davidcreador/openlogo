@@ -29,6 +29,14 @@ export class TextOutlineError extends Data.TaggedError("TextOutlineError")<{
   readonly cause: unknown;
 }> {}
 
+/** An outline export was requested but one or more text nodes could not convert. */
+export class TextOutlineUnavailableError extends Data.TaggedError(
+  "TextOutlineUnavailableError",
+)<{
+  readonly nodeIds: readonly string[];
+  readonly reason: string;
+}> {}
+
 /**
  * Convert a text node into an editable path node with real glyph
  * outlines. Uses opentype.js on the same TTF bytes Skia renders with,
@@ -40,9 +48,13 @@ export class TextOutlineError extends Data.TaggedError("TextOutlineError")<{
  */
 export const convertTextToPath = (
   nodeId: string,
-): Effect.Effect<string | null, TextOutlineError> =>
+): Effect.Effect<
+  string | null,
+  TextOutlineError | TextOutlineUnavailableError
+> =>
   Effect.gen(function* () {
-    const document = documentStore.document;
+    const document = documentStore.committedDocument;
+    const generation = documentStore.documentGeneration;
     const node = document.nodes[nodeId];
 
     if (!node || node.type !== "text" || node.content.length === 0) {
@@ -67,6 +79,19 @@ export const convertTextToPath = (
       { concurrency: "unbounded" },
     );
     if (!bytes) {
+      return yield* Effect.fail(
+        new TextOutlineUnavailableError({
+          nodeIds: [node.id],
+          reason: `Could not load “${family.name}”. Check the connection and try again.`,
+        }),
+      );
+    }
+    if (
+      documentStore.documentGeneration !== generation ||
+      documentStore.committedDocument.activeArtboardId !==
+        document.activeArtboardId ||
+      documentStore.committedDocument.nodes[nodeId] !== node
+    ) {
       return null;
     }
 
@@ -99,41 +124,44 @@ function buildOutlinePathNode(
   const scale = node.fontSize / font.unitsPerEm;
   const ascent = font.ascender * scale;
   const kern = kerningLookup(font);
-  const glyphs = Array.from(node.content, (char) => font.charToGlyph(char));
-
-  // Gap after glyph i: tracking + metrics kerning + manual kerning.
-  const gapAfter = (i: number): number => {
-    if (i >= glyphs.length - 1) {
-      return 0;
-    }
-    return (
-      node.letterSpacing +
-      kern(node.content[i]!, node.content[i + 1]!) * node.fontSize +
-      kernToPx(kernAt(node.kerning, i), node.fontSize)
-    );
-  };
-
-  const advances = glyphs.map(
-    (glyph, i) => (glyph.advanceWidth ?? 0) * scale + gapAfter(i),
-  );
-  const advance = advances.reduce((sum, value) => sum + value, 0);
-
-  const alignOffset =
-    node.align === "center"
-      ? (node.width - advance) / 2
-      : node.align === "right"
-        ? node.width - advance
-        : 0;
-
-  // Artboard-local baseline origin, matching the rendered text position.
-  const baseY = node.y + ascent;
-  let penX = node.x + alignOffset;
   const commands: PathCommand[] = [];
-  glyphs.forEach((glyph, i) => {
-    commands.push(
-      ...(glyph.getPath(penX, baseY, node.fontSize).commands as PathCommand[]),
-    );
-    penX += advances[i]!;
+
+  let contentOffset = 0;
+  node.content.split("\n").forEach((line, lineIndex) => {
+    const chars = Array.from(line);
+    const glyphs = chars.map((char) => font.charToGlyph(char));
+    const advances = glyphs.map((glyph, index) => {
+      const gap =
+        index >= glyphs.length - 1
+          ? 0
+          : node.letterSpacing +
+            kern(chars[index]!, chars[index + 1]!) * node.fontSize +
+            kernToPx(
+              kernAt(node.kerning, contentOffset + index),
+              node.fontSize,
+            );
+      return (glyph.advanceWidth ?? 0) * scale + gap;
+    });
+    const advance = advances.reduce((sum, value) => sum + value, 0);
+    const alignOffset =
+      node.align === "center"
+        ? (node.width - advance) / 2
+        : node.align === "right"
+          ? node.width - advance
+          : 0;
+    const baseY =
+      node.y +
+      ascent +
+      lineIndex * node.fontSize * node.lineHeight;
+    let penX = node.x + alignOffset;
+    glyphs.forEach((glyph, index) => {
+      commands.push(
+        ...(glyph.getPath(penX, baseY, node.fontSize).commands as PathCommand[]),
+      );
+      penX += advances[index]!;
+    });
+    // +1 accounts for the newline in the original content/kerning indices.
+    contentOffset += chars.length + 1;
   });
   const geometry = commandsToGeometry(commands);
   const bounds = pathGeometryBounds(geometry);
@@ -233,8 +261,28 @@ export function isConvertibleText(node: TextNode): boolean {
  */
 export const outlineDocumentTexts = (
   document: LogoDocument,
-): Effect.Effect<LogoDocument, TextOutlineError> =>
+  options: { failOnSkip?: boolean } = {},
+): Effect.Effect<
+  LogoDocument,
+  TextOutlineError | TextOutlineUnavailableError
+> =>
   Effect.gen(function* () {
+    const unsupported = Object.values(document.nodes).filter(
+      (node): node is TextNode =>
+        node.type === "text" &&
+        node.content.length > 0 &&
+        node.onPath !== undefined,
+    );
+    if (options.failOnSkip && unsupported.length > 0) {
+      return yield* Effect.fail(
+        new TextOutlineUnavailableError({
+          nodeIds: unsupported.map((node) => node.id),
+          reason:
+            "Text attached to a path cannot be outlined yet. Detach it or disable “Outline text”.",
+        }),
+      );
+    }
+
     const targets = Object.values(document.nodes).filter(
       (node): node is TextNode =>
         node.type === "text" && node.content.length > 0 && !node.onPath,
@@ -251,6 +299,7 @@ export const outlineDocumentTexts = (
     );
 
     const nodes: Record<string, LogoNode> = { ...document.nodes };
+    const skipped: string[] = [];
     for (const node of targets) {
       const family = catalogEntry(node.fontFamily) ?? catalogEntry("Inter")!;
       const bytes = yield* fontStore.ensureEffect(
@@ -259,6 +308,7 @@ export const outlineDocumentTexts = (
         node.fontStyle ?? "normal",
       );
       if (!bytes) {
+        skipped.push(node.id);
         continue;
       }
       const outline = yield* Effect.try({
@@ -267,7 +317,19 @@ export const outlineDocumentTexts = (
       });
       if (outline) {
         nodes[node.id] = { ...outline, id: node.id, name: node.name };
+      } else {
+        skipped.push(node.id);
       }
+    }
+
+    if (options.failOnSkip && skipped.length > 0) {
+      return yield* Effect.fail(
+        new TextOutlineUnavailableError({
+          nodeIds: skipped,
+          reason:
+            "One or more fonts could not be outlined. Check the connection and try again.",
+        }),
+      );
     }
 
     return { ...document, nodes };
