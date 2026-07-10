@@ -7,6 +7,7 @@ import {
   decodeDesignMateChatSse,
   prepareDesignMateChatRequest,
   toDesignMateChatWireRequest,
+  type DesignMateChatProviderChunk,
   type DesignMateChatTransportEvent,
   type DesignMateChatWireRequest,
   type DesignMateVisualAttachment,
@@ -35,6 +36,26 @@ function base64ByteLength(value: string): number {
     (value.length / 4) * 3 -
     (value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0)
   );
+}
+
+function proposalCandidate(
+  id = "service-proposal",
+): DesignMateChatProviderChunk {
+  return {
+    type: "proposal-candidate",
+    proposal: {
+      id,
+      label: "Create an icon variant",
+      risk: "low",
+      actions: [
+        {
+          type: "create-logo-variant",
+          sourceArtboardId: "artboard-primary",
+          purpose: "icon",
+        },
+      ],
+    },
+  };
 }
 
 function makeWire(withImage = false): DesignMateChatWireRequest {
@@ -403,6 +424,50 @@ describe("Design Mate HTTP service", () => {
     expect(transport.prompts[0]?.contextMessage.text).toContain(
       "Canonical bounded DesignContext JSON",
     );
+  });
+
+  it("relays proposal-only output and bounds proposal candidates per turn", async () => {
+    const proposal = proposalCandidate();
+    const successfulTransport = createFakeDesignMateModelTransport({
+      chunks: [proposal],
+    });
+    const successfulUrl = await listen(
+      createDesignMateService({
+        config: config(),
+        transport: successfulTransport,
+      }),
+    );
+    expect(
+      await transportEvents(await postWire(successfulUrl, makeWire())),
+    ).toEqual([proposal, { type: "completed" }]);
+
+    const excessiveTransport = createFakeDesignMateModelTransport({
+      chunks: Array.from(
+        { length: DESIGN_MATE_CHAT_LIMITS.proposalCandidates + 1 },
+        (_, index) => proposalCandidate(`service-proposal-${index}`),
+      ),
+    });
+    const excessiveUrl = await listen(
+      createDesignMateService({
+        config: config(),
+        transport: excessiveTransport,
+      }),
+    );
+    const excessiveEvents = await transportEvents(
+      await postWire(excessiveUrl, makeWire()),
+    );
+    expect(
+      excessiveEvents.filter(
+        (event) => event.type === "proposal-candidate",
+      ),
+    ).toHaveLength(DESIGN_MATE_CHAT_LIMITS.proposalCandidates);
+    expect(excessiveEvents.at(-1)).toMatchObject({
+      type: "failed",
+      error: { code: "invalid-chat-response" },
+    });
+    expect(
+      excessiveEvents.some((event) => event.type === "completed"),
+    ).toBe(false);
   });
 
   it("aligns the default HTTP body cap with the shared wire-byte limit", async () => {
