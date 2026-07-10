@@ -24,8 +24,10 @@ import {
   type ReviewScope,
 } from "@openlogo/core";
 import {
+  buildDocumentIdentity,
   buildHeuristicDesignMateProposals,
   collectDesignMateReview,
+  isDesignMateProposalStale,
   prepareDesignMateProposal,
   type PreparedDesignMateProposal,
 } from "@openlogo/design-mate";
@@ -45,9 +47,12 @@ import {
 import {
   DESIGN_MATE_CHAT_ENDPOINT,
   designMateChatHeaderLabel,
+  isDesignMateChatAnswerStale,
+  type DesignMateChatAnswerContext,
 } from "../lib/design-mate-chat";
 import { documentStore, useDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
+import type { DesignMateChatProposalBatch } from "./DesignMateChatPanel";
 
 const DesignMateChatPanel = lazy(() =>
   import("./DesignMateChatPanel").then((module) => ({
@@ -179,6 +184,20 @@ const SCOPES: ReadonlyArray<{
   },
 ];
 
+type ProposalSource = "review" | "chat";
+
+type ApplyingProposal = {
+  readonly source: ProposalSource;
+  readonly id: string;
+};
+
+function applyingProposalsEqual(
+  left: ApplyingProposal | null,
+  right: ApplyingProposal,
+): boolean {
+  return left?.source === right.source && left.id === right.id;
+}
+
 function providerErrorMessage(error: unknown): string {
   if (
     typeof error === "object" &&
@@ -272,7 +291,7 @@ export function DesignMateSection() {
   });
   const latestRun = useRef(0);
   const latestProposalAction = useRef(0);
-  const applyingProposalRef = useRef<string | null>(null);
+  const applyingProposalRef = useRef<ApplyingProposal | null>(null);
   const [expanded, setExpanded] = useState(true);
   const [briefExpanded, setBriefExpanded] = useState(false);
   const [draft, setDraft] = useState<DesignBriefDraft>(() =>
@@ -284,9 +303,15 @@ export function DesignMateSection() {
   >([]);
   const [proposalBaseDocument, setProposalBaseDocument] =
     useState<LogoDocument | null>(null);
-  const [applyingProposalId, setApplyingProposalId] = useState<string | null>(
-    null,
-  );
+  const [chatPreparedProposals, setChatPreparedProposals] = useState<
+    readonly PreparedDesignMateProposal[]
+  >([]);
+  const [chatProposalBaseDocument, setChatProposalBaseDocument] =
+    useState<LogoDocument | null>(null);
+  const [chatProposalContext, setChatProposalContext] =
+    useState<DesignMateChatAnswerContext | null>(null);
+  const [applyingProposal, setApplyingProposal] =
+    useState<ApplyingProposal | null>(null);
 
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   const keyObjectId = useEditorStore((state) => state.keyObjectId);
@@ -321,7 +346,10 @@ export function DesignMateSection() {
       applyingProposalRef.current = null;
       setPreparedProposals([]);
       setProposalBaseDocument(null);
-      setApplyingProposalId(null);
+      setChatPreparedProposals([]);
+      setChatProposalBaseDocument(null);
+      setChatProposalContext(null);
+      setApplyingProposal(null);
     }
   }, [
     document.designBrief,
@@ -355,6 +383,21 @@ export function DesignMateSection() {
         reviewSnapshot.request,
         currentRequest,
       ));
+  const chatProposalIdentity =
+    chatProposalContext === null
+      ? null
+      : buildDocumentIdentity(document, {
+          generation: documentGeneration,
+          revision: documentStore.committedRevision,
+        });
+  const chatProposalsStale =
+    chatProposalContext !== null &&
+    chatProposalIdentity !== null &&
+    isDesignMateChatAnswerStale(
+      chatProposalContext,
+      chatProposalIdentity,
+      currentRequest,
+    );
 
   function updateDraft(field: keyof DesignBriefDraft, value: string): void {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -379,7 +422,7 @@ export function DesignMateSection() {
     applyingProposalRef.current = null;
     setPreparedProposals([]);
     setProposalBaseDocument(null);
-    setApplyingProposalId(null);
+    setApplyingProposal(null);
 
     if (briefDirty) {
       saveBrief();
@@ -466,7 +509,7 @@ export function DesignMateSection() {
       });
       setPreparedProposals(nextPreparedProposals);
       setProposalBaseDocument(committedDocument);
-      setApplyingProposalId(null);
+      setApplyingProposal(null);
       setStatus("complete");
     } catch (cause) {
       if (latestRun.current !== runId) {
@@ -474,25 +517,78 @@ export function DesignMateSection() {
       }
       setPreparedProposals([]);
       setProposalBaseDocument(null);
-      setApplyingProposalId(null);
+      setApplyingProposal(null);
       setReview(null);
       setError(providerErrorMessage(cause));
       setStatus("error");
     }
   }
 
+  function clearChatProposals(): void {
+    setChatPreparedProposals([]);
+    setChatProposalBaseDocument(null);
+    setChatProposalContext(null);
+  }
+
+  function receiveChatProposals(batch: DesignMateChatProposalBatch): void {
+    if (
+      batch.answerContext.identity.documentId !==
+        documentStore.committedDocument.id ||
+      batch.answerContext.identity.generation !==
+        documentStore.documentGeneration
+    ) {
+      return;
+    }
+    const options = {
+      generation: batch.answerContext.identity.generation,
+      revision: batch.answerContext.identity.revision,
+    };
+    const baseIdentity = buildDocumentIdentity(batch.baseDocument, options);
+    if (
+      isDesignMateChatAnswerStale(
+        batch.answerContext,
+        baseIdentity,
+        batch.answerContext.request,
+      )
+    ) {
+      return;
+    }
+    const proposals = batch.proposals.filter(
+      (prepared) =>
+        !isDesignMateProposalStale(
+          prepared,
+          batch.baseDocument,
+          options,
+        ),
+    );
+    setChatPreparedProposals(proposals);
+    setChatProposalBaseDocument(
+      proposals.length > 0 ? batch.baseDocument : null,
+    );
+    setChatProposalContext(
+      proposals.length > 0 ? batch.answerContext : null,
+    );
+    if (proposals.length === 0 && batch.rejectedCount > 0) {
+      setToast(
+        "Design Mate suggested a change, but it could not be prepared safely.",
+      );
+    }
+  }
+
   async function applyProposal(
     prepared: PreparedDesignMateProposal,
+    source: ProposalSource,
   ): Promise<void> {
     if (applyingProposalRef.current !== null) {
       return;
     }
 
     const proposalId = prepared.proposal.id;
+    const pending = { source, id: proposalId } as const;
     const actionId = latestProposalAction.current + 1;
     latestProposalAction.current = actionId;
-    applyingProposalRef.current = proposalId;
-    setApplyingProposalId(proposalId);
+    applyingProposalRef.current = pending;
+    setApplyingProposal(pending);
     try {
       const { applyPreparedDesignMateProposal } = await import(
         "../lib/design-mate-proposal"
@@ -502,19 +598,29 @@ export function DesignMateSection() {
       }
       const outcome = applyPreparedDesignMateProposal(documentStore, prepared);
       if (outcome.status === "applied") {
-        setPreparedProposals((current) =>
-          current.filter((item) => item.proposal.id !== proposalId),
-        );
+        const removeApplied = (
+          current: readonly PreparedDesignMateProposal[],
+        ): readonly PreparedDesignMateProposal[] =>
+          current.filter((item) => item.proposal.id !== proposalId);
+        if (source === "review") {
+          setPreparedProposals(removeApplied);
+        } else {
+          setChatPreparedProposals(removeApplied);
+        }
         setToast(
           "Proposal applied as one undoable step. Press Ctrl/Cmd+Z to undo.",
         );
       } else if (outcome.status === "stale") {
         setToast(
-          "This proposal is out of date and was not applied. Re-run the design review.",
+          source === "review"
+            ? "This proposal is out of date and was not applied. Re-run the design review."
+            : "This proposal is out of date and was not applied. Ask Design Mate again.",
         );
       } else {
         setToast(
-          "This proposal could not be applied safely. Re-run the design review and try again.",
+          source === "review"
+            ? "This proposal could not be applied safely. Re-run the design review and try again."
+            : "This proposal could not be applied safely. Ask Design Mate again.",
         );
       }
     } catch {
@@ -522,22 +628,33 @@ export function DesignMateSection() {
         return;
       }
       setToast(
-        "This proposal could not be applied safely. Re-run the design review and try again.",
+        source === "review"
+          ? "This proposal could not be applied safely. Re-run the design review and try again."
+          : "This proposal could not be applied safely. Ask Design Mate again.",
       );
     } finally {
       if (latestProposalAction.current === actionId) {
         applyingProposalRef.current = null;
-        setApplyingProposalId((current) =>
-          current === proposalId ? null : current,
+        setApplyingProposal((current) =>
+          applyingProposalsEqual(current, pending) ? null : current,
         );
       }
     }
   }
 
-  function dismissProposal(proposalId: string): void {
-    setPreparedProposals((current) =>
-      current.filter((item) => item.proposal.id !== proposalId),
-    );
+  function dismissProposal(
+    source: ProposalSource,
+    proposalId: string,
+  ): void {
+    const removeDismissed = (
+      current: readonly PreparedDesignMateProposal[],
+    ): readonly PreparedDesignMateProposal[] =>
+      current.filter((item) => item.proposal.id !== proposalId);
+    if (source === "review") {
+      setPreparedProposals(removeDismissed);
+    } else {
+      setChatPreparedProposals(removeDismissed);
+    }
   }
 
   function focusFinding(finding: ReviewFinding): void {
@@ -820,9 +937,54 @@ export function DesignMateSection() {
                 </div>
               }
             >
-              <DesignMateChatPanel />
+              <DesignMateChatPanel
+                onProposalTurnStart={clearChatProposals}
+                onProposalsReady={receiveChatProposals}
+              />
             </Suspense>
           </DesignMateChatErrorBoundary>
+
+          {chatProposalBaseDocument &&
+            chatPreparedProposals.length > 0 && (
+              <DesignMateProposalErrorBoundary
+                resetKey={`chat\u0000${chatPreparedProposals
+                  .map((item) => item.proposal.id)
+                  .join("\u0000")}`}
+              >
+                <Suspense
+                  fallback={
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      className="rounded-[7px] border border-panel-hairline bg-field px-9 py-7 text-[10.5px] text-ink-dim"
+                    >
+                      Loading conversation suggestions…
+                    </div>
+                  }
+                >
+                  <DesignMateProposalPanel
+                    baseDocument={chatProposalBaseDocument}
+                    proposals={chatPreparedProposals}
+                    stale={chatProposalsStale}
+                    applyingId={
+                      applyingProposal?.source === "chat"
+                        ? applyingProposal.id
+                        : null
+                    }
+                    busy={applyingProposal !== null}
+                    heading="Conversation suggestions"
+                    description="Prepared from the latest completed Design Mate answer."
+                    staleMessage="The canvas or conversation scope changed. Ask Design Mate again to refresh these suggestions."
+                    onApply={(prepared) =>
+                      applyProposal(prepared, "chat")
+                    }
+                    onDismiss={(proposalId) =>
+                      dismissProposal("chat", proposalId)
+                    }
+                  />
+                </Suspense>
+              </DesignMateProposalErrorBoundary>
+            )}
 
           {stale && (
             <div
@@ -900,9 +1062,18 @@ export function DesignMateSection() {
                     baseDocument={proposalBaseDocument}
                     proposals={preparedProposals}
                     stale={stale}
-                    applyingId={applyingProposalId}
-                    onApply={applyProposal}
-                    onDismiss={dismissProposal}
+                    applyingId={
+                      applyingProposal?.source === "review"
+                        ? applyingProposal.id
+                        : null
+                    }
+                    busy={applyingProposal !== null}
+                    onApply={(prepared) =>
+                      applyProposal(prepared, "review")
+                    }
+                    onDismiss={(proposalId) =>
+                      dismissProposal("review", proposalId)
+                    }
                   />
                 </Suspense>
               </DesignMateProposalErrorBoundary>

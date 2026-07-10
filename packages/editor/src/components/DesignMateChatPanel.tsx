@@ -7,6 +7,7 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
+import type { LogoDocument } from "@openlogo/core";
 import {
   MessageCircle,
   Paperclip,
@@ -28,6 +29,7 @@ import {
   type DesignMateChatProvider,
   type DesignMateSelection,
   type DesignMateVisualAttachment,
+  type PreparedDesignMateProposal,
 } from "@openlogo/design-mate";
 import {
   DESIGN_MATE_CHAT_ENDPOINT,
@@ -39,6 +41,7 @@ import {
   isDesignMateTranscriptNearBottom,
   isDesignMateChatAnswerStale,
   reduceDesignMateChatTranscript,
+  type DesignMateChatAnswerContext,
 } from "../lib/design-mate-chat";
 import {
   createDesignMateRequestSignature,
@@ -70,6 +73,18 @@ type ActiveRun = {
   readonly provider: DesignMateChatProvider;
 };
 
+export type DesignMateChatProposalBatch = {
+  readonly baseDocument: LogoDocument;
+  readonly answerContext: DesignMateChatAnswerContext;
+  readonly proposals: readonly PreparedDesignMateProposal[];
+  readonly rejectedCount: number;
+};
+
+export type DesignMateChatPanelProps = {
+  readonly onProposalTurnStart?: () => void;
+  readonly onProposalsReady?: (batch: DesignMateChatProposalBatch) => void;
+};
+
 function isoNow(): string {
   return new Date().toISOString();
 }
@@ -87,7 +102,10 @@ function visualCaptureNote(
   return `${count} bounded ${count === 1 ? "preview" : "previews"} attached.`;
 }
 
-export function DesignMateChatPanel() {
+export function DesignMateChatPanel({
+  onProposalTurnStart,
+  onProposalsReady,
+}: DesignMateChatPanelProps) {
   const document = useDocument();
   const documentGeneration = documentStore.documentGeneration;
   const committedRevision = documentStore.committedRevision;
@@ -248,6 +266,7 @@ export function DesignMateChatPanel() {
     stickTranscriptToBottomRef.current = true;
     dispatch({ type: "clear" });
     setVisualNote(null);
+    onProposalTurnStart?.();
   }
 
   async function sendPrompt(text = prompt): Promise<void> {
@@ -309,6 +328,7 @@ export function DesignMateChatPanel() {
       turnId,
       provider: providerSetup.provider,
     };
+    onProposalTurnStart?.();
     dispatch({
       type: "start-turn",
       turnId,
@@ -365,6 +385,9 @@ export function DesignMateChatPanel() {
       return;
     }
     try {
+      const preparedProposals: PreparedDesignMateProposal[] = [];
+      let rejectedCount = 0;
+      let completed = false;
       const stream = streamDesignMateChat(
         committedDocument,
         selection,
@@ -388,7 +411,22 @@ export function DesignMateChatPanel() {
         if (!isCurrentRun(runId, controller)) {
           return;
         }
+        if (event.type === "proposal-prepared") {
+          preparedProposals.push(event.prepared);
+        } else if (event.type === "proposal-rejected") {
+          rejectedCount += 1;
+        } else if (event.type === "completed") {
+          completed = true;
+        }
         dispatch({ type: "stream-event", turnId, event });
+      }
+      if (completed && isCurrentRun(runId, controller)) {
+        onProposalsReady?.({
+          baseDocument: committedDocument,
+          answerContext: { identity, request },
+          proposals: preparedProposals,
+          rejectedCount,
+        });
       }
     } catch {
       if (!isCurrentRun(runId, controller)) {
@@ -441,7 +479,7 @@ export function DesignMateChatPanel() {
             Ask Design Mate
           </h3>
           <p className="m-0 mt-2 text-[9.5px] leading-[1.4] text-ink-dim">
-            Conversation only — it never changes the canvas.
+            Suggestions require your approval — nothing changes automatically.
           </p>
         </div>
         <span className="shrink-0 rounded-full bg-accent-soft px-6 py-2 text-[8px] font-[650] uppercase tracking-[0.05em] text-accent">
