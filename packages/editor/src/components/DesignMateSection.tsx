@@ -624,7 +624,10 @@ export function DesignMateSection() {
     applyingProposalRef.current = pending;
     setApplyingProposal(pending);
     try {
-      const { applyPreparedDesignMateProposal } = await import(
+      const {
+        applyPreparedDesignMateProposal,
+        ensureDesignMateProposalFonts,
+      } = await import(
         "../lib/design-mate-proposal"
       );
       if (latestProposalAction.current !== actionId) {
@@ -632,6 +635,7 @@ export function DesignMateSection() {
       }
       const outcome = applyPreparedDesignMateProposal(documentStore, prepared);
       if (outcome.status === "applied") {
+        ensureDesignMateProposalFonts(prepared);
         const removeApplied = (
           current: readonly PreparedDesignMateProposal[],
         ): readonly PreparedDesignMateProposal[] =>

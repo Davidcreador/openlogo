@@ -1,9 +1,14 @@
-import type { DocumentStore, LogoDocument } from "@openlogo/core";
+import {
+  findContainerId,
+  type DocumentStore,
+  type LogoDocument,
+} from "@openlogo/core";
 import {
   isDesignMateProposalStale,
   type PreparedDesignMateProposal,
 } from "@openlogo/design-mate";
 import { documentToSvg, nodesToSvg } from "./export";
+import { fontStore } from "./font-store";
 
 export type DesignMateProposalPreview = {
   readonly kind: "nodes" | "variant";
@@ -35,6 +40,34 @@ function nodeTargetLabel(
   }
   const name = document.nodes[nodeIds[0]!]?.name.trim();
   return name ? name : "Changed object";
+}
+
+const GEOMETRY_ACTION_TYPES = new Set([
+  "translate-nodes",
+  "scale-nodes",
+  "rotate-nodes",
+  "align-nodes",
+  "distribute-nodes",
+]);
+
+function owningArtboardId(
+  document: LogoDocument,
+  nodeId: string,
+): string | null {
+  let currentId = nodeId;
+  const seen = new Set<string>();
+  while (!seen.has(currentId)) {
+    seen.add(currentId);
+    const containerId = findContainerId(document, currentId);
+    if (!containerId) {
+      return null;
+    }
+    if (document.artboards.some((artboard) => artboard.id === containerId)) {
+      return containerId;
+    }
+    currentId = containerId;
+  }
+  return null;
 }
 
 /**
@@ -119,6 +152,51 @@ export function createDesignMateProposalPreview(
     ) {
       return null;
     }
+    if (
+      prepared.proposal.actions.some((action) =>
+        GEOMETRY_ACTION_TYPES.has(action.type),
+      )
+    ) {
+      const artboardIds = new Set(
+        nodeIds.map((nodeId) => owningArtboardId(baseDocument, nodeId)),
+      );
+      if (artboardIds.size !== 1 || artboardIds.has(null)) {
+        return null;
+      }
+      const artboardId = [...artboardIds][0]!;
+      if (
+        nodeIds.some(
+          (nodeId) =>
+            owningArtboardId(prepared.previewDocument, nodeId) !== artboardId,
+        )
+      ) {
+        return null;
+      }
+      const beforeArtboard = baseDocument.artboards.find(
+        (artboard) => artboard.id === artboardId,
+      );
+      const afterArtboard = prepared.previewDocument.artboards.find(
+        (artboard) => artboard.id === artboardId,
+      );
+      if (!beforeArtboard || !afterArtboard) {
+        return null;
+      }
+      return {
+        kind: "nodes",
+        before: {
+          dataUrl: svgDataUrl(
+            documentToSvg(baseDocument, beforeArtboard),
+          ),
+          label: `Before · ${beforeArtboard.name}`,
+        },
+        after: {
+          dataUrl: svgDataUrl(
+            documentToSvg(prepared.previewDocument, afterArtboard),
+          ),
+          label: `After · ${afterArtboard.name}`,
+        },
+      };
+    }
     const beforeSvg = nodesToSvg(baseDocument, nodeIds);
     const afterSvg = nodesToSvg(prepared.previewDocument, nodeIds);
     if (!beforeSvg || !afterSvg) {
@@ -138,6 +216,38 @@ export function createDesignMateProposalPreview(
     };
   } catch {
     return null;
+  }
+}
+
+/** Warm the final text faces after an approved family or weight change. */
+export function ensureDesignMateProposalFonts(
+  prepared: PreparedDesignMateProposal,
+): void {
+  if (
+    !prepared.proposal.actions.some(
+      (action) =>
+        action.type === "set-font-family" ||
+        action.type === "set-font-weight",
+    )
+  ) {
+    return;
+  }
+  const seen = new Set<string>();
+  for (const nodeId of prepared.impact.changedNodeIds) {
+    const node = prepared.previewDocument.nodes[nodeId];
+    if (node?.type !== "text") {
+      continue;
+    }
+    const key = `${node.fontFamily}\u0000${node.fontWeight}\u0000${node.fontStyle ?? "normal"}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    void fontStore.ensure(
+      node.fontFamily,
+      node.fontWeight,
+      node.fontStyle ?? "normal",
+    );
   }
 }
 

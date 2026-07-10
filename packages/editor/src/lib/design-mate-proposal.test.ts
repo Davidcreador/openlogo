@@ -13,7 +13,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   applyPreparedDesignMateProposal,
   createDesignMateProposalPreview,
+  ensureDesignMateProposalFonts,
 } from "./design-mate-proposal";
+import { fontStore } from "./font-store";
 
 function firstTextNode(document: LogoDocument): TextNode {
   const node = Object.values(document.nodes).find(
@@ -109,6 +111,62 @@ describe("Design Mate proposal previews", () => {
     expect(
       createDesignMateProposalPreview(document, unavailableTarget),
     ).toBeNull();
+  });
+
+  it("uses a fixed artboard frame for geometry previews", () => {
+    const document = createInitialDocument();
+    const text = firstTextNode(document);
+    const artboard = document.artboards[0]!;
+    const prepared = prepare(document, {
+      id: "test-geometry-preview",
+      label: "Move wordmark",
+      risk: "medium",
+      actions: [
+        {
+          type: "translate-nodes",
+          nodeIds: [text.id],
+          dx: 40,
+          dy: 10,
+        },
+      ],
+    });
+
+    const preview = createDesignMateProposalPreview(document, prepared);
+    const before = decodeSvg(preview!.before.dataUrl);
+    const after = decodeSvg(preview!.after.dataUrl);
+
+    expect(preview?.kind).toBe("nodes");
+    expect(preview?.before.label).toBe(`Before · ${artboard.name}`);
+    expect(before).toContain(`width="${artboard.width}"`);
+    expect(before).toContain(`height="${artboard.height}"`);
+    expect(after).not.toBe(before);
+  });
+
+  it("warms the final face after approved font-family changes", () => {
+    const document = createInitialDocument();
+    const text = firstTextNode(document);
+    const prepared = prepare(document, {
+      id: "test-font-warm",
+      label: "Change wordmark font",
+      risk: "medium",
+      actions: [
+        {
+          type: "set-font-family",
+          nodeId: text.id,
+          fontFamily: "Montserrat",
+        },
+        {
+          type: "set-font-weight",
+          nodeId: text.id,
+          fontWeight: 600,
+        },
+      ],
+    });
+    const ensure = vi.spyOn(fontStore, "ensure").mockResolvedValue(null);
+
+    ensureDesignMateProposalFonts(prepared);
+
+    expect(ensure).toHaveBeenCalledWith("Montserrat", 600, "normal");
   });
 });
 
