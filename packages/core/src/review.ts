@@ -91,7 +91,10 @@ function luminance(hex: string): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
-function contrastRatio(a: string, b: string): number {
+export const LOGO_REVIEW_CONTRAST_THRESHOLD = 2.6;
+
+/** Contrast calculation shared by review findings and safe proposal binding. */
+export function logoColorContrastRatio(a: string, b: string): number {
   const lighter = Math.max(luminance(a), luminance(b));
   const darker = Math.min(luminance(a), luminance(b));
   return (lighter + 0.05) / (darker + 0.05);
@@ -213,9 +216,9 @@ function reviewContrast(
 
   for (const node of nodes) {
     const foreground = paintColor(node.fill);
-    const ratio = contrastRatio(foreground, artboard.background);
+    const ratio = logoColorContrastRatio(foreground, artboard.background);
 
-    if (ratio < 2.6 && node.opacity > 0.5) {
+    if (ratio < LOGO_REVIEW_CONTRAST_THRESHOLD && node.opacity > 0.5) {
       const action =
         "Test a darker fill, lighter background, or create a reversed dark-mode variant.";
       findings.push({
