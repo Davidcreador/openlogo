@@ -1,9 +1,5 @@
 import {
-  Component,
-  lazy,
   memo,
-  Suspense,
-  type ErrorInfo,
   type ReactNode,
   useEffect,
   useId,
@@ -40,7 +36,6 @@ import {
   RotateCw,
   Shapes,
   SlidersHorizontal,
-  Sparkles,
   Spline,
   Square,
   Type,
@@ -100,12 +95,6 @@ import { convertTextToPath } from "../lib/text-to-path";
 import { documentStore, useDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
 
-const DesignMateSection = lazy(() =>
-  import("./DesignMateSection").then((module) => ({
-    default: module.DesignMateSection,
-  })),
-);
-
 const WEIGHT_LABELS: Record<number, string> = {
   400: "Regular",
   500: "Medium",
@@ -122,8 +111,6 @@ const NODE_ICONS = {
   text: Type,
   group: Folder,
 } as const;
-
-const INSPECTOR_VIEWS = ["properties", "layers", "review"] as const;
 
 /* Recurring utility recipes. Each section is its own card on the panel's
    paper background; fields share the warm sunken look with an accent
@@ -148,34 +135,6 @@ const STROKE_HEAD =
 const STROKE_TOGGLE_BASE =
   "inline-flex items-center gap-5 rounded-field border bg-card px-9 py-4 text-[11.5px] transition-[border-color,color] duration-140 ease-studio";
 
-class DesignMateErrorBoundary extends Component<
-  { children: ReactNode },
-  { failed: boolean }
-> {
-  state = { failed: false };
-
-  static getDerivedStateFromError(): { failed: boolean } {
-    return { failed: true };
-  }
-
-  componentDidCatch(error: unknown, info: ErrorInfo): void {
-    console.error("Design Mate panel failed to load.", error, info);
-  }
-
-  render(): ReactNode {
-    if (this.state.failed) {
-      return (
-        <section className={SECTION} role="status">
-          <h2 className={SECTION_H2}>Design mate</h2>
-          <p className={`${MUTED} mt-7`}>
-            Design Mate is unavailable. The rest of the editor is still ready.
-          </p>
-        </section>
-      );
-    }
-    return this.props.children;
-  }
-}
 const STROKE_TOGGLE = `${STROKE_TOGGLE_BASE} border-field-border text-ink-dim hover:border-accent hover:text-accent`;
 const STROKE_TOGGLE_ACTIVE = `${STROKE_TOGGLE_BASE} border-accent text-accent`;
 const SELECT =
@@ -2665,10 +2624,9 @@ function MultiDesignSection({
 
 export function Inspector() {
   const document = useDocument();
-  const activeView = useEditorStore((state) => state.inspectorView);
-  const setActiveView = useEditorStore((state) => state.setInspectorView);
-  const designMateReview = useEditorStore((state) => state.designMateReview);
-  const designMateStatus = useEditorStore((state) => state.designMateStatus);
+  const [activeView, setActiveView] = useState<"properties" | "layers">(
+    "properties",
+  );
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   // Selection may reach inside groups, so look nodes up directly.
   const selectedNodes = selectedNodeIds
@@ -2685,55 +2643,28 @@ export function Inspector() {
   const layerObjectCount = activeArtboard
     ? collectLeafNodeIds(document, activeArtboard.nodeIds).length
     : 0;
-  const ContextIcon =
-    activeView === "review"
-      ? Sparkles
-      : selectedNode
-        ? NODE_ICONS[selectedNode.type]
-        : Shapes;
-  const reviewFindingCount = designMateReview?.review.findings.length ?? 0;
+  const ContextIcon = selectedNode ? NODE_ICONS[selectedNode.type] : Shapes;
   const contextTitle =
-    activeView === "review"
-      ? "Design Mate"
-      : selectedNode
-        ? selectedNode.name
-        : selectedNodes.length > 1
-          ? `${selectedNodes.length} objects selected`
-          : "Nothing selected";
+    selectedNode
+      ? selectedNode.name
+      : selectedNodes.length > 1
+        ? `${selectedNodes.length} objects selected`
+        : "Nothing selected";
   const contextMeta =
-    activeView === "review"
-      ? designMateStatus === "reviewing"
-        ? "Reviewing…"
-        : designMateReview
-          ? `${reviewFindingCount} ${
-              reviewFindingCount === 1 ? "finding" : "findings"
-            }`
-          : "Creative review"
-      : selectedNode
-        ? selectedNode.type === "path" && selectedNode.shape
-          ? shapeDisplayName(selectedNode.shape.kind)
-          : selectedNode.type[0]!.toUpperCase() + selectedNode.type.slice(1)
-        : selectedNodes.length > 1
-          ? "Selection"
-          : "Canvas";
+    selectedNode
+      ? selectedNode.type === "path" && selectedNode.shape
+        ? shapeDisplayName(selectedNode.shape.kind)
+        : selectedNode.type[0]!.toUpperCase() + selectedNode.type.slice(1)
+      : selectedNodes.length > 1
+        ? "Selection"
+        : "Canvas";
 
   function handleTabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
-    const currentIndex = INSPECTOR_VIEWS.indexOf(activeView);
-    const nextIndex =
-      event.key === "ArrowLeft"
-        ? (currentIndex - 1 + INSPECTOR_VIEWS.length) % INSPECTOR_VIEWS.length
-        : event.key === "ArrowRight"
-          ? (currentIndex + 1) % INSPECTOR_VIEWS.length
-          : event.key === "Home"
-            ? 0
-            : event.key === "End"
-              ? INSPECTOR_VIEWS.length - 1
-              : null;
-    if (nextIndex === null) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
       return;
     }
     event.preventDefault();
-    const next = INSPECTOR_VIEWS[nextIndex]!;
+    const next = activeView === "properties" ? "layers" : "properties";
     setActiveView(next);
     requestAnimationFrame(() =>
       window.document.getElementById(`inspector-${next}-tab`)?.focus(),
@@ -2763,8 +2694,8 @@ export function Inspector() {
     documentStore.preview(leafIds.map((nodeId) => ({ nodeId, patch })));
   }
 
-  // Each workspace gets the full rail: object controls, layer management, and
-  // document-level review no longer compete in one scrolling properties view.
+  // Properties and layers each get the full rail. This keeps long gradient
+  // controls readable and gives deep layer trees a stable, full-height target.
   return (
     <aside
       className="inspector flex min-h-0 flex-col overflow-hidden border-l border-panel-border bg-panel shadow-[-10px_0_32px_rgb(28_25_33/0.055)]"
@@ -2780,7 +2711,7 @@ export function Inspector() {
           </span>
           <div className="min-w-0 flex-1">
             <span className="mb-2 block text-[9.5px] font-[680] uppercase tracking-[0.09em] text-ink-dim">
-              {activeView === "review" ? "Review workspace" : "Inspector"}
+              Inspector
             </span>
             <strong
               className="block truncate text-[13px] font-[650] text-ink"
@@ -2794,7 +2725,7 @@ export function Inspector() {
           </span>
         </div>
         <div
-          className="grid grid-cols-3 gap-3 rounded-m border border-field-border bg-field p-3"
+          className="grid grid-cols-2 gap-3 rounded-m border border-field-border bg-field p-3"
           role="tablist"
           aria-label="Inspector views"
         >
@@ -2842,43 +2773,6 @@ export function Inspector() {
             >
               {layerObjectCount}
             </span>
-          </button>
-          <button
-            id="inspector-review-tab"
-            type="button"
-            role="tab"
-            className={`flex h-28 items-center justify-center gap-5 rounded-[6px] text-[11.5px] transition-[background-color,color,box-shadow] duration-140 ease-studio ${
-              activeView === "review"
-                ? "bg-card font-semibold text-ink shadow-[0_1px_3px_rgb(28_25_33/0.12)]"
-                : "text-ink-dim hover:text-ink"
-            }`}
-            aria-selected={activeView === "review"}
-            aria-controls="inspector-review-panel"
-            tabIndex={activeView === "review" ? 0 : -1}
-            onKeyDown={handleTabKeyDown}
-            onClick={() => setActiveView("review")}
-          >
-            <Sparkles
-              size={13}
-              className={
-                designMateStatus === "reviewing" ? "animate-pulse text-accent" : ""
-              }
-            />
-            Review
-            {designMateReview && (
-              <span
-                className={`rounded-full px-5 py-1 text-[9.5px] tabular-nums ${
-                  activeView === "review"
-                    ? "bg-accent-soft text-accent-deep"
-                    : "bg-card text-ink-dim"
-                }`}
-                aria-label={`${reviewFindingCount} ${
-                  reviewFindingCount === 1 ? "finding" : "findings"
-                }`}
-              >
-                {reviewFindingCount}
-              </span>
-            )}
           </button>
         </div>
       </header>
@@ -2966,26 +2860,6 @@ export function Inspector() {
         }`}
       >
         <LayersSection />
-      </div>
-      <div
-        id="inspector-review-panel"
-        role="tabpanel"
-        aria-labelledby="inspector-review-tab"
-        className={`inspector-card min-h-0 flex-1 flex-col gap-10 overflow-y-auto p-10 ${
-          activeView === "review" ? "flex" : "hidden"
-        }`}
-      >
-        <DesignMateErrorBoundary>
-          <Suspense
-            fallback={
-              <section className={SECTION} aria-busy="true">
-                <h2 className={SECTION_H2}>Preparing Design Mate…</h2>
-              </section>
-            }
-          >
-            <DesignMateSection />
-          </Suspense>
-        </DesignMateErrorBoundary>
       </div>
     </aside>
   );
