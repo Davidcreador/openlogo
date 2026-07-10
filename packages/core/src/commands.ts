@@ -1314,7 +1314,16 @@ export function applyCommand(
 
       return {
         document: { ...document, nodes, artboards },
-        inverse: { type: "group-nodes", containerId, group, index: fromIndex },
+        // `group-nodes` intentionally rejects empty groups, but deleting an
+        // empty group via ungroup must still be undoable. Restore that one node
+        // directly; non-empty groups continue to pull their children back in.
+        inverse:
+          group.children.length === 0
+            ? {
+                type: "restore-nodes",
+                entries: [{ node: group, containerId, index: fromIndex }],
+              }
+            : { type: "group-nodes", containerId, group, index: fromIndex },
       };
     }
 

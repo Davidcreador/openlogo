@@ -93,6 +93,30 @@ describe("group-nodes / ungroup-nodes", () => {
     );
   });
 
+  it("restores an empty nested group after undoing ungroup", () => {
+    const document = createInitialDocument();
+    const artboard = getActiveArtboard(document);
+    const empty = createGroup([]);
+    const parent = createGroup([...artboard.nodeIds, empty.id]);
+    document.nodes = {
+      ...document.nodes,
+      [empty.id]: empty,
+      [parent.id]: parent,
+    };
+    document.artboards[0] = { ...artboard, nodeIds: [parent.id] };
+
+    const command = { type: "ungroup-nodes", groupId: empty.id } as const;
+    const { document: flat, inverse } = applyCommand(document, command);
+    expect(flat.nodes[empty.id]).toBeUndefined();
+    expect((flat.nodes[parent.id] as GroupNode).children).toEqual(
+      artboard.nodeIds,
+    );
+
+    const { document: restored } = applyCommand(flat, inverse);
+    expect(restored).toEqual(document);
+    expect(applyCommand(restored, command).document).toEqual(flat);
+  });
+
   it("supports nesting a group inside a group", () => {
     const { grouped, group } = docWithGroup();
     const artboard = getActiveArtboard(grouped);
