@@ -296,6 +296,64 @@ type ReviewContext = {
   nodes: LogoNode[];
 };
 
+function normalizeBriefText(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/**
+ * Deterministic brief checks stay deliberately factual. Semantic judgments
+ * about attributes, competitors, or motifs belong to a model-backed provider,
+ * but a visible wordmark can be checked safely against an explicit brand name.
+ */
+function reviewBriefAlignment(
+  document: LogoDocument,
+  contexts: readonly ReviewContext[],
+  scope: ReviewScope,
+): ReviewFinding[] {
+  const brandName = document.designBrief?.brandName;
+  if (!brandName || scope === "selection") {
+    return [];
+  }
+
+  const textNodes = contexts
+    .flatMap((context) => context.nodes)
+    .filter((node) => node.type === "text");
+  if (
+    textNodes.length === 0 ||
+    textNodes.some((node) =>
+      normalizeBriefText(node.content).includes(normalizeBriefText(brandName)),
+    )
+  ) {
+    return [];
+  }
+
+  const artboardId =
+    scope === "active-artboard" ? contexts[0]?.artboard.id : undefined;
+  const action =
+    "Update the visible wordmark or confirm that this scope is intentionally symbol-only.";
+  return [
+    {
+      id: findingId(
+        "concept.brand-name-mismatch",
+        ...(artboardId ? [artboardId] : []),
+      ),
+      severity: "info",
+      category: "concept",
+      kind: "objective",
+      title: "Wordmark does not match the brand brief",
+      detail: `"${brandName}" does not appear in the visible wordmark text for this scope.`,
+      action,
+      nodeIds: textNodes.map((node) => node.id),
+      ...(artboardId ? { artboardId } : {}),
+      evidence: [
+        { label: "Brief brand name", value: brandName },
+        { label: "Visible text objects", value: textNodes.length },
+      ],
+      suggestedActions: [{ id: "align-wordmark-with-brief", label: action }],
+    },
+  ];
+}
+
 function contextForArtboard(
   document: LogoDocument,
   artboard: Artboard,
@@ -418,6 +476,9 @@ export function analyzeLogoDocument(
       ...reviewContrast(context.artboard, context.nodes),
     );
   }
+  findings.push(
+    ...reviewBriefAlignment(document, review.contexts, review.scope),
+  );
 
   // Variant coverage describes the whole file, never a selected subset.
   if (review.scope !== "selection") {
@@ -446,8 +507,12 @@ export function analyzeLogoDocument(
         ? "I reviewed every artboard like a production-minded design mate."
         : "I reviewed the active artboard like a production-minded design mate.";
 
+  const summary = findings.length === 0 ? cleanSummary : findingsSummary;
+  const brandName = document.designBrief?.brandName;
   return {
-    summary: findings.length === 0 ? cleanSummary : findingsSummary,
+    summary: brandName
+      ? `For ${brandName}, ${summary.charAt(0).toLowerCase()}${summary.slice(1)}`
+      : summary,
     findings,
   };
 }

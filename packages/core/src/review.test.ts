@@ -185,4 +185,38 @@ describe("analyzeLogoDocument", () => {
       ),
     ).toBe(true);
   });
+
+  it("uses an explicit brand brief for factual wordmark alignment", () => {
+    const document = createInitialDocument();
+    document.designBrief = {
+      brandName: "Northstar",
+      attributes: ["precise", "dependable"],
+    };
+
+    const mismatched = analyzeLogoDocument(document);
+    expect(mismatched.summary).toContain("For Northstar");
+    expect(
+      mismatched.findings.find(
+        (finding) =>
+          finding.id ===
+          `concept.brand-name-mismatch:${document.activeArtboardId}`,
+      ),
+    ).toMatchObject({
+      category: "concept",
+      kind: "objective",
+    });
+
+    const text = Object.values(document.nodes).find(
+      (node) => node.type === "text",
+    );
+    expect(text).toBeDefined();
+    if (text?.type === "text") {
+      text.content = "Northstar";
+    }
+    expect(
+      analyzeLogoDocument(document).findings.some((finding) =>
+        finding.id.startsWith("concept.brand-name-mismatch"),
+      ),
+    ).toBe(false);
+  });
 });

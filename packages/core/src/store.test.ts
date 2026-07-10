@@ -176,6 +176,16 @@ describe("DocumentStore", () => {
       type: "set-active-artboard",
       artboardId: "missing-artboard",
     });
+    store.apply({
+      type: "set-active-artboard",
+      artboardId: store.document.activeArtboardId,
+    });
+    store.apply({ type: "rename-document", name: store.document.name });
+    store.apply({
+      type: "update-palette",
+      paletteId: store.document.palettes[0]!.id,
+      colors: [...store.document.palettes[0]!.colors],
+    });
     expect(store.committedRevision).toBe(0);
 
     const error = vi.spyOn(console, "error").mockImplementation(() => {});

@@ -22,6 +22,8 @@ import {
   heuristicDesignMateProvider,
   makeDesignMateProviderError,
 } from "./provider";
+import { structuredCloneAndDeepFreeze } from "./snapshot";
+import { snapshotValidDesignReview } from "./validation";
 
 export type PrepareDesignMateReviewOptions = BuildDocumentIdentityOptions & {
   readonly scope?: ReviewScope;
@@ -52,9 +54,10 @@ export function prepareDesignMateReviewRequest(
   const context = buildDesignContext(document, normalizedSelection, {
     scope: requestedScope,
   });
+  const documentSnapshot = structuredCloneAndDeepFreeze(document);
 
   return {
-    document,
+    document: documentSnapshot,
     selection: normalizedSelection,
     scope: context.scope,
     identity: buildDocumentIdentity(document, options),
@@ -148,22 +151,39 @@ export async function* orchestrateDesignMateReview(
     };
   }
 
-  yield { type: "summary", summary: outcome.review.summary };
+  const review = snapshotValidDesignReview(outcome.review);
+  if (!review) {
+    const error = makeDesignMateProviderError(
+      provider.id,
+      "The Design Mate provider returned an invalid review.",
+      { code: "invalid-review" },
+    );
+    yield { type: "failed", error };
+    return {
+      status: "failed",
+      scope: request.scope,
+      context: request.context,
+      identity: request.identity,
+      error,
+    };
+  }
+
+  yield { type: "summary", summary: review.summary };
   for (
     let index = 0;
-    index < outcome.review.findings.length;
+    index < review.findings.length;
     index += 1
   ) {
     yield {
       type: "finding",
       index,
-      total: outcome.review.findings.length,
-      finding: outcome.review.findings[index]!,
+      total: review.findings.length,
+      finding: review.findings[index]!,
     };
   }
   yield {
     type: "completed",
-    findingCount: outcome.review.findings.length,
+    findingCount: review.findings.length,
   };
 
   return {
@@ -171,7 +191,7 @@ export async function* orchestrateDesignMateReview(
     scope: request.scope,
     context: request.context,
     identity: request.identity,
-    review: outcome.review,
+    review,
   };
 }
 

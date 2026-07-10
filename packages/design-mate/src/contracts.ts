@@ -76,28 +76,61 @@ export type DesignContextPathDetails = {
   readonly subpathCount: number;
 };
 
-export type DesignContextSelectedNode = {
+export type DesignContextSelectedNodeArtboard = {
+  /** Reference ids are preserved verbatim and are never text-truncated. */
   readonly id: string;
   readonly name: string;
   readonly nameTruncated: boolean;
-  readonly type: NodeType;
+  readonly purpose: LogoVariant;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly background: string;
+};
+
+export type DesignContextSelectedNodeBase = {
+  readonly id: string;
+  readonly name: string;
+  readonly nameTruncated: boolean;
+  /** Geometry bounds in coordinates local to the owning artboard. */
   readonly bounds: DesignContextBounds | null;
-  readonly rotation: number;
+  /** Geometry bounds translated onto the shared multi-artboard canvas. */
+  readonly worldBounds: DesignContextBounds | null;
+  /** Null only for an inconsistent, unreachable document node. */
+  readonly artboard: DesignContextSelectedNodeArtboard | null;
   readonly opacity: number;
   readonly visible: boolean;
   readonly locked: boolean;
-  readonly fill: DesignContextPaint;
-  readonly stroke?: {
-    readonly width: number;
-    readonly align: "center" | "inside" | "outside";
-    readonly paint: DesignContextPaint;
-  };
-  readonly text?: DesignContextTextDetails;
-  readonly path?: DesignContextPathDetails;
-  readonly cornerRadius?: number;
-  readonly childCount?: number;
-  readonly clippingMaskId?: string;
 };
+
+export type DesignContextSelectedLeafNode =
+  DesignContextSelectedNodeBase & {
+    readonly type: Exclude<NodeType, "group">;
+    readonly rotation: number;
+    readonly fill: DesignContextPaint;
+    readonly stroke?: {
+      readonly width: number;
+      readonly align: "center" | "inside" | "outside";
+      readonly paint: DesignContextPaint;
+    };
+    readonly text?: DesignContextTextDetails;
+    readonly path?: DesignContextPathDetails;
+    readonly cornerRadius?: number;
+  };
+
+export type DesignContextSelectedGroupNode =
+  DesignContextSelectedNodeBase & {
+    readonly type: "group";
+    /** Group rotation and paint fields are unused placeholders in LogoDocument. */
+    readonly rotation: null;
+    readonly childCount: number;
+    readonly clippingMaskId?: string;
+  };
+
+export type DesignContextSelectedNode =
+  | DesignContextSelectedLeafNode
+  | DesignContextSelectedGroupNode;
 
 export type DesignContextFontFamily = {
   readonly family: string;
@@ -180,9 +213,11 @@ export type BuildDesignContextOptions = {
 };
 
 /**
- * Fully prepared request passed to a provider. Providers that leave the
- * process should serialize `identity`, `context`, `selection`, and `scope`
- * rather than forwarding the raw document.
+ * Fully prepared request passed to a provider. `document` keeps the existing
+ * LogoDocument API for local heuristics, but at runtime it is a detached,
+ * deeply frozen structured-clone snapshot — never the editor's live committed
+ * object. Providers that leave the process should serialize `identity`,
+ * `context`, `selection`, and `scope` rather than forwarding that snapshot.
  */
 export type DesignMateReviewRequest = {
   readonly document: LogoDocument;

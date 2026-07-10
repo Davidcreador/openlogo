@@ -1610,6 +1610,7 @@ export function applyCommand(
 
     case "set-active-artboard": {
       if (
+        document.activeArtboardId === command.artboardId ||
         !document.artboards.some(
           (artboard) => artboard.id === command.artboardId,
         )
@@ -1652,6 +1653,9 @@ export function applyCommand(
     }
 
     case "rename-document": {
+      if (document.name === command.name) {
+        return { document, inverse: command };
+      }
       return {
         document: { ...document, name: command.name },
         inverse: { type: "rename-document", name: document.name },
@@ -1662,6 +1666,12 @@ export function applyCommand(
       const previous = document.palettes.find(
         (item) => item.id === command.paletteId,
       );
+      if (
+        previous === undefined ||
+        stringArraysEqual(previous.colors, command.colors)
+      ) {
+        return { document, inverse: command };
+      }
       return {
         document: {
           ...document,

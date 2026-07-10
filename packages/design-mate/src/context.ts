@@ -6,6 +6,7 @@ import {
   visualBounds,
 } from "@openlogo/core";
 import type {
+  Artboard,
   DesignBrief,
   LogoDocument,
   LogoNode,
@@ -18,6 +19,7 @@ import type {
   DesignContext,
   DesignContextPaint,
   DesignContextSelectedNode,
+  DesignContextSelectedNodeArtboard,
   DesignContextTypeStyle,
   DesignMateSelection,
 } from "./contracts";
@@ -25,7 +27,8 @@ import type {
 /**
  * Hard output limits for DesignContext. Counts always describe the complete
  * committed document; arrays and user-authored text are projected within
- * these limits and paired with explicit truncation flags.
+ * these limits and paired with explicit truncation flags. Reference ids are
+ * always preserved verbatim.
  */
 export const DESIGN_CONTEXT_LIMITS = {
   variants: 12,
@@ -248,15 +251,96 @@ function summarizeTypography(nodes: readonly LogoNode[]): TypographyProjection {
   };
 }
 
+function mapNodeArtboards(document: LogoDocument): Map<string, Artboard> {
+  const owners = new Map<string, Artboard>();
+
+  const visit = (nodeId: string, artboard: Artboard): void => {
+    if (owners.has(nodeId)) {
+      return;
+    }
+    const node = document.nodes[nodeId];
+    if (!node) {
+      return;
+    }
+    owners.set(nodeId, artboard);
+    if (node.type === "group") {
+      node.children.forEach((childId) => visit(childId, artboard));
+    }
+  };
+
+  for (const artboard of document.artboards) {
+    artboard.nodeIds.forEach((nodeId) => visit(nodeId, artboard));
+  }
+  return owners;
+}
+
+function summarizeSelectedNodeArtboard(
+  artboard: Artboard,
+): DesignContextSelectedNodeArtboard {
+  const name = truncateText(artboard.name, DESIGN_CONTEXT_LIMITS.nameLength);
+  return {
+    id: artboard.id,
+    name: name.value,
+    nameTruncated: name.truncated,
+    purpose: artboard.purpose,
+    x: artboard.x,
+    y: artboard.y,
+    width: artboard.width,
+    height: artboard.height,
+    background: artboard.background,
+  };
+}
+
 function summarizeSelectedNode(
   document: LogoDocument,
   node: LogoNode,
+  owningArtboard: Artboard | undefined,
 ): {
   readonly value: DesignContextSelectedNode;
   readonly textTruncated: boolean;
 } {
   const name = truncateText(node.name, DESIGN_CONTEXT_LIMITS.nameLength);
   const bounds = visualBounds(document, node.id);
+  const artboard = owningArtboard
+    ? summarizeSelectedNodeArtboard(owningArtboard)
+    : null;
+  const worldBounds =
+    bounds && owningArtboard
+      ? {
+          x: bounds.x + owningArtboard.x,
+          y: bounds.y + owningArtboard.y,
+          width: bounds.width,
+          height: bounds.height,
+        }
+      : null;
+  const common = {
+    id: node.id,
+    name: name.value,
+    nameTruncated: name.truncated,
+    bounds: bounds ? { ...bounds } : null,
+    worldBounds,
+    artboard,
+    opacity: node.opacity,
+    visible: node.visible,
+    locked: node.locked,
+  };
+  const commonTextTruncated = name.truncated || artboard?.nameTruncated === true;
+
+  if (node.type === "group") {
+    return {
+      value: {
+        ...common,
+        type: node.type,
+        rotation: null,
+        childCount: node.children.length,
+        ...(node.clippingMaskId
+          ? { clippingMaskId: node.clippingMaskId }
+          : {}),
+      },
+      textTruncated: commonTextTruncated,
+    };
+  }
+
   const stroke = node.stroke
     ? {
         width: node.stroke.width,
@@ -266,6 +350,13 @@ function summarizeSelectedNode(
         ),
       }
     : undefined;
+  const visual = {
+    ...common,
+    type: node.type,
+    rotation: node.rotation,
+    fill: summarizePaint(node.fill),
+    ...(stroke ? { stroke } : {}),
+  };
 
   if (node.type === "text") {
     const content = truncateText(
@@ -278,17 +369,7 @@ function summarizeSelectedNode(
     );
     return {
       value: {
-        id: node.id,
-        name: name.value,
-        nameTruncated: name.truncated,
-        type: node.type,
-        bounds: bounds ? { ...bounds } : null,
-        rotation: node.rotation,
-        opacity: node.opacity,
-        visible: node.visible,
-        locked: node.locked,
-        fill: summarizePaint(node.fill),
-        ...(stroke ? { stroke } : {}),
+        ...visual,
         text: {
           content: content.value,
           contentTruncated: content.truncated,
@@ -303,56 +384,30 @@ function summarizeSelectedNode(
         },
       },
       textTruncated:
-        name.truncated || content.truncated || fontFamily.truncated,
+        commonTextTruncated || content.truncated || fontFamily.truncated,
     };
   }
-
-  const common = {
-    id: node.id,
-    name: name.value,
-    nameTruncated: name.truncated,
-    type: node.type,
-    bounds: bounds ? { ...bounds } : null,
-    rotation: node.rotation,
-    opacity: node.opacity,
-    visible: node.visible,
-    locked: node.locked,
-    fill: summarizePaint(node.fill),
-    ...(stroke ? { stroke } : {}),
-  };
 
   if (node.type === "path") {
     return {
       value: {
-        ...common,
+        ...visual,
         path: {
           fillRule: node.fillRule,
           hasEditableGeometry: node.geometry !== undefined,
           subpathCount: node.geometry?.subpaths.length ?? 0,
         },
       },
-      textTruncated: name.truncated,
+      textTruncated: commonTextTruncated,
     };
   }
   if (node.type === "rectangle") {
     return {
-      value: { ...common, cornerRadius: node.cornerRadius },
-      textTruncated: name.truncated,
+      value: { ...visual, cornerRadius: node.cornerRadius },
+      textTruncated: commonTextTruncated,
     };
   }
-  if (node.type === "group") {
-    return {
-      value: {
-        ...common,
-        childCount: node.children.length,
-        ...(node.clippingMaskId
-          ? { clippingMaskId: node.clippingMaskId }
-          : {}),
-      },
-      textTruncated: name.truncated,
-    };
-  }
-  return { value: common, textTruncated: name.truncated };
+  return { value: visual, textTruncated: commonTextTruncated };
 }
 
 function uniqueExistingSelectionIds(
@@ -393,12 +448,17 @@ export function buildDesignContext(
     selection.selectedNodeIds,
   );
   const validSelectionSet = new Set(validSelectionIds);
+  const nodeArtboards = mapNodeArtboards(document);
+  const selectedLeafIds = collectLeafNodeIds(
+    document,
+    validSelectionIds,
+  ).filter((nodeId) => nodeArtboards.has(nodeId));
   const requestedScope = resolveDesignMateScope(selection, options.scope);
   // Keep the context/provider contract aligned with core review semantics:
   // an explicitly requested selection review cannot stay selection-scoped
-  // when every selected id is stale or missing.
+  // when selected units are stale, unreachable, or resolve to no leaf nodes.
   const scope =
-    requestedScope === "selection" && validSelectionIds.length === 0
+    requestedScope === "selection" && selectedLeafIds.length === 0
       ? "active-artboard"
       : requestedScope;
 
@@ -455,7 +515,11 @@ export function buildDesignContext(
   const selectedNodes = validSelectionIds
     .slice(0, DESIGN_CONTEXT_LIMITS.selectedNodes)
     .map((id) => {
-      const summary = summarizeSelectedNode(document, document.nodes[id]!);
+      const summary = summarizeSelectedNode(
+        document,
+        document.nodes[id]!,
+        nodeArtboards.get(id),
+      );
       selectedNodeTextTruncated ||= summary.textTruncated;
       return summary.value;
     });
@@ -466,7 +530,7 @@ export function buildDesignContext(
   const leafNodeCount = allNodes.length - groupNodeCount;
   const scopeLeafNodeCount =
     scope === "selection"
-      ? collectLeafNodeIds(document, validSelectionIds).length
+      ? selectedLeafIds.length
       : scope === "active-artboard"
         ? activeNodes.length
         : document.artboards.reduce(
