@@ -984,8 +984,11 @@ function TypeCraftControls({
         {featureToggle("Discretionary", ["dlig"], false)}
         {featureToggle("Small caps", ["smcp"], false)}
       </div>
-      <div className="flex items-center justify-between gap-6 text-[11px] text-ink-dim">
-        <span data-testid="kerned-pairs">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-6 gap-y-4 text-[11px] text-ink-dim">
+        <span
+          className="min-w-0 flex-1 leading-[1.35]"
+          data-testid="kerned-pairs"
+        >
           {kernCount > 0
             ? `${kernCount} kerned pair${kernCount === 1 ? "" : "s"}`
             : "Kern: caret in text edit, ⌥← / ⌥→"}
