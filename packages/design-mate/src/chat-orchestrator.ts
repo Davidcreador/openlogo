@@ -274,6 +274,7 @@ export async function* orchestrateDesignMateChat(
         {
           generation: request.identity.generation,
           revision: request.identity.revision,
+          geometrySelection: request.selection,
         },
       );
       if (preparation.ok) {

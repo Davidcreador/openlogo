@@ -1,6 +1,7 @@
 import type {
   DesignMateAction,
   DesignMateMutationToolMetadata,
+  DesignMateRisk,
 } from "./contracts";
 
 /**
@@ -88,3 +89,19 @@ export const DESIGN_MATE_MUTATION_TOOLS = Object.freeze({
 
 /** Alias named for consumers that present metadata alongside action schemas. */
 export const DESIGN_MATE_ACTION_METADATA = DESIGN_MATE_MUTATION_TOOLS;
+
+const RISK_PRIORITY: Readonly<Record<DesignMateRisk, number>> = {
+  low: 0,
+  medium: 1,
+  high: 2,
+};
+
+/** Highest registry-owned risk for a validated action list. */
+export function designMateRiskForActions(
+  actions: readonly DesignMateAction[],
+): DesignMateRisk {
+  return actions.reduce<DesignMateRisk>((highest, action) => {
+    const risk = DESIGN_MATE_MUTATION_TOOLS[action.type].risk;
+    return RISK_PRIORITY[risk] > RISK_PRIORITY[highest] ? risk : highest;
+  }, "low");
+}

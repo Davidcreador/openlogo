@@ -110,7 +110,6 @@ function proposalArguments(): Record<string, unknown> {
   return {
     label: "Create an icon variant",
     rationale: "A square variant improves small-size usage.",
-    risk: "low",
     sourceFindingIds: null,
     actions: [
       {
@@ -335,6 +334,54 @@ describe("OpenAI Responses model transport", () => {
     );
     await expect(collectChunks(candidate)).resolves.toEqual([
       expect.objectContaining({ type: "proposal-candidate" }),
+    ]);
+  });
+
+  it("keeps useful text when runtime validation rejects tool arguments", async () => {
+    const argumentsJson = JSON.stringify({
+      ...proposalArguments(),
+      actions: [],
+    });
+    const payload = [
+      frame("response.output_text.delta", {
+        delta: "Keep the optical spacing subtle.",
+      }),
+      frame("response.output_item.added", {
+        output_index: 0,
+        item: {
+          id: "function-call-rejected",
+          type: "function_call",
+          name: DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
+          arguments: "",
+        },
+      }),
+      frame("response.function_call_arguments.done", {
+        item_id: "function-call-rejected",
+        output_index: 0,
+        arguments: argumentsJson,
+      }),
+      frame("response.output_item.done", {
+        output_index: 0,
+        item: {
+          id: "function-call-rejected",
+          type: "function_call",
+          name: DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
+          arguments: argumentsJson,
+        },
+      }),
+      frame("response.completed", {
+        response: { status: "completed" },
+      }),
+    ].join("");
+    const candidate = transport(
+      vi.fn(async () => sseResponse(payload)) as unknown as typeof fetch,
+    );
+
+    await expect(collectChunks(candidate)).resolves.toEqual([
+      {
+        type: "text-delta",
+        delta: "Keep the optical spacing subtle.",
+      },
     ]);
   });
 

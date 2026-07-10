@@ -2,7 +2,10 @@ import {
   DESIGN_MATE_CHAT_LIMITS,
   type DesignMateProposal,
 } from "./contracts";
-import { DESIGN_MATE_MUTATION_TOOLS } from "./actions";
+import {
+  DESIGN_MATE_MUTATION_TOOLS,
+  designMateRiskForActions,
+} from "./actions";
 import {
   DESIGN_MATE_PROPOSAL_LIMITS,
   snapshotValidDesignMateProposal,
@@ -59,16 +62,18 @@ function utf8ByteLength(value: string): number {
 
 const referenceId = {
   type: "string",
-  minLength: 1,
-  maxLength: DESIGN_MATE_PROPOSAL_LIMITS.referenceIdLength,
+  description: `A non-empty context reference id, limited to ${DESIGN_MATE_PROPOSAL_LIMITS.referenceIdLength} characters by runtime validation.`,
 } as const;
 
 const nodeIds = {
   type: "array",
-  minItems: 1,
-  maxItems: DESIGN_MATE_PROPOSAL_LIMITS.nodeIdsPerAction,
-  uniqueItems: true,
   items: referenceId,
+  description: `One to ${DESIGN_MATE_PROPOSAL_LIMITS.nodeIdsPerAction} unique selected node ids. Runtime validation enforces the bounds.`,
+} as const;
+
+const alignEdge = {
+  type: "string",
+  enum: ["left", "centerX", "right", "top", "centerY", "bottom"],
 } as const;
 
 const actionSchemas = [
@@ -80,8 +85,7 @@ const actionSchemas = [
       nodeId: referenceId,
       content: {
         type: "string",
-        minLength: 1,
-        maxLength: DESIGN_MATE_PROPOSAL_LIMITS.textContentLength,
+        description: `Non-empty replacement text, limited to ${DESIGN_MATE_PROPOSAL_LIMITS.textContentLength} characters by runtime validation.`,
       },
     },
     required: ["type", "nodeId", "content"],
@@ -94,9 +98,8 @@ const actionSchemas = [
       nodeId: referenceId,
       color: {
         type: "string",
-        minLength: 4,
-        maxLength: DESIGN_MATE_PROPOSAL_LIMITS.colorLength,
-        pattern: "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$",
+        description:
+          "An opaque CSS hex color in #RGB or #RRGGBB form. Runtime validation rejects other values.",
       },
     },
     required: ["type", "nodeId", "color"],
@@ -109,8 +112,7 @@ const actionSchemas = [
       nodeId: referenceId,
       letterSpacing: {
         type: "number",
-        minimum: DESIGN_MATE_PROPOSAL_LIMITS.minimumLetterSpacing,
-        maximum: DESIGN_MATE_PROPOSAL_LIMITS.maximumLetterSpacing,
+        description: `Letter spacing from ${DESIGN_MATE_PROPOSAL_LIMITS.minimumLetterSpacing} to ${DESIGN_MATE_PROPOSAL_LIMITS.maximumLetterSpacing}.`,
       },
     },
     required: ["type", "nodeId", "letterSpacing"],
@@ -123,13 +125,11 @@ const actionSchemas = [
       nodeIds,
       dx: {
         type: "number",
-        minimum: DESIGN_MATE_PROPOSAL_LIMITS.minimumTranslation,
-        maximum: DESIGN_MATE_PROPOSAL_LIMITS.maximumTranslation,
+        description: `Horizontal pixel delta from ${DESIGN_MATE_PROPOSAL_LIMITS.minimumTranslation} to ${DESIGN_MATE_PROPOSAL_LIMITS.maximumTranslation}.`,
       },
       dy: {
         type: "number",
-        minimum: DESIGN_MATE_PROPOSAL_LIMITS.minimumTranslation,
-        maximum: DESIGN_MATE_PROPOSAL_LIMITS.maximumTranslation,
+        description: `Vertical pixel delta from ${DESIGN_MATE_PROPOSAL_LIMITS.minimumTranslation} to ${DESIGN_MATE_PROPOSAL_LIMITS.maximumTranslation}.`,
       },
     },
     required: ["type", "nodeIds", "dx", "dy"],
@@ -142,13 +142,11 @@ const actionSchemas = [
       nodeIds,
       scaleX: {
         type: "number",
-        minimum: DESIGN_MATE_PROPOSAL_LIMITS.minimumScale,
-        maximum: DESIGN_MATE_PROPOSAL_LIMITS.maximumScale,
+        description: `Positive horizontal factor from ${DESIGN_MATE_PROPOSAL_LIMITS.minimumScale} to ${DESIGN_MATE_PROPOSAL_LIMITS.maximumScale}.`,
       },
       scaleY: {
         type: "number",
-        minimum: DESIGN_MATE_PROPOSAL_LIMITS.minimumScale,
-        maximum: DESIGN_MATE_PROPOSAL_LIMITS.maximumScale,
+        description: `Positive vertical factor from ${DESIGN_MATE_PROPOSAL_LIMITS.minimumScale} to ${DESIGN_MATE_PROPOSAL_LIMITS.maximumScale}.`,
       },
     },
     required: ["type", "nodeIds", "scaleX", "scaleY"],
@@ -161,8 +159,7 @@ const actionSchemas = [
       nodeIds,
       degrees: {
         type: "number",
-        minimum: DESIGN_MATE_PROPOSAL_LIMITS.minimumRotation,
-        maximum: DESIGN_MATE_PROPOSAL_LIMITS.maximumRotation,
+        description: `Relative degrees from ${DESIGN_MATE_PROPOSAL_LIMITS.minimumRotation} to ${DESIGN_MATE_PROPOSAL_LIMITS.maximumRotation}.`,
       },
     },
     required: ["type", "nodeIds", "degrees"],
@@ -173,18 +170,49 @@ const actionSchemas = [
     properties: {
       type: { type: "string", enum: ["align-nodes"] },
       nodeIds,
-      edge: {
-        type: "string",
-        enum: ["left", "centerX", "right", "top", "centerY", "bottom"],
-      },
+      edge: alignEdge,
       reference: {
         type: "string",
-        enum: ["selection", "artboard", "key-object"],
+        enum: ["selection"],
       },
       keyObjectId: {
-        type: ["string", "null"],
-        minLength: 1,
-        maxLength: DESIGN_MATE_PROPOSAL_LIMITS.referenceIdLength,
+        type: "null",
+      },
+    },
+    required: ["type", "nodeIds", "edge", "reference", "keyObjectId"],
+  },
+  {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      type: { type: "string", enum: ["align-nodes"] },
+      nodeIds,
+      edge: alignEdge,
+      reference: {
+        type: "string",
+        enum: ["artboard"],
+      },
+      keyObjectId: {
+        type: "null",
+      },
+    },
+    required: ["type", "nodeIds", "edge", "reference", "keyObjectId"],
+  },
+  {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      type: { type: "string", enum: ["align-nodes"] },
+      nodeIds,
+      edge: alignEdge,
+      reference: {
+        type: "string",
+        enum: ["key-object"],
+      },
+      keyObjectId: {
+        ...referenceId,
+        description:
+          "The captured key-object id, which must also appear in nodeIds.",
       },
     },
     required: ["type", "nodeIds", "edge", "reference", "keyObjectId"],
@@ -196,7 +224,7 @@ const actionSchemas = [
       type: { type: "string", enum: ["distribute-nodes"] },
       nodeIds: {
         ...nodeIds,
-        minItems: 3,
+        description: `At least three unique selected node ids, capped at ${DESIGN_MATE_PROPOSAL_LIMITS.nodeIdsPerAction} by runtime validation.`,
       },
       axis: {
         type: "string",
@@ -213,8 +241,7 @@ const actionSchemas = [
       nodeId: referenceId,
       fontFamily: {
         type: "string",
-        minLength: 1,
-        maxLength: DESIGN_MATE_PROPOSAL_LIMITS.fontFamilyLength,
+        description: `A user- or context-supplied family name, limited to ${DESIGN_MATE_PROPOSAL_LIMITS.fontFamilyLength} characters by runtime validation.`,
       },
     },
     required: ["type", "nodeId", "fontFamily"],
@@ -227,8 +254,7 @@ const actionSchemas = [
       nodeId: referenceId,
       fontSize: {
         type: "number",
-        minimum: DESIGN_MATE_PROPOSAL_LIMITS.minimumFontSize,
-        maximum: DESIGN_MATE_PROPOSAL_LIMITS.maximumFontSize,
+        description: `Font size from ${DESIGN_MATE_PROPOSAL_LIMITS.minimumFontSize}px to ${DESIGN_MATE_PROPOSAL_LIMITS.maximumFontSize}px.`,
       },
     },
     required: ["type", "nodeId", "fontSize"],
@@ -241,8 +267,7 @@ const actionSchemas = [
       nodeId: referenceId,
       fontWeight: {
         type: "integer",
-        minimum: DESIGN_MATE_PROPOSAL_LIMITS.minimumFontWeight,
-        maximum: DESIGN_MATE_PROPOSAL_LIMITS.maximumFontWeight,
+        description: `Integer weight from ${DESIGN_MATE_PROPOSAL_LIMITS.minimumFontWeight} to ${DESIGN_MATE_PROPOSAL_LIMITS.maximumFontWeight}.`,
       },
     },
     required: ["type", "nodeId", "fontWeight"],
@@ -255,8 +280,7 @@ const actionSchemas = [
       nodeId: referenceId,
       opacity: {
         type: "number",
-        minimum: DESIGN_MATE_PROPOSAL_LIMITS.minimumOpacity,
-        maximum: DESIGN_MATE_PROPOSAL_LIMITS.maximumOpacity,
+        description: `Opacity from ${DESIGN_MATE_PROPOSAL_LIMITS.minimumOpacity} to ${DESIGN_MATE_PROPOSAL_LIMITS.maximumOpacity}.`,
       },
     },
     required: ["type", "nodeId", "opacity"],
@@ -269,9 +293,8 @@ const actionSchemas = [
       nodeId: referenceId,
       color: {
         type: "string",
-        minLength: 4,
-        maxLength: DESIGN_MATE_PROPOSAL_LIMITS.colorLength,
-        pattern: "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$",
+        description:
+          "An opaque CSS hex color in #RGB or #RRGGBB form. Runtime validation rejects other values.",
       },
     },
     required: ["type", "nodeId", "color"],
@@ -284,8 +307,7 @@ const actionSchemas = [
       nodeId: referenceId,
       width: {
         type: "number",
-        minimum: DESIGN_MATE_PROPOSAL_LIMITS.minimumStrokeWidth,
-        maximum: DESIGN_MATE_PROPOSAL_LIMITS.maximumStrokeWidth,
+        description: `Stroke width from ${DESIGN_MATE_PROPOSAL_LIMITS.minimumStrokeWidth}px to ${DESIGN_MATE_PROPOSAL_LIMITS.maximumStrokeWidth}px.`,
       },
     },
     required: ["type", "nodeId", "width"],
@@ -328,35 +350,26 @@ export const DESIGN_MATE_CHAT_PROPOSAL_TOOL = deepFreeze({
     properties: {
       label: {
         type: "string",
-        minLength: 1,
-        maxLength: DESIGN_MATE_PROPOSAL_LIMITS.labelLength,
+        description: `A concise non-empty label, limited to ${DESIGN_MATE_PROPOSAL_LIMITS.labelLength} characters by runtime validation.`,
       },
       rationale: {
         type: ["string", "null"],
-        minLength: 1,
-        maxLength: DESIGN_MATE_PROPOSAL_LIMITS.rationaleLength,
-      },
-      risk: {
-        type: "string",
-        enum: ["low", "medium", "high"],
+        description: `A concise rationale or null, limited to ${DESIGN_MATE_PROPOSAL_LIMITS.rationaleLength} characters by runtime validation.`,
       },
       sourceFindingIds: {
         type: ["array", "null"],
-        maxItems: DESIGN_MATE_CHAT_PROPOSAL_TOOL_LIMITS.sourceFindingIds,
-        uniqueItems: true,
         items: referenceId,
+        description: `Up to ${DESIGN_MATE_CHAT_PROPOSAL_TOOL_LIMITS.sourceFindingIds} unique finding ids, or null. Runtime validation enforces the limit.`,
       },
       actions: {
         type: "array",
-        minItems: 1,
-        maxItems: DESIGN_MATE_CHAT_PROPOSAL_TOOL_LIMITS.actions,
         items: { anyOf: actionSchemas },
+        description: `One to ${DESIGN_MATE_CHAT_PROPOSAL_TOOL_LIMITS.actions} actions. Runtime validation enforces the limit.`,
       },
     },
     required: [
       "label",
       "rationale",
-      "risk",
       "sourceFindingIds",
       "actions",
     ],
@@ -377,7 +390,6 @@ export function snapshotDesignMateChatProposalToolArguments(
       !hasExactKeys(value, [
         "label",
         "rationale",
-        "risk",
         "sourceFindingIds",
         "actions",
       ])
@@ -390,7 +402,6 @@ export function snapshotDesignMateChatProposalToolArguments(
       !hasExactKeys(snapshot, [
         "label",
         "rationale",
-        "risk",
         "sourceFindingIds",
         "actions",
       ]) ||
@@ -408,10 +419,10 @@ export function snapshotDesignMateChatProposalToolArguments(
       return null;
     }
 
-    const proposal = snapshotValidDesignMateProposal({
+    const validated = snapshotValidDesignMateProposal({
       id: proposalId,
       label: snapshot.label,
-      risk: snapshot.risk,
+      risk: "high",
       actions: snapshot.actions,
       ...(snapshot.rationale === null
         ? {}
@@ -419,6 +430,13 @@ export function snapshotDesignMateChatProposalToolArguments(
       ...(snapshot.sourceFindingIds === null
         ? {}
         : { sourceFindingIds: snapshot.sourceFindingIds }),
+    });
+    if (!validated) {
+      return null;
+    }
+    const proposal = snapshotValidDesignMateProposal({
+      ...validated,
+      risk: designMateRiskForActions(validated.actions),
     });
     if (!proposal) {
       return null;

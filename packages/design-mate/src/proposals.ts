@@ -6,11 +6,10 @@ import {
   distributeEvenGapOffsets,
   findContainerId,
   rotateLeafPatches,
-  scaleLeafPatches,
   selectionFrame,
   selectionFrameCenter,
   translateLeafPatches,
-  unitBounds,
+  visualBounds,
 } from "@openlogo/core";
 import type {
   Command,
@@ -21,6 +20,7 @@ import type {
 import type {
   DesignMateAction,
   DesignMateProposalErrorCode,
+  DesignMateSelection,
   PrepareDesignMateProposalResult,
   PreparedDesignMateProposal,
 } from "./contracts";
@@ -37,7 +37,13 @@ import {
 } from "./proposal-validation";
 import { deepFreeze } from "./snapshot";
 
-export type PrepareDesignMateProposalOptions = BuildDocumentIdentityOptions;
+export type PrepareDesignMateProposalOptions = BuildDocumentIdentityOptions & {
+  /**
+   * Chat turns bind geometry to the user's frozen selection. Deterministic
+   * review proposals may omit this because they currently emit no geometry.
+   */
+  readonly geometrySelection?: DesignMateSelection;
+};
 
 type ReachableNode = {
   readonly node: LogoNode;
@@ -241,6 +247,38 @@ function geometryUpdatesAreSafe(updates: readonly NodeUpdate[]): boolean {
   });
 }
 
+function exactScaleUpdates(
+  document: LogoDocument,
+  leafIds: readonly string[],
+  scaleX: number,
+  scaleY: number,
+  pivot: { readonly x: number; readonly y: number },
+): NodeUpdate[] {
+  if (scaleX === 1 && scaleY === 1) {
+    return [];
+  }
+  return leafIds.flatMap((nodeId) => {
+    const node = document.nodes[nodeId];
+    if (!node || node.type === "group") {
+      return [];
+    }
+    return [
+      {
+        nodeId,
+        patch: {
+          x: pivot.x + (node.x - pivot.x) * scaleX,
+          y: pivot.y + (node.y - pivot.y) * scaleY,
+          width: node.width * scaleX,
+          height: node.height * scaleY,
+          ...(node.type === "text" && scaleY !== 1
+            ? { fontSize: node.fontSize * scaleY }
+            : {}),
+        },
+      },
+    ];
+  });
+}
+
 function failure(
   code: DesignMateProposalErrorCode,
   message: string,
@@ -435,6 +473,29 @@ export function prepareDesignMateProposal(
       }
 
       if (isGeometryAction(action)) {
+        if (options.geometrySelection) {
+          const allowed = new Set(
+            options.geometrySelection.selectedNodeIds,
+          );
+          if (action.nodeIds.some((nodeId) => !allowed.has(nodeId))) {
+            return failure(
+              "precondition-failed",
+              "Geometry actions can target only the captured user selection.",
+              actionIndex,
+            );
+          }
+          if (
+            action.type === "align-nodes" &&
+            action.reference === "key-object" &&
+            action.keyObjectId !== options.geometrySelection.keyObjectId
+          ) {
+            return failure(
+              "precondition-failed",
+              "The alignment key object no longer matches the captured selection.",
+              actionIndex,
+            );
+          }
+        }
         const resolved = resolveGeometryTargets(
           workingDocument,
           action.nodeIds,
@@ -458,11 +519,24 @@ export function prepareDesignMateProposal(
             );
             break;
           case "scale-nodes": {
+            if (
+              action.scaleX !== action.scaleY &&
+              resolved.targets.leafIds.some(
+                (nodeId) =>
+                  workingDocument.nodes[nodeId]?.rotation !== 0,
+              )
+            ) {
+              return failure(
+                "precondition-failed",
+                "Non-uniform scaling is unavailable for rotated artwork.",
+                actionIndex,
+              );
+            }
             const frame = selectionFrame(workingDocument, action.nodeIds);
             if (frame) {
-              updates = scaleLeafPatches(
+              updates = exactScaleUpdates(
                 workingDocument,
-                action.nodeIds,
+                resolved.targets.leafIds,
                 action.scaleX,
                 action.scaleY,
                 selectionFrameCenter(frame),
@@ -484,7 +558,7 @@ export function prepareDesignMateProposal(
           }
           case "align-nodes": {
             const units = action.nodeIds.flatMap((id) => {
-              const bounds = unitBounds(workingDocument, id);
+              const bounds = visualBounds(workingDocument, id);
               return bounds ? [{ id, bounds }] : [];
             });
             if (units.length !== action.nodeIds.length) {
@@ -536,7 +610,7 @@ export function prepareDesignMateProposal(
           }
           case "distribute-nodes": {
             const units = action.nodeIds.flatMap((id) => {
-              const bounds = unitBounds(workingDocument, id);
+              const bounds = visualBounds(workingDocument, id);
               return bounds ? [{ id, bounds }] : [];
             });
             if (units.length !== action.nodeIds.length) {

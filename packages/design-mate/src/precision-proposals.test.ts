@@ -5,6 +5,7 @@ import {
   createGroup,
   createInitialDocument,
   unitBounds,
+  visualBounds,
 } from "@openlogo/core";
 import type {
   LogoDocument,
@@ -269,6 +270,73 @@ describe("precision proposal compilation", () => {
     expect(bounds.x + bounds.width / 2).toBeCloseTo(artboard.width / 2);
   });
 
+  it("aligns rotated leaves by their visual bounds", () => {
+    const document = createInitialDocument();
+    const text = textNode(document);
+    const artboard = document.artboards[0]!;
+    text.rotation = 45;
+    const result = prepared(
+      prepareDesignMateProposal(
+        document,
+        proposal([
+          {
+            type: "align-nodes",
+            nodeIds: [text.id],
+            edge: "right",
+            reference: "artboard",
+            keyObjectId: null,
+          },
+        ]),
+        { generation: 0, revision: 0 },
+      ),
+    );
+    const bounds = visualBounds(result.previewDocument, text.id)!;
+    expect(bounds.x + bounds.width).toBeCloseTo(artboard.width);
+  });
+
+  it("scales text exactly and rejects non-uniform rotated transforms", () => {
+    const document = createInitialDocument();
+    const text = textNode(document);
+    text.fontSize = 10;
+    const result = prepared(
+      prepareDesignMateProposal(
+        document,
+        proposal([
+          {
+            type: "scale-nodes",
+            nodeIds: [text.id],
+            scaleX: 1,
+            scaleY: 0.5,
+          },
+        ]),
+        { generation: 0, revision: 0 },
+      ),
+    );
+    expect(result.previewDocument.nodes[text.id]).toMatchObject({
+      fontSize: 5,
+      height: text.height * 0.5,
+    });
+
+    const rotated = createInitialDocument();
+    const path = pathNode(rotated);
+    path.rotation = 90;
+    expectFailure(
+      prepareDesignMateProposal(
+        rotated,
+        proposal([
+          {
+            type: "scale-nodes",
+            nodeIds: [path.id],
+            scaleX: 2,
+            scaleY: 1,
+          },
+        ]),
+        { generation: 0, revision: 0 },
+      ),
+      "precondition-failed",
+    );
+  });
+
   it("rejects no-op, cross-artboard, overlapping, and text-path geometry", () => {
     const base = createInitialDocument();
     const [accentId, markId] = base.artboards[0]!.nodeIds;
@@ -350,6 +418,56 @@ describe("precision proposal compilation", () => {
           },
         ]),
         { generation: 0, revision: 0 },
+      ),
+      "precondition-failed",
+    );
+  });
+
+  it("binds chat geometry and key-object alignment to the captured selection", () => {
+    const document = createInitialDocument();
+    const [accentId, markId] = document.artboards[0]!.nodeIds;
+    expectFailure(
+      prepareDesignMateProposal(
+        document,
+        proposal([
+          {
+            type: "translate-nodes",
+            nodeIds: [markId!],
+            dx: 5,
+            dy: 0,
+          },
+        ]),
+        {
+          generation: 0,
+          revision: 0,
+          geometrySelection: {
+            selectedNodeIds: [accentId!],
+          },
+        },
+      ),
+      "precondition-failed",
+    );
+
+    expectFailure(
+      prepareDesignMateProposal(
+        document,
+        proposal([
+          {
+            type: "align-nodes",
+            nodeIds: [accentId!, markId!],
+            edge: "left",
+            reference: "key-object",
+            keyObjectId: markId!,
+          },
+        ]),
+        {
+          generation: 0,
+          revision: 0,
+          geometrySelection: {
+            selectedNodeIds: [accentId!, markId!],
+            keyObjectId: accentId!,
+          },
+        },
       ),
       "precondition-failed",
     );

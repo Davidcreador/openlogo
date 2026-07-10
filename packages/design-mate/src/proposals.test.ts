@@ -121,6 +121,17 @@ describe("Design Mate proposal validation", () => {
       },
       {
         ...valid,
+        risk: "low",
+        actions: [
+          {
+            type: "set-fill-color",
+            nodeId: pathNode(document).id,
+            color: "#000000",
+          },
+        ],
+      },
+      {
+        ...valid,
         actions: [
           {
             type: "set-text-content",

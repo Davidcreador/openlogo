@@ -335,6 +335,53 @@ describe("chat providers and orchestration", () => {
     });
   });
 
+  it("rejects geometry outside the chat turn's frozen selection", async () => {
+    const request = makeRequest();
+    const unselectedId = request.document.artboards[0]!.nodeIds[1]!;
+    const proposal: DesignMateProposal = {
+      id: "unselected-geometry",
+      label: "Move another object",
+      risk: "medium",
+      actions: [
+        {
+          type: "translate-nodes",
+          nodeIds: [unselectedId],
+          dx: 4,
+          dy: 0,
+        },
+      ],
+    };
+    const { events, result } = await drain(
+      orchestrateDesignMateChat(
+        request,
+        createFakeDesignMateChatProvider({
+          chunks: [{ type: "proposal-candidate", proposal }],
+        }),
+      ),
+    );
+
+    expect(events.some((event) => event.type === "proposal-prepared")).toBe(
+      false,
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "proposal-rejected",
+        proposalId: proposal.id,
+        error: expect.objectContaining({ code: "precondition-failed" }),
+      }),
+    );
+    expect(result).toMatchObject({
+      status: "completed",
+      preparedProposals: [],
+      rejectedProposals: [
+        {
+          proposalId: proposal.id,
+          error: { code: "precondition-failed" },
+        },
+      ],
+    });
+  });
+
   it("fails closed on duplicate or excessive proposal candidates", async () => {
     const request = makeRequest();
     const duplicate = variantProposal(request);

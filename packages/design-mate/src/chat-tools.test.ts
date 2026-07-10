@@ -11,7 +11,6 @@ function validArguments(): Record<string, unknown> {
   return {
     label: "Tighten the wordmark spacing",
     rationale: "A small spacing adjustment improves compact readability.",
-    risk: "medium",
     sourceFindingIds: null,
     actions: [
       {
@@ -35,7 +34,6 @@ describe("Design Mate chat proposal tool", () => {
         required: [
           "label",
           "rationale",
-          "risk",
           "sourceFindingIds",
           "actions",
         ],
@@ -55,9 +53,17 @@ describe("Design Mate chat proposal tool", () => {
     const actionTypes = schemas.map(
       (schema) => schema.properties.type.enum[0],
     );
-    expect([...actionTypes].sort()).toEqual(
+    expect([...new Set(actionTypes)].sort()).toEqual(
       Object.keys(DESIGN_MATE_MUTATION_TOOLS).sort(),
     );
+    expect(
+      JSON.stringify(DESIGN_MATE_CHAT_PROPOSAL_TOOL),
+    ).not.toMatch(
+      /"(?:minLength|maxLength|pattern|format|minimum|maximum|multipleOf|minItems|maxItems|uniqueItems)"\s*:/,
+    );
+    expect(
+      DESIGN_MATE_CHAT_PROPOSAL_TOOL.parameters.properties,
+    ).not.toHaveProperty("risk");
   });
 
   it("assigns the caller-owned id and removes nullable optional fields", () => {
@@ -164,6 +170,7 @@ describe("Design Mate chat proposal tool", () => {
       "precision-id",
     );
     expect(result?.actions).toEqual(actions);
+    expect(result?.risk).toBe("medium");
 
     expect(
       snapshotDesignMateChatProposalToolArguments(

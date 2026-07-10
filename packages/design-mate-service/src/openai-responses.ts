@@ -781,7 +781,12 @@ export function createOpenAIResponsesTransport(
               `chat-proposal-${randomUUID()}`,
             );
             if (!proposal) {
-              throw new OpenAIStreamProtocolError();
+              // Strict schemas intentionally omit unsupported JSON-Schema
+              // bounds. A structurally valid but semantically rejected tool
+              // call must not discard otherwise useful streamed guidance.
+              state.arguments = doneArguments;
+              state.done = true;
+              continue;
             }
             const chunk = snapshotValidDesignMateChatProviderChunk({
               type: "proposal-candidate",

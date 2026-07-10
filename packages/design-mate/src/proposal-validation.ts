@@ -2,7 +2,9 @@ import type { LogoVariant } from "@openlogo/core";
 import type {
   DesignMateAction,
   DesignMateProposal,
+  DesignMateRisk,
 } from "./contracts";
+import { designMateRiskForActions } from "./actions";
 import { deepFreeze } from "./snapshot";
 
 export const DESIGN_MATE_PROPOSAL_LIMITS = Object.freeze({
@@ -39,6 +41,11 @@ export const DESIGN_MATE_PROPOSAL_LIMITS = Object.freeze({
 } as const);
 
 const RISKS = new Set(["low", "medium", "high"]);
+const RISK_PRIORITY: Readonly<Record<DesignMateRisk, number>> = {
+  low: 0,
+  medium: 1,
+  high: 2,
+};
 const LOGO_VARIANTS = new Set<LogoVariant>([
   "primary",
   "icon",
@@ -423,6 +430,14 @@ function validateDesignMateProposal(
       value.rationale,
       DESIGN_MATE_PROPOSAL_LIMITS.rationaleLength,
     )
+  ) {
+    return false;
+  }
+
+  const declaredRisk = value.risk as DesignMateRisk;
+  if (
+    RISK_PRIORITY[declaredRisk] <
+    RISK_PRIORITY[designMateRiskForActions(value.actions)]
   ) {
     return false;
   }
