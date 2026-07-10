@@ -764,20 +764,13 @@ export class SceneRenderer {
         drawContent();
         canvas.restore();
       };
-      const layerPaint = node.blendMode ? new this.canvasKit.Paint() : null;
-      if (layerPaint && node.blendMode) {
-        layerPaint.setBlendMode(this.skBlendMode(node.blendMode));
-        canvas.saveLayer(layerPaint);
-      }
-      if (effects.length > 0) {
-        this.drawWithEffects(canvas, effects, drawChildren);
-      } else {
-        drawChildren();
-      }
-      if (layerPaint) {
-        canvas.restore();
-        layerPaint.delete();
-      }
+      this.drawWithBlendMode(canvas, node.blendMode, () => {
+        if (effects.length > 0) {
+          this.drawWithEffects(canvas, effects, drawChildren);
+        } else {
+          drawChildren();
+        }
+      });
       return;
     }
 
@@ -800,17 +793,42 @@ export class SceneRenderer {
     }[mode];
   }
 
+  /**
+   * Blend the complete visual result as one compositing unit. Applying the
+   * mode to an individual fill paint would omit strokes, effects and
+   * paragraph text, and would let overlapping pieces blend independently.
+   */
+  private drawWithBlendMode(
+    canvas: Canvas,
+    blendMode: LogoNode["blendMode"],
+    content: () => void,
+  ): void {
+    if (!blendMode) {
+      content();
+      return;
+    }
+
+    const layerPaint = new this.canvasKit.Paint();
+    layerPaint.setBlendMode(this.skBlendMode(blendMode));
+    canvas.saveLayer(layerPaint);
+    content();
+    canvas.restore();
+    layerPaint.delete();
+  }
+
   private drawNode(canvas: Canvas, node: LogoNode): void {
     if (node.type === "group") {
       return; // groups draw nothing themselves
     }
 
     const effects = node.effects?.filter((effect) => effect.enabled) ?? [];
-    if (effects.length > 0) {
-      this.drawWithEffects(canvas, effects, () => this.drawLeaf(canvas, node));
-      return;
-    }
-    this.drawLeaf(canvas, node);
+    this.drawWithBlendMode(canvas, node.blendMode, () => {
+      if (effects.length > 0) {
+        this.drawWithEffects(canvas, effects, () => this.drawLeaf(canvas, node));
+      } else {
+        this.drawLeaf(canvas, node);
+      }
+    });
   }
 
   /**
@@ -965,9 +983,6 @@ export class SceneRenderer {
     }
 
     const fill = this.makePaint(node.fill, this.paintBox(node), node.opacity);
-    if (node.blendMode) {
-      fill.setBlendMode(this.skBlendMode(node.blendMode));
-    }
 
     if (node.type === "rectangle") {
       const rrect = ck.RRectXY(
@@ -1051,9 +1066,6 @@ export class SceneRenderer {
         // per-stop alpha both survive.
         const ck = this.canvasKit;
         const layerPaint = new ck.Paint();
-        if (node.blendMode) {
-          layerPaint.setBlendMode(this.skBlendMode(node.blendMode));
-        }
         canvas.saveLayer(layerPaint);
         canvas.drawParagraph(paragraph, node.x, node.y);
         const gradient = this.makePaint(
@@ -1245,9 +1257,6 @@ export class SceneRenderer {
       );
       if (blob) {
         const paint = this.makePaint(node.fill, this.paintBox(node), node.opacity);
-        if (node.blendMode) {
-          paint.setBlendMode(this.skBlendMode(node.blendMode));
-        }
         canvas.drawTextBlob(blob, 0, 0, paint);
         paint.delete();
         blob.delete();
