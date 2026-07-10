@@ -33,6 +33,7 @@ export type PrepareDesignMateProposalOptions = BuildDocumentIdentityOptions;
 type ReachableNode = {
   readonly node: LogoNode;
   readonly locked: boolean;
+  readonly visible: boolean;
 };
 
 function reachableNode(
@@ -45,6 +46,7 @@ function reachableNode(
   }
 
   let locked = node.locked;
+  let visible = node.visible;
   let currentId = nodeId;
   const seen = new Set<string>();
   while (!seen.has(currentId)) {
@@ -54,13 +56,14 @@ function reachableNode(
       return null;
     }
     if (document.artboards.some((artboard) => artboard.id === containerId)) {
-      return { node, locked };
+      return { node, locked, visible };
     }
     const container = document.nodes[containerId];
     if (container?.type !== "group") {
       return null;
     }
     locked ||= container.locked;
+    visible &&= container.visible;
     currentId = container.id;
   }
 
@@ -239,6 +242,13 @@ export function prepareDesignMateProposal(
         return failure(
           "precondition-failed",
           "The target node is locked.",
+          actionIndex,
+        );
+      }
+      if (!reachable.visible) {
+        return failure(
+          "precondition-failed",
+          "The target node is hidden.",
           actionIndex,
         );
       }

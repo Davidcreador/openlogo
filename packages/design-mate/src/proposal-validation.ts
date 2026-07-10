@@ -148,7 +148,6 @@ function isDesignMateAction(value: unknown): value is DesignMateAction {
         isBoundedString(
           value.content,
           DESIGN_MATE_PROPOSAL_LIMITS.textContentLength,
-          true,
         )
       );
     case "set-fill-color":

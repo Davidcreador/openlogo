@@ -1,4 +1,14 @@
-import { lazy, Suspense, useEffect, useId, useRef, useState } from "react";
+import {
+  Component,
+  lazy,
+  Suspense,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ErrorInfo,
+  type ReactNode,
+} from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -39,6 +49,42 @@ const DesignMateProposalPanel = lazy(() =>
     default: module.DesignMateProposalPanel,
   })),
 );
+
+class DesignMateProposalErrorBoundary extends Component<
+  { children: ReactNode; resetKey: string },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("Design Mate suggestions failed to load.", error, info);
+  }
+
+  componentDidUpdate(previous: { children: ReactNode; resetKey: string }) {
+    if (this.state.failed && previous.resetKey !== this.props.resetKey) {
+      this.setState({ failed: false });
+    }
+  }
+
+  render() {
+    if (this.state.failed) {
+      return (
+        <div
+          role="alert"
+          className="rounded-[7px] border border-[rgb(194_70_62/0.28)] bg-[#fdf1f0] px-9 py-7 text-[10.5px] leading-[1.45] text-danger"
+        >
+          Suggested changes are unavailable. The review findings above are
+          still safe to use.
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const SECTION =
   "inspector-section shrink-0 rounded-card border border-panel-hairline bg-card p-12 shadow-[0_1px_2px_rgb(28_25_33/0.04)]";
@@ -383,6 +429,7 @@ export function DesignMateSection() {
       setPreparedProposals([]);
       setProposalBaseDocument(null);
       setApplyingProposalId(null);
+      setReview(null);
       setError(providerErrorMessage(cause));
       setStatus("error");
     }
@@ -763,26 +810,32 @@ export function DesignMateSection() {
           {reviewSnapshot &&
             proposalBaseDocument &&
             preparedProposals.length > 0 && (
-              <Suspense
-                fallback={
-                  <div
-                    role="status"
-                    aria-live="polite"
-                    className="rounded-[7px] border border-panel-hairline bg-field px-9 py-7 text-[10.5px] text-ink-dim"
-                  >
-                    Loading suggested changes…
-                  </div>
-                }
+              <DesignMateProposalErrorBoundary
+                resetKey={preparedProposals
+                  .map((item) => item.proposal.id)
+                  .join("\u0000")}
               >
-                <DesignMateProposalPanel
-                  baseDocument={proposalBaseDocument}
-                  proposals={preparedProposals}
-                  stale={stale}
-                  applyingId={applyingProposalId}
-                  onApply={applyProposal}
-                  onDismiss={dismissProposal}
-                />
-              </Suspense>
+                <Suspense
+                  fallback={
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      className="rounded-[7px] border border-panel-hairline bg-field px-9 py-7 text-[10.5px] text-ink-dim"
+                    >
+                      Loading suggested changes…
+                    </div>
+                  }
+                >
+                  <DesignMateProposalPanel
+                    baseDocument={proposalBaseDocument}
+                    proposals={preparedProposals}
+                    stale={stale}
+                    applyingId={applyingProposalId}
+                    onApply={applyProposal}
+                    onDismiss={dismissProposal}
+                  />
+                </Suspense>
+              </DesignMateProposalErrorBoundary>
             )}
         </div>
       )}

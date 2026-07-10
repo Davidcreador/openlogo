@@ -115,6 +115,16 @@ describe("Design Mate proposal validation", () => {
           {
             type: "set-text-content",
             nodeId: text.id,
+            content: "   ",
+          },
+        ],
+      },
+      {
+        ...valid,
+        actions: [
+          {
+            type: "set-text-content",
+            nodeId: text.id,
             content: "Northstar",
             extra: true,
           },
@@ -409,7 +419,7 @@ describe("prepareDesignMateProposal", () => {
     );
   });
 
-  it("fails closed for missing, locked, inherited-locked, and wrong-type nodes", () => {
+  it("fails closed for missing, locked, hidden, inherited-restricted, and wrong-type nodes", () => {
     const base = createInitialDocument();
     const text = textNode(base);
     const path = pathNode(base);
@@ -444,6 +454,22 @@ describe("prepareDesignMateProposal", () => {
       ),
     );
 
+    const hidden = structuredClone(base);
+    hidden.nodes[text.id]!.visible = false;
+    expectFailure(
+      prepareDesignMateProposal(
+        hidden,
+        proposal([
+          {
+            type: "set-text-content",
+            nodeId: text.id,
+            content: "Northstar",
+          },
+        ]),
+        { generation: 0, revision: 0 },
+      ),
+    );
+
     const inheritedLocked = structuredClone(base);
     const artboard = inheritedLocked.artboards[0]!;
     const group = createGroup([text.id]);
@@ -461,6 +487,30 @@ describe("prepareDesignMateProposal", () => {
             type: "set-letter-spacing",
             nodeId: text.id,
             letterSpacing: 3,
+          },
+        ]),
+        { generation: 0, revision: 0 },
+      ),
+    );
+
+    const inheritedHidden = structuredClone(base);
+    const hiddenGroup = createGroup([text.id]);
+    hiddenGroup.visible = false;
+    inheritedHidden.nodes[hiddenGroup.id] = hiddenGroup;
+    inheritedHidden.artboards[0]!.nodeIds = [
+      ...inheritedHidden.artboards[0]!.nodeIds.filter(
+        (nodeId) => nodeId !== text.id,
+      ),
+      hiddenGroup.id,
+    ];
+    expectFailure(
+      prepareDesignMateProposal(
+        inheritedHidden,
+        proposal([
+          {
+            type: "set-text-content",
+            nodeId: text.id,
+            content: "Northstar",
           },
         ]),
         { generation: 0, revision: 0 },
