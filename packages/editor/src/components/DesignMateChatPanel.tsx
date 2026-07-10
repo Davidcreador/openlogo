@@ -51,9 +51,9 @@ import { documentStore, useDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
 
 const STARTER_PROMPTS = [
-  "What should I refine first?",
-  "How will this logo hold up at small sizes?",
-  "Does this feel aligned with the brand brief?",
+  "Be honest—what should I refine first?",
+  "Will this still feel clear at 16 px?",
+  "Does this actually feel like the brief?",
 ] as const;
 
 const PROVIDER_FACTORIES = {
@@ -495,10 +495,10 @@ export function DesignMateChatPanel({
             className="m-0 flex items-center gap-5 text-[10.5px] font-[650] uppercase tracking-[0.07em] text-ink"
           >
             <MessageCircle size={12} className="text-accent" aria-hidden="true" />
-            Ask Design Mate
+            Chat with Design Mate
           </h3>
           <p className="m-0 mt-2 text-[9.5px] leading-[1.4] text-ink-dim">
-            Suggestions require your approval — nothing changes automatically.
+            I’ll explain my thinking. Nothing changes unless you say so.
           </p>
         </div>
         <span className="shrink-0 rounded-full bg-accent-soft px-6 py-2 text-[8px] font-[650] uppercase tracking-[0.05em] text-accent">
@@ -521,7 +521,7 @@ export function DesignMateChatPanel({
         {transcript.entries.length === 0 ? (
           <div className="grid content-start gap-5">
             <p className="m-0 text-[10px] leading-[1.45] text-ink-dim">
-              Start with a question about the chosen scope.
+              What are you wrestling with? Pick a prompt or ask me directly.
             </p>
             {STARTER_PROMPTS.map((starter) => (
               <button
@@ -614,7 +614,7 @@ export function DesignMateChatPanel({
           maxLength={DESIGN_MATE_CHAT_LIMITS.userTextLength}
           onChange={(event) => setPrompt(event.currentTarget.value)}
           onKeyDown={onComposerKeyDown}
-          placeholder="Ask about hierarchy, distinctiveness, scale, or the brief…"
+          placeholder="Ask me about hierarchy, character, scale, or the brief…"
           aria-describedby={visualNote ? statusId : undefined}
           disabled={running || disabled}
         />

@@ -127,7 +127,7 @@ class DesignMateChatErrorBoundary extends Component<
           className="rounded-[7px] border border-[rgb(194_70_62/0.28)] bg-[#fdf1f0] px-9 py-7 text-[10.5px] leading-[1.45] text-danger"
         >
           <p className="m-0">
-            Conversation is unavailable. The brief, review, and suggested
+            Conversation is unavailable. The brief, feedback, and suggested
             changes are still available.
           </p>
           <button
@@ -163,17 +163,17 @@ const SCOPES: ReadonlyArray<{
   {
     id: "selection",
     label: "Selection",
-    title: "Use the selected logo objects for conversation and review",
+    title: "Keep Design Mate focused on the selected logo objects",
   },
   {
     id: "active-artboard",
     label: "Artboard",
-    title: "Use the active logo artboard for conversation and review",
+    title: "Keep Design Mate focused on the active logo artboard",
   },
   {
     id: "document",
     label: "System",
-    title: "Use the full logo system for conversation and review",
+    title: "Let Design Mate consider the full logo system",
   },
 ];
 
@@ -200,7 +200,7 @@ function providerErrorMessage(error: unknown): string {
   ) {
     return error.message;
   }
-  return "Design Mate could not complete this review. Try again.";
+  return "I couldn’t finish that pass. Give me another try.";
 }
 
 function severityLabel(finding: ReviewFinding): string {
@@ -647,13 +647,13 @@ export function DesignMateSection() {
       } else if (outcome.status === "stale") {
         setToast(
           source === "review"
-            ? "This proposal is out of date and was not applied. Re-run the design review."
+            ? "This suggestion is out of date and was not applied. Ask Design Mate to look again."
             : "This proposal is out of date and was not applied. Ask Design Mate again.",
         );
       } else {
         setToast(
           source === "review"
-            ? "This proposal could not be applied safely. Re-run the design review and try again."
+            ? "This suggestion could not be applied safely. Ask Design Mate to look again."
             : "This proposal could not be applied safely. Ask Design Mate again.",
         );
       }
@@ -663,7 +663,7 @@ export function DesignMateSection() {
       }
       setToast(
         source === "review"
-          ? "This proposal could not be applied safely. Re-run the design review and try again."
+          ? "This suggestion could not be applied safely. Ask Design Mate to look again."
           : "This proposal could not be applied safely. Ask Design Mate again.",
       );
     } finally {
@@ -728,18 +728,18 @@ export function DesignMateSection() {
   return (
     <section
       className="grid gap-10"
-      aria-label="Design Mate review workspace"
+      aria-label="Design Mate workspace"
     >
       <div className="rounded-[10px] border border-[rgb(79_107_246/0.18)] bg-[linear-gradient(145deg,#f7f8ff,var(--color-accent-soft))] p-11 shadow-[0_1px_2px_rgb(79_107_246/0.08)]">
         <div className="flex items-start justify-between gap-10">
           <div>
             <h2 className="m-0 flex items-center gap-6 text-[12px] font-[680] text-ink">
               <Sparkles size={14} className="text-accent" aria-hidden="true" />
-              Review before you ship
+              Hey — want a second pair of eyes?
             </h2>
             <p className="mb-0 mt-4 text-[10.5px] leading-[1.5] text-ink-dim">
-              Check craft, consistency, and brand fit without leaving the
-              canvas.
+              I’ll call out what’s working, spot what’s getting in the way,
+              and leave every decision to you.
             </p>
           </div>
           <span className="shrink-0 rounded-full border border-[rgb(79_107_246/0.14)] bg-card/80 px-6 py-2 text-[8.5px] font-[650] uppercase tracking-[0.06em] text-accent-deep">
@@ -755,7 +755,8 @@ export function DesignMateSection() {
                   Brand brief
                 </strong>
                 <p className="m-0 mt-2 text-[10px] leading-[1.4] text-ink-dim">
-                  Design Mate uses this context in conversation and review.
+                  Tell me what this identity needs to mean, and I’ll keep it in
+                  mind.
                 </p>
               </div>
               <button
@@ -895,16 +896,16 @@ export function DesignMateSection() {
           <div className="rounded-[10px] border border-panel-hairline bg-card p-10 shadow-[0_1px_2px_rgb(28_25_33/0.04)]">
             <div className="mb-7 flex items-center justify-between gap-8">
               <strong className="text-[11.5px] font-[650] text-ink">
-                Review scope
+                Where should I focus?
               </strong>
               <span className="text-[9.5px] text-ink-dim">
-                Review + conversation
+                Everything I do
               </span>
             </div>
             <div
               className="flex rounded-[8px] border border-field-border bg-field p-3"
               role="group"
-              aria-label="Design Mate conversation and review scope"
+              aria-label="Design Mate focus"
             >
               {SCOPES.map((item) => {
                 const disabled = item.id === "selection" && !hasSelection;
@@ -933,7 +934,7 @@ export function DesignMateSection() {
               })}
             </div>
             <p className="mx-0 mb-0 mt-4 text-[9px] leading-[1.4] text-ink-dim">
-              This scope applies to both conversation and design review.
+              I’ll keep both my feedback and our conversation focused here.
             </p>
             <button
               type="button"
@@ -956,10 +957,10 @@ export function DesignMateSection() {
                 <Sparkles size={13} aria-hidden="true" />
               )}
               {status === "reviewing"
-                ? "Reviewing…"
+                ? "Taking a look…"
                 : reviewSnapshot
-                  ? "Review again"
-                  : "Run design review"}
+                  ? "Look again"
+                  : "Take a look"}
             </button>
           </div>
 
@@ -968,8 +969,8 @@ export function DesignMateSection() {
               role="status"
               className="rounded-[7px] border border-[#e7c883] bg-[#fff8e8] px-9 py-7 text-[10.5px] leading-[1.45] text-[#73551f]"
             >
-              The document changed after this review. Re-run it before acting
-              on the details.
+              You’ve changed the canvas since I last looked. Let me take
+              another pass before you use these notes.
             </div>
           )}
 
@@ -991,7 +992,7 @@ export function DesignMateSection() {
               <div className="mb-8 flex items-start justify-between gap-8">
                 <div>
                   <h3 className="m-0 text-[10.5px] font-[680] uppercase tracking-[0.07em] text-ink">
-                    Latest review
+                    What I noticed
                   </h3>
                   <p className="mb-0 mt-3 text-[11px] leading-[1.5] text-ink-dim">
                     {reviewSnapshot.review.summary}
@@ -1003,7 +1004,7 @@ export function DesignMateSection() {
               </div>
               {findings.length === 0 ? (
                 <p className="m-0 rounded-[7px] bg-[#eef8f1] px-9 py-7 text-[10.5px] text-[#2f6b43]">
-                  No issues found in this pass.
+                  Nothing is fighting for attention in this pass. Nice work.
                 </p>
               ) : (
                 <ul className="m-0 grid list-none gap-8 p-0">
@@ -1116,8 +1117,8 @@ export function DesignMateSection() {
                         : null
                     }
                     busy={applyingProposal !== null || chatRunning}
-                    heading="Conversation suggestions"
-                    description="Prepared from the latest completed Design Mate answer."
+                    heading="Ideas from our chat"
+                    description="A few concrete moves from our latest conversation."
                     staleMessage="The canvas or conversation scope changed. Ask Design Mate again to refresh these suggestions."
                     defaultRationale="A suggested change from your latest Design Mate conversation."
                     onApply={(prepared) =>

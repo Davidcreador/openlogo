@@ -13,7 +13,6 @@ import {
   Pencil,
   Plus,
   Save,
-  Sparkles,
   Upload,
   Redo2,
   SquaresExclude,
@@ -634,10 +633,6 @@ export function TopBar() {
   const setDocumentLibraryOpen = useEditorStore(
     (state) => state.setDocumentLibraryOpen,
   );
-  const inspectorView = useEditorStore((state) => state.inspectorView);
-  const setInspectorView = useEditorStore((state) => state.setInspectorView);
-  const designMateReview = useEditorStore((state) => state.designMateReview);
-  const designMateStatus = useEditorStore((state) => state.designMateStatus);
   const canCombine = combinableNodes(selectedNodeIds).length >= 2;
   const canCompound = canMakeCompoundPath(selectedNodeIds);
   const canReleaseCompound = canReleaseCompoundPath(selectedNodeIds);
@@ -911,31 +906,6 @@ export function TopBar() {
           style={{ display: "none" }}
           onChange={(event) => void handleImportFile(event)}
         />
-        <button
-          type="button"
-          data-design-mate-trigger
-          className={`flex h-30 items-center gap-6 rounded-m border px-9 text-[11.5px] font-[600] transition-[background-color,border-color,color] duration-140 ease-studio ${
-            inspectorView === "review"
-              ? "border-[rgb(142_160_250/0.28)] bg-[rgb(79_107_246/0.16)] text-[#aebaff]"
-              : "border-chrome-border bg-[rgb(255_255_255/0.035)] text-chrome-dim hover:border-[rgb(142_160_250/0.24)] hover:bg-chrome-raised hover:text-chrome-text"
-          }`}
-          onClick={() => setInspectorView("review")}
-          title="Open Design Mate review"
-          aria-label="Open Design Mate review"
-          aria-pressed={inspectorView === "review"}
-        >
-          <Sparkles
-            size={14}
-            className={designMateStatus === "reviewing" ? "animate-pulse" : ""}
-            aria-hidden="true"
-          />
-          <span>Review</span>
-          {designMateReview && (
-            <span className="rounded-full bg-[rgb(255_255_255/0.1)] px-5 py-1 text-[9px] tabular-nums">
-              {designMateReview.review.findings.length}
-            </span>
-          )}
-        </button>
         <ExportMenu />
       </div>
     </header>

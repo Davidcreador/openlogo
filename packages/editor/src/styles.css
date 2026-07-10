@@ -215,6 +215,22 @@
     }
   }
 
+  @keyframes design-mate-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px) scale(0.975);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .design-mate-panel {
+    transform-origin: bottom right;
+    animation: design-mate-in 180ms var(--ease-studio);
+  }
+
   .menu-heading {
     padding: 7px 9px 5px;
     color: var(--color-chrome-dim);
