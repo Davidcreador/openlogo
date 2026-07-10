@@ -3,11 +3,13 @@ import {
   getRenderNodesForArtboard,
   LOGO_REVIEW_CONTRAST_THRESHOLD,
   logoColorContrastRatio,
+  visualBounds,
 } from "@openlogo/core";
 import type {
   Artboard,
   LogoDocument,
   LogoNode,
+  LogoVariant,
   ReviewFinding,
   ReviewScope,
   SolidPaint,
@@ -26,9 +28,15 @@ import {
 
 type SupportedFindingAction =
   | "align-wordmark-with-brief"
+  | "add-wordmark"
+  | "adjust-optical-tracking"
+  | "align-lockup-centers"
+  | "simplify-small-details"
   | "increase-color-contrast"
   | "create-icon-variant"
-  | "create-wordmark-variant";
+  | "create-wordmark-variant"
+  | "create-horizontal-variant"
+  | "create-stacked-variant";
 
 type SolidLeafNode = Exclude<LogoNode, { type: "group" }> & {
   readonly fill: SolidPaint;
@@ -36,10 +44,33 @@ type SolidLeafNode = Exclude<LogoNode, { type: "group" }> & {
 
 const SUPPORTED_FINDING_ACTIONS: readonly SupportedFindingAction[] = [
   "align-wordmark-with-brief",
+  "add-wordmark",
+  "adjust-optical-tracking",
+  "align-lockup-centers",
+  "simplify-small-details",
   "increase-color-contrast",
   "create-icon-variant",
   "create-wordmark-variant",
+  "create-horizontal-variant",
+  "create-stacked-variant",
 ];
+
+function variantPurposeForAction(
+  actionId: SupportedFindingAction,
+): Exclude<LogoVariant, "primary"> | null {
+  switch (actionId) {
+    case "create-icon-variant":
+      return "icon";
+    case "create-wordmark-variant":
+      return "wordmark";
+    case "create-horizontal-variant":
+      return "horizontal";
+    case "create-stacked-variant":
+      return "stacked";
+    default:
+      return null;
+  }
+}
 
 function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -215,6 +246,190 @@ function buildBriefAlignmentProposal(
   );
 }
 
+function buildWordmarkProposal(
+  document: LogoDocument,
+  finding: ReviewFinding,
+  scope: ReviewScope,
+): DesignMateProposal | null {
+  const brandName = document.designBrief?.brandName?.trim();
+  const [artboard] = artboardsForFinding(document, finding, scope);
+  if (
+    scope === "selection" ||
+    finding.kind !== "objective" ||
+    finding.category !== "typography" ||
+    !brandName ||
+    brandName.length > DESIGN_MATE_PROPOSAL_LIMITS.textContentLength ||
+    !artboard
+  ) {
+    return null;
+  }
+  const rendered = effectiveNodes(document, [artboard]);
+  if (
+    [...rendered.values()].some(
+      (node) => node.type === "text" && node.content.trim().length > 0,
+    )
+  ) {
+    return null;
+  }
+
+  return makeProposal(
+    finding,
+    "add-wordmark",
+    `${artboard.id}:${brandName}`,
+    "Add wordmark from brand brief",
+    "Creates one editable, centered wordmark using the explicit brand name without changing the existing mark.",
+    "medium",
+    {
+      type: "create-wordmark",
+      artboardId: artboard.id,
+      content: brandName,
+    },
+  );
+}
+
+function buildTrackingProposal(
+  document: LogoDocument,
+  finding: ReviewFinding,
+  scope: ReviewScope,
+): DesignMateProposal | null {
+  if (finding.category !== "typography") {
+    return null;
+  }
+  const rendered = effectiveNodes(
+    document,
+    artboardsForFinding(document, finding, scope),
+  );
+  const candidates = [...new Set(finding.nodeIds ?? [])]
+    .map((nodeId) => rendered.get(nodeId))
+    .filter(
+      (node): node is TextNode =>
+        node?.type === "text" &&
+        !node.locked &&
+        node.letterSpacing === 0 &&
+        node.fontWeight >= 700,
+    );
+  if (candidates.length !== 1) {
+    return null;
+  }
+  const target = candidates[0]!;
+  const letterSpacing = Number(
+    (-Math.min(2, Math.max(0.5, target.fontSize * 0.02))).toFixed(2),
+  );
+
+  return makeProposal(
+    finding,
+    "adjust-optical-tracking",
+    `${target.id}:${letterSpacing}`,
+    "Try a tighter tracking pass",
+    "Applies a conservative negative tracking starting point for preview; pair-specific optical corrections remain a manual decision.",
+    "medium",
+    {
+      type: "set-letter-spacing",
+      nodeId: target.id,
+      letterSpacing,
+    },
+  );
+}
+
+function buildSmallDetailProposal(
+  document: LogoDocument,
+  finding: ReviewFinding,
+  scope: ReviewScope,
+): DesignMateProposal | null {
+  if (
+    finding.kind !== "objective" ||
+    finding.category !== "scalability"
+  ) {
+    return null;
+  }
+  const rendered = effectiveNodes(
+    document,
+    artboardsForFinding(document, finding, scope),
+  );
+  const references = [...new Set(finding.nodeIds ?? [])];
+  if (references.length !== 1) {
+    return null;
+  }
+  const target = rendered.get(references[0]!);
+  const bounds = target ? visualBounds(document, target.id) : null;
+  if (!target || target.locked || !bounds) {
+    return null;
+  }
+  const smallestDimension = Math.min(bounds.width, bounds.height);
+  if (
+    !Number.isFinite(smallestDimension) ||
+    smallestDimension <= 0 ||
+    smallestDimension >= 16
+  ) {
+    return null;
+  }
+  const scale = Number((16 / smallestDimension).toFixed(4));
+  if (
+    scale <= 1 ||
+    scale > Math.min(4, DESIGN_MATE_PROPOSAL_LIMITS.maximumScale)
+  ) {
+    return null;
+  }
+
+  return makeProposal(
+    finding,
+    "simplify-small-details",
+    `${target.id}:${scale}`,
+    "Enlarge the small detail",
+    "Only one small unlocked detail was found, so this previews a uniform enlargement to the 16px review threshold without deleting artwork.",
+    "medium",
+    {
+      type: "scale-nodes",
+      nodeIds: [target.id],
+      scaleX: scale,
+      scaleY: scale,
+    },
+  );
+}
+
+function buildAlignmentProposal(
+  document: LogoDocument,
+  finding: ReviewFinding,
+  scope: ReviewScope,
+): DesignMateProposal | null {
+  const [artboard] = artboardsForFinding(document, finding, scope);
+  const nodeIds = [...new Set(finding.nodeIds ?? [])];
+  if (
+    finding.kind !== "objective" ||
+    finding.category !== "geometry" ||
+    !artboard ||
+    nodeIds.length !== 2 ||
+    !nodeIds.every((nodeId) => artboard.nodeIds.includes(nodeId))
+  ) {
+    return null;
+  }
+  const rendered = effectiveNodes(document, [artboard]);
+  if (
+    nodeIds.some((nodeId) => {
+      const node = rendered.get(nodeId);
+      return !node || node.locked;
+    })
+  ) {
+    return null;
+  }
+
+  return makeProposal(
+    finding,
+    "align-lockup-centers",
+    nodeIds.join(":"),
+    "Align lockup visual centers",
+    "Aligns the two top-level lockup units to a shared visual center line while preserving their horizontal spacing.",
+    "medium",
+    {
+      type: "align-nodes",
+      nodeIds,
+      edge: "centerY",
+      reference: "selection",
+      keyObjectId: null,
+    },
+  );
+}
+
 function contrastCandidates(document: LogoDocument): string[] {
   const seen = new Set<string>();
   const candidates: string[] = [];
@@ -312,7 +527,7 @@ function buildVariantProposal(
   document: LogoDocument,
   finding: ReviewFinding,
   scope: ReviewScope,
-  purpose: "icon" | "wordmark",
+  purpose: Exclude<LogoVariant, "primary">,
 ): DesignMateProposal | null {
   if (
     scope === "selection" ||
@@ -337,15 +552,12 @@ function buildVariantProposal(
     return null;
   }
 
-  const actionId =
-    purpose === "icon" ? "create-icon-variant" : "create-wordmark-variant";
+  const actionId = `create-${purpose}-variant` as SupportedFindingAction;
   return makeProposal(
     finding,
     actionId,
     `${source.id}:${purpose}`,
-    purpose === "icon"
-      ? "Create icon logo variant"
-      : "Create wordmark logo variant",
+    `Create ${purpose} logo variant`,
     "Clones the primary artboard, or the active fallback, without changing existing artwork.",
     "low",
     {
@@ -357,9 +569,9 @@ function buildVariantProposal(
 }
 
 /**
- * Bind only objective findings with unambiguous, currently valid mutations.
- * Subjective, destructive, or geometry-heavy suggestions are deliberately
- * left for human judgment.
+ * Bind factual findings and one conservative tracking preview to unambiguous,
+ * currently valid mutations. Destructive simplification and open-ended visual
+ * judgment remain chat/manual work.
  */
 export function buildHeuristicDesignMateProposals(
   document: LogoDocument,
@@ -381,17 +593,25 @@ export function buildHeuristicDesignMateProposals(
         continue;
       }
 
-      const proposal =
-        actionId === "align-wordmark-with-brief"
-          ? buildBriefAlignmentProposal(document, finding, scope)
-          : actionId === "increase-color-contrast"
-            ? buildContrastProposal(document, finding, scope)
-            : buildVariantProposal(
-                document,
-                finding,
-                scope,
-                actionId === "create-icon-variant" ? "icon" : "wordmark",
-              );
+      let proposal: DesignMateProposal | null;
+      if (actionId === "align-wordmark-with-brief") {
+        proposal = buildBriefAlignmentProposal(document, finding, scope);
+      } else if (actionId === "add-wordmark") {
+        proposal = buildWordmarkProposal(document, finding, scope);
+      } else if (actionId === "adjust-optical-tracking") {
+        proposal = buildTrackingProposal(document, finding, scope);
+      } else if (actionId === "align-lockup-centers") {
+        proposal = buildAlignmentProposal(document, finding, scope);
+      } else if (actionId === "simplify-small-details") {
+        proposal = buildSmallDetailProposal(document, finding, scope);
+      } else if (actionId === "increase-color-contrast") {
+        proposal = buildContrastProposal(document, finding, scope);
+      } else {
+        const purpose = variantPurposeForAction(actionId);
+        proposal = purpose
+          ? buildVariantProposal(document, finding, scope, purpose)
+          : null;
+      }
       if (!proposal) {
         continue;
       }

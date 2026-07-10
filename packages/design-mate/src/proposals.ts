@@ -3,8 +3,10 @@ import {
   applyCommand,
   buildAddVariantCommand,
   collectLeafNodeIds,
+  createText,
   distributeEvenGapOffsets,
   findContainerId,
+  logoColorContrastRatio,
   rotateLeafPatches,
   selectionFrame,
   selectionFrameCenter,
@@ -316,6 +318,9 @@ function impactSummary(action: DesignMateAction, node?: LogoNode): string {
     case "set-letter-spacing":
       summary = `Set letter spacing on ${node ? nodeLabel(node) : "a text node"} to ${action.letterSpacing}.`;
       break;
+    case "create-wordmark":
+      summary = `Created an editable wordmark for ${action.content.trim()}.`;
+      break;
     case "translate-nodes":
       summary = `Moved ${action.nodeIds.length} ${action.nodeIds.length === 1 ? "object" : "objects"} by ${action.dx}px horizontally and ${action.dy}px vertically.`;
       break;
@@ -401,6 +406,96 @@ export function prepareDesignMateProposal(
       actionIndex += 1
     ) {
       const action = proposal.actions[actionIndex]!;
+
+      if (action.type === "create-wordmark") {
+        const artboard = workingDocument.artboards.find(
+          (candidate) => candidate.id === action.artboardId,
+        );
+        if (!artboard) {
+          return failure(
+            "precondition-failed",
+            "The wordmark artboard does not exist.",
+            actionIndex,
+          );
+        }
+        const briefName = workingDocument.designBrief?.brandName?.trim();
+        if (
+          !briefName ||
+          briefName.toLocaleLowerCase() !==
+            action.content.trim().toLocaleLowerCase()
+        ) {
+          return failure(
+            "precondition-failed",
+            "A new wordmark must use the explicit brand name from the design brief.",
+            actionIndex,
+          );
+        }
+        const hasVisibleText = collectLeafNodeIds(
+          workingDocument,
+          artboard.nodeIds,
+        ).some((nodeId) => {
+          const reachable = reachableNode(workingDocument, nodeId);
+          return (
+            reachable?.node.type === "text" &&
+            reachable.visible &&
+            reachable.node.content.trim().length > 0
+          );
+        });
+        if (hasVisibleText) {
+          return failure(
+            "precondition-failed",
+            "The target artboard already contains a visible wordmark.",
+            actionIndex,
+          );
+        }
+
+        const width = Math.min(
+          artboard.width * 0.72,
+          Math.max(120, briefName.length * 28),
+        );
+        const height = Math.min(64, Math.max(36, artboard.height * 0.16));
+        const dark = "#111827";
+        const light = "#ffffff";
+        const fill =
+          logoColorContrastRatio(dark, artboard.background) >=
+          logoColorContrastRatio(light, artboard.background)
+            ? dark
+            : light;
+        const wordmark = createText({
+          x: (artboard.width - width) / 2,
+          y: (artboard.height - height) / 2,
+          content: briefName,
+          fill,
+        });
+        wordmark.width = width;
+        wordmark.height = height;
+        wordmark.fontSize = Math.min(52, Math.max(28, height * 0.8));
+        wordmark.letterSpacing = Number(
+          (-wordmark.fontSize * 0.025).toFixed(2),
+        );
+
+        const command: Command = {
+          type: "insert-nodes",
+          artboardId: artboard.id,
+          nodes: [wordmark],
+        };
+        const result = applyCommand(workingDocument, command);
+        if (
+          result.document === workingDocument ||
+          result.document.nodes[wordmark.id] === undefined
+        ) {
+          return failure(
+            "preparation-failed",
+            "The generated wordmark command was rejected.",
+            actionIndex,
+          );
+        }
+        workingDocument = result.document;
+        commands.push(command);
+        changedNodeIds.add(wordmark.id);
+        summaries.push(impactSummary(action, wordmark));
+        continue;
+      }
 
       if (action.type === "create-logo-variant") {
         if (

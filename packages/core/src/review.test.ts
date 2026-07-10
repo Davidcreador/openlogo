@@ -186,6 +186,62 @@ describe("analyzeLogoDocument", () => {
     ).toBe(true);
   });
 
+  it("covers complete logo systems, lockup geometry, and export bounds", () => {
+    const document = createInitialDocument();
+    const artboard = getActiveArtboard(document);
+    const visibleUnits = artboard.nodeIds
+      .map((nodeId) => document.nodes[nodeId]!)
+      .filter((node) => node.opacity >= 0.5);
+    expect(visibleUnits).toHaveLength(2);
+    const [mark, wordmark] = visibleUnits;
+    expect(mark).toBeDefined();
+    expect(wordmark).toBeDefined();
+    if (!mark || !wordmark) {
+      throw new Error("Expected the starter lockup units.");
+    }
+    mark.y = -24;
+    wordmark.y = 210;
+
+    const review = analyzeLogoDocument(document);
+    expect(
+      review.findings.find(
+        (finding) =>
+          finding.id ===
+          `geometry.horizontal-center-drift:${artboard.id}`,
+      ),
+    ).toMatchObject({
+      category: "geometry",
+      kind: "objective",
+      nodeIds: [mark.id, wordmark.id],
+      suggestedActions: [
+        expect.objectContaining({ id: "align-lockup-centers" }),
+      ],
+    });
+    expect(
+      review.findings.find(
+        (finding) =>
+          finding.id ===
+          `production.artwork-outside-artboard:${artboard.id}`,
+      ),
+    ).toMatchObject({
+      category: "production",
+      kind: "objective",
+      nodeIds: expect.arrayContaining([mark.id]),
+    });
+    expect(
+      review.findings
+        .filter((finding) => finding.category === "variants")
+        .map((finding) => finding.id),
+    ).toEqual(
+      expect.arrayContaining([
+        "variants.missing-icon",
+        "variants.missing-wordmark",
+        "variants.missing-horizontal",
+        "variants.missing-stacked",
+      ]),
+    );
+  });
+
   it("uses an explicit brand brief for factual wordmark alignment", () => {
     const document = createInitialDocument();
     document.designBrief = {

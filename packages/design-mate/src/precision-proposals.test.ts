@@ -69,6 +69,11 @@ function expectFailure(
 describe("precision action validation", () => {
   it("accepts every bounded precision action", () => {
     const actions: DesignMateAction[] = [
+      {
+        type: "create-wordmark",
+        artboardId: "artboard",
+        content: "Northstar",
+      },
       { type: "translate-nodes", nodeIds: ["a"], dx: 4, dy: -2 },
       { type: "scale-nodes", nodeIds: ["a"], scaleX: 1.1, scaleY: 0.9 },
       { type: "rotate-nodes", nodeIds: ["a"], degrees: 15 },
@@ -99,6 +104,7 @@ describe("precision action validation", () => {
       { type: "translate-nodes", nodeIds: ["a", "a"], dx: 1, dy: 1 },
       { type: "translate-nodes", nodeIds: ["a"], dx: Number.NaN, dy: 1 },
       { type: "scale-nodes", nodeIds: ["a"], scaleX: 0, scaleY: 1 },
+      { type: "create-wordmark", artboardId: "a", content: "   " },
       { type: "rotate-nodes", nodeIds: ["a"], degrees: 181 },
       {
         type: "align-nodes",
@@ -141,6 +147,59 @@ describe("precision action validation", () => {
 });
 
 describe("precision proposal compilation", () => {
+  it("creates a brief-backed wordmark without changing existing artwork", () => {
+    const document = createInitialDocument();
+    document.designBrief = { brandName: "Northstar" };
+    const artboard = document.artboards[0]!;
+    const originalText = textNode(document);
+    artboard.nodeIds = artboard.nodeIds.filter(
+      (nodeId) => nodeId !== originalText.id,
+    );
+    delete document.nodes[originalText.id];
+    const beforeNodeIds = [...artboard.nodeIds];
+
+    const result = prepared(
+      prepareDesignMateProposal(
+        document,
+        proposal([
+          {
+            type: "create-wordmark",
+            artboardId: artboard.id,
+            content: "Northstar",
+          },
+        ]),
+        { generation: 0, revision: 0 },
+      ),
+    );
+    const created = Object.values(result.previewDocument.nodes).find(
+      (node) => node.type === "text" && node.content === "Northstar",
+    );
+    expect(created).toBeDefined();
+    if (!created) {
+      throw new Error("Expected the prepared wordmark node.");
+    }
+    expect(result.previewDocument.artboards[0]!.nodeIds).toEqual([
+      ...beforeNodeIds,
+      created.id,
+    ]);
+    expect(result.impact.changedNodeIds).toEqual([created.id]);
+
+    expectFailure(
+      prepareDesignMateProposal(
+        document,
+        proposal([
+          {
+            type: "create-wordmark",
+            artboardId: artboard.id,
+            content: "Invented name",
+          },
+        ]),
+        { generation: 0, revision: 0 },
+      ),
+      "precondition-failed",
+    );
+  });
+
   it("compiles typography, opacity, and existing-stroke edits atomically", () => {
     const document = createInitialDocument();
     const text = textNode(document);

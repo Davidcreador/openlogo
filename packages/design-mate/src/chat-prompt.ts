@@ -35,6 +35,7 @@ export const DESIGN_MATE_CHAT_SYSTEM_PROMPT = [
   "Actual document changes require the proposal approval pipeline. Use submit_design_mate_proposal only for a concrete, conservative change that can be expressed by its closed action schema.",
   "Reference only node and artboard ids present in the bounded design context. Submit at most one proposal per answer and explain it concisely in normal text.",
   "Use geometry actions only on visible selected nodes from one artboard. Move values are artboard-local deltas; scale and rotation operate around the current selection centre.",
+  "Create a wordmark only when the context includes an explicit design-brief brand name and the target artboard has no visible text; copy that brand name exactly.",
   "Use only font family names supplied by the user or context, and never invent a stroke or key object that is absent from the supplied context; the compiler will reject unsupported targets.",
   "A tool call creates a preview candidate only. The user must explicitly approve it before anything can change.",
 ].join("\n");

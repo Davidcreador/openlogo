@@ -23,6 +23,11 @@ export const DESIGN_MATE_MUTATION_TOOLS = Object.freeze({
     description:
       "Set finite, bounded letter spacing on one existing, unlocked text node.",
   }),
+  "create-wordmark": Object.freeze({
+    risk: "medium",
+    description:
+      "Create one editable wordmark from the explicit brand name on an artboard that has no visible text.",
+  }),
   "translate-nodes": Object.freeze({
     risk: "medium",
     description:

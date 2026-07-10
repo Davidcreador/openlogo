@@ -249,6 +249,15 @@ function isDesignMateAction(value: unknown): value is DesignMateAction {
           DESIGN_MATE_PROPOSAL_LIMITS.maximumLetterSpacing,
         )
       );
+    case "create-wordmark":
+      return (
+        hasExactKeys(value, ["type", "artboardId", "content"]) &&
+        isNodeReference(value.artboardId) &&
+        isBoundedString(
+          value.content,
+          DESIGN_MATE_PROPOSAL_LIMITS.textContentLength,
+        )
+      );
     case "translate-nodes":
       return (
         hasExactKeys(value, ["type", "nodeIds", "dx", "dy"]) &&

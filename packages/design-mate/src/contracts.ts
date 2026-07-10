@@ -34,6 +34,13 @@ export type SetLetterSpacingDesignMateAction = {
   readonly letterSpacing: number;
 };
 
+export type CreateWordmarkDesignMateAction = {
+  readonly type: "create-wordmark";
+  readonly artboardId: string;
+  /** Must match the explicit brand name in the current design brief. */
+  readonly content: string;
+};
+
 export type TranslateNodesDesignMateAction = {
   readonly type: "translate-nodes";
   /** Reachable selection units on one artboard; groups move as units. */
@@ -129,6 +136,7 @@ export type DesignMateAction =
   | SetTextContentDesignMateAction
   | SetFillColorDesignMateAction
   | SetLetterSpacingDesignMateAction
+  | CreateWordmarkDesignMateAction
   | TranslateNodesDesignMateAction
   | ScaleNodesDesignMateAction
   | RotateNodesDesignMateAction

@@ -113,6 +113,34 @@ describe("Design Mate proposal previews", () => {
     ).toBeNull();
   });
 
+  it("compares the full artboard when creating a brief-backed wordmark", () => {
+    const document = createInitialDocument();
+    document.designBrief = { brandName: "Northstar" };
+    const artboard = document.artboards[0]!;
+    const text = firstTextNode(document);
+    artboard.nodeIds = artboard.nodeIds.filter(
+      (nodeId) => nodeId !== text.id,
+    );
+    delete document.nodes[text.id];
+    const prepared = prepare(document, {
+      id: "test-create-wordmark-preview",
+      label: "Add the brand wordmark",
+      risk: "medium",
+      actions: [
+        {
+          type: "create-wordmark",
+          artboardId: artboard.id,
+          content: "Northstar",
+        },
+      ],
+    });
+
+    const preview = createDesignMateProposalPreview(document, prepared);
+    expect(preview?.kind).toBe("nodes");
+    expect(decodeSvg(preview!.before.dataUrl)).not.toContain("Northstar");
+    expect(decodeSvg(preview!.after.dataUrl)).toContain(">Northstar</text>");
+  });
+
   it("uses one bounded frame for both geometry previews", () => {
     const document = createInitialDocument();
     const text = firstTextNode(document);

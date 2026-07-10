@@ -118,6 +118,20 @@ const actionSchemas = [
     type: "object",
     additionalProperties: false,
     properties: {
+      type: { type: "string", enum: ["create-wordmark"] },
+      artboardId: referenceId,
+      content: {
+        type: "string",
+        description:
+          "The exact brand name from the supplied design brief. Runtime validation and compilation reject invented content.",
+      },
+    },
+    required: ["type", "artboardId", "content"],
+  },
+  {
+    type: "object",
+    additionalProperties: false,
+    properties: {
       type: { type: "string", enum: ["translate-nodes"] },
       nodeIds,
       dx: {
@@ -334,7 +348,7 @@ export const DESIGN_MATE_CHAT_PROPOSAL_TOOL = deepFreeze({
   type: "function",
   name: DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
   description:
-    "Submit one conservative, preview-only logo change for explicit user approval. Supported actions edit text, solid fills, tracking, typography, opacity, existing solid strokes, selected-node position/scale/rotation/alignment/distribution, or clone one logo variant. Geometry must use visible selected ids from one artboard; scale and rotation use the selection centre. Never invent ids, key objects, strokes, or font families. Calling this tool never applies a change.",
+    "Submit one conservative, preview-only logo change for explicit user approval. Supported actions edit text, create a brief-backed wordmark, adjust solid fills, tracking, typography, opacity, existing solid strokes, selected-node geometry, or clone a logo variant. Geometry must use visible selected ids from one artboard. Never invent ids, content, key objects, strokes, or fonts. Calling this tool never applies a change.",
   strict: true,
   parameters: {
     type: "object",

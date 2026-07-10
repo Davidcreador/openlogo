@@ -200,6 +200,50 @@ export function createDesignMateProposalPreview(
       };
     }
 
+    const wordmarkActions = prepared.proposal.actions.filter(
+      (action) => action.type === "create-wordmark",
+    );
+    if (
+      wordmarkActions.length > 0 &&
+      (wordmarkActions.length !== 1 ||
+        prepared.proposal.actions.length !== 1 ||
+        prepared.impact.changedNodeIds.length !== 1)
+    ) {
+      return null;
+    }
+    const wordmarkAction = wordmarkActions[0];
+    if (wordmarkAction) {
+      const beforeArtboard = baseDocument.artboards.find(
+        (artboard) => artboard.id === wordmarkAction.artboardId,
+      );
+      const afterArtboard = prepared.previewDocument.artboards.find(
+        (artboard) => artboard.id === wordmarkAction.artboardId,
+      );
+      if (!beforeArtboard || !afterArtboard) {
+        return null;
+      }
+      const beforeUrl = svgDataUrl(
+        documentToSvg(baseDocument, beforeArtboard),
+      );
+      const afterUrl = svgDataUrl(
+        documentToSvg(prepared.previewDocument, afterArtboard),
+      );
+      if (!beforeUrl || !afterUrl) {
+        return null;
+      }
+      return {
+        kind: "nodes",
+        before: {
+          dataUrl: beforeUrl,
+          label: `Before · ${beforeArtboard.name}`,
+        },
+        after: {
+          dataUrl: afterUrl,
+          label: `After · ${afterArtboard.name}`,
+        },
+      };
+    }
+
     const nodeIds = [...new Set(prepared.impact.changedNodeIds)];
     if (
       nodeIds.length === 0 ||

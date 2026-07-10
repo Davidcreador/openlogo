@@ -85,6 +85,9 @@ describe("buildHeuristicDesignMateProposals", () => {
     expect(first).toEqual(second);
     expect(document).toEqual(before);
     expect(first.map(actionType).sort()).toEqual([
+      "align-nodes",
+      "create-logo-variant",
+      "create-logo-variant",
       "create-logo-variant",
       "create-logo-variant",
       "set-fill-color",
@@ -168,6 +171,41 @@ describe("buildHeuristicDesignMateProposals", () => {
           finding.nodeIds?.includes(target.id),
       ),
     ).toBe(false);
+  });
+
+  it("creates a brief-backed editable wordmark only when visible text is absent", () => {
+    const document = createInitialDocument();
+    document.designBrief = { brandName: "Northstar" };
+    const artboard = document.artboards[0]!;
+    const textIds = artboard.nodeIds.filter(
+      (nodeId) => document.nodes[nodeId]?.type === "text",
+    );
+    artboard.nodeIds = artboard.nodeIds.filter(
+      (nodeId) => !textIds.includes(nodeId),
+    );
+    for (const nodeId of textIds) {
+      delete document.nodes[nodeId];
+    }
+
+    const raw = buildHeuristicDesignMateProposals(
+      document,
+      analyzeLogoDocument(document).findings,
+      "active-artboard",
+    ).find((item) => actionType(item) === "create-wordmark");
+    expect(raw?.actions[0]).toEqual({
+      type: "create-wordmark",
+      artboardId: artboard.id,
+      content: "Northstar",
+    });
+    if (!raw) {
+      throw new Error("Expected a wordmark proposal.");
+    }
+    const preview = prepare(document, raw).previewDocument;
+    expect(
+      Object.values(preview.nodes).find(
+        (node) => node.type === "text" && node.content === "Northstar",
+      ),
+    ).toBeDefined();
   });
 
   it("skips ambiguous, locked, hidden, and already-resolved wordmarks", () => {
@@ -268,7 +306,7 @@ describe("buildHeuristicDesignMateProposals", () => {
       findings,
       "active-artboard",
     ).filter((item) => actionType(item) === "create-logo-variant");
-    expect(activeProposals).toHaveLength(2);
+    expect(activeProposals).toHaveLength(4);
     expect(
       activeProposals.every(
         (item) =>
@@ -325,7 +363,7 @@ describe("buildHeuristicDesignMateProposals", () => {
     });
   });
 
-  it("defers tracking, tiny-detail, add-wordmark, and judgment suggestions", () => {
+  it("previews conservative tracking and one small detail but defers open-ended judgment", () => {
     const document = actionableDocument();
     const text = textNode(document);
     const path = pathNode(document);
@@ -350,14 +388,13 @@ describe("buildHeuristicDesignMateProposals", () => {
       ],
     };
     const findings = [...analyzed, addWordmark, judgment];
-    const deferredIds = new Set(
+    const actionableIds = new Set(
       findings
         .filter((finding) =>
           finding.suggestedActions.some((action) =>
             [
               "adjust-optical-tracking",
               "simplify-small-details",
-              "add-wordmark",
             ].includes(action.id),
           ),
         )
@@ -371,10 +408,18 @@ describe("buildHeuristicDesignMateProposals", () => {
 
     expect(
       proposals.some((item) => actionType(item) === "set-letter-spacing"),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       proposals.some((item) =>
-        item.sourceFindingIds?.some((id) => deferredIds.has(id)),
+        item.sourceFindingIds?.some((id) => actionableIds.has(id)),
+      ),
+    ).toBe(true);
+    expect(proposals.some((item) => actionType(item) === "scale-nodes")).toBe(
+      true,
+    );
+    expect(
+      proposals.some((item) =>
+        item.sourceFindingIds?.includes("synthetic-add-wordmark"),
       ),
     ).toBe(false);
     expect(

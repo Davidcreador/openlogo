@@ -2,6 +2,7 @@ import {
   collectLeafNodeIds,
   getActiveArtboard,
   getRenderNodesForArtboard,
+  visualBounds,
 } from "./queries";
 import type { Artboard, LogoDocument, LogoNode, Paint } from "./types";
 
@@ -252,42 +253,66 @@ function reviewLogoSystem(document: LogoDocument): ReviewFinding[] {
   );
   const findings: ReviewFinding[] = [];
 
-  if (!purposes.has("icon")) {
-    const action =
-      "Duplicate the primary artboard into an icon variant and simplify it for square use.";
-    findings.push({
-      id: "variants.missing-icon",
-      severity: "info",
-      category: "variants",
-      kind: "objective",
+  const variants = [
+    {
+      purpose: "icon",
       title: "Icon-only variant is missing",
-      detail: "The current file only has a primary lockup.",
-      action,
-      evidence: [
-        { label: "Icon artboards", value: 0 },
-        { label: "Total artboards", value: document.artboards.length },
-      ],
-      suggestedActions: [{ id: "create-icon-variant", label: action }],
-    });
-  }
-
-  if (!purposes.has("wordmark")) {
-    const action =
-      "Create a wordmark artboard once the typography direction is stable.";
-    findings.push({
-      id: "variants.missing-wordmark",
-      severity: "info",
-      category: "variants",
-      kind: "objective",
+      detail:
+        "A simplified square mark is needed for favicons, avatars, and compact placements.",
+      action:
+        "Duplicate the primary artboard into an icon variant and simplify it for square use.",
+    },
+    {
+      purpose: "wordmark",
       title: "Wordmark variant is missing",
       detail:
         "A standalone wordmark is useful for wide placements and brand systems.",
-      action,
+      action:
+        "Create a wordmark artboard once the typography direction is stable.",
+    },
+    {
+      purpose: "horizontal",
+      title: "Horizontal lockup is missing",
+      detail:
+        "A horizontal lockup gives the logo system a practical option for navigation bars and narrow placements.",
+      action:
+        "Create a horizontal variant and refine the mark-to-wordmark spacing for wide use.",
+    },
+    {
+      purpose: "stacked",
+      title: "Stacked lockup is missing",
+      detail:
+        "A stacked lockup provides a compact alternative when a square footprint has more room than an icon alone.",
+      action:
+        "Create a stacked variant and refine its vertical spacing for compact placements.",
+    },
+  ] as const;
+
+  for (const variant of variants) {
+    if (purposes.has(variant.purpose)) {
+      continue;
+    }
+    findings.push({
+      id: `variants.missing-${variant.purpose}`,
+      severity: "info",
+      category: "variants",
+      kind: "objective",
+      title: variant.title,
+      detail: variant.detail,
+      action: variant.action,
       evidence: [
-        { label: "Wordmark artboards", value: 0 },
+        {
+          label: `${variant.purpose[0]!.toUpperCase()}${variant.purpose.slice(1)} artboards`,
+          value: 0,
+        },
         { label: "Total artboards", value: document.artboards.length },
       ],
-      suggestedActions: [{ id: "create-wordmark-variant", label: action }],
+      suggestedActions: [
+        {
+          id: `create-${variant.purpose}-variant`,
+          label: variant.action,
+        },
+      ],
     });
   }
 
@@ -297,7 +322,122 @@ function reviewLogoSystem(document: LogoDocument): ReviewFinding[] {
 type ReviewContext = {
   artboard: Artboard;
   nodes: LogoNode[];
+  units: LogoNode[];
 };
+
+function reviewGeometry(
+  document: LogoDocument,
+  context: ReviewContext,
+): ReviewFinding[] {
+  const candidates = context.units.filter(
+    (node) => node.visible && !node.locked && node.opacity >= 0.5,
+  );
+  if (candidates.length !== 2) {
+    return [];
+  }
+  const [left, right] = [...candidates].sort((first, second) => {
+    const firstBounds = visualBounds(document, first.id);
+    const secondBounds = visualBounds(document, second.id);
+    return (firstBounds?.x ?? first.x) - (secondBounds?.x ?? second.x);
+  });
+  if (!left || !right) {
+    return [];
+  }
+  const leftBounds = visualBounds(document, left.id);
+  const rightBounds = visualBounds(document, right.id);
+  if (!leftBounds || !rightBounds) {
+    return [];
+  }
+  const horizontalGap = rightBounds.x - (leftBounds.x + leftBounds.width);
+  const centerDelta = Math.abs(
+    leftBounds.y +
+      leftBounds.height / 2 -
+      (rightBounds.y + rightBounds.height / 2),
+  );
+  const tolerance = Math.max(
+    2,
+    Math.min(leftBounds.height, rightBounds.height) * 0.08,
+  );
+  if (horizontalGap < 0 || centerDelta <= tolerance) {
+    return [];
+  }
+
+  const action =
+    "Preview a shared optical center line, then adjust by eye if the shapes carry different visual weight.";
+  return [
+    {
+      id: findingId("geometry.horizontal-center-drift", context.artboard.id),
+      severity: "info",
+      category: "geometry",
+      kind: "objective",
+      title: "Horizontal lockup centers are drifting",
+      detail: `The two primary units differ by ${centerDelta.toFixed(1)}px on their visual center line.`,
+      action,
+      nodeIds: [left.id, right.id],
+      artboardId: context.artboard.id,
+      evidence: [
+        {
+          label: "Visual center difference",
+          value: Number(centerDelta.toFixed(2)),
+          unit: "px",
+        },
+        {
+          label: "Alignment tolerance",
+          value: Number(tolerance.toFixed(2)),
+          unit: "px",
+        },
+      ],
+      suggestedActions: [{ id: "align-lockup-centers", label: action }],
+    },
+  ];
+}
+
+function reviewProduction(
+  document: LogoDocument,
+  context: ReviewContext,
+): ReviewFinding[] {
+  const overflowing = context.units.filter((node) => {
+    if (!node.visible) {
+      return false;
+    }
+    const bounds = visualBounds(document, node.id);
+    return (
+      bounds !== null &&
+      (bounds.x < 0 ||
+        bounds.y < 0 ||
+        bounds.x + bounds.width > context.artboard.width ||
+        bounds.y + bounds.height > context.artboard.height)
+    );
+  });
+  if (overflowing.length === 0) {
+    return [];
+  }
+
+  const action =
+    "Bring the overflowing artwork inside the artboard before creating production exports.";
+  return [
+    {
+      id: findingId("production.artwork-outside-artboard", context.artboard.id),
+      severity: "warning",
+      category: "production",
+      kind: "objective",
+      title: "Artwork extends beyond the export artboard",
+      detail: `${overflowing.length} visible ${overflowing.length === 1 ? "object extends" : "objects extend"} outside the current export bounds.`,
+      action,
+      nodeIds: overflowing.map((node) => node.id),
+      artboardId: context.artboard.id,
+      evidence: [
+        { label: "Overflowing objects", value: overflowing.length },
+        {
+          label: "Artboard size",
+          value: `${context.artboard.width} × ${context.artboard.height}`,
+          unit: "px",
+        },
+      ],
+      suggestedActions: [{ id: "fit-artwork-to-artboard", label: action }],
+    },
+  ];
+}
 
 function normalizeBriefText(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
@@ -367,6 +507,10 @@ function contextForArtboard(
     nodes: getRenderNodesForArtboard(document, artboard.id).filter(
       (node) => node.visible,
     ),
+    units: artboard.nodeIds.flatMap((nodeId) => {
+      const node = document.nodes[nodeId];
+      return node ? [node] : [];
+    }),
   };
 }
 
@@ -419,6 +563,9 @@ function resolveReviewScope(
     contexts.push({
       artboard,
       nodes: getRenderNodesForArtboard(document, artboard.id).filter(
+        (node) => selectedLeafIds.has(node.id) && node.visible,
+      ),
+      units: getRenderNodesForArtboard(document, artboard.id).filter(
         (node) => selectedLeafIds.has(node.id) && node.visible,
       ),
     });
@@ -477,6 +624,8 @@ export function analyzeLogoDocument(
         includeArtboardAbsenceFindings,
       ),
       ...reviewContrast(context.artboard, context.nodes),
+      ...reviewGeometry(document, context),
+      ...reviewProduction(document, context),
     );
   }
   findings.push(
