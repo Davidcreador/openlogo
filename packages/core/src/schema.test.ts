@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DESIGN_BRIEF_LIMITS } from "./brief";
 import { createArtboard, createInitialDocument } from "./factory";
 import { ARTBOARD_GAP } from "./queries";
 import { parseDocument } from "./schema";
@@ -9,6 +10,65 @@ describe("parseDocument", () => {
     const doc = createInitialDocument();
     const parsed = parseDocument(JSON.parse(JSON.stringify(doc)));
     expect(parsed).toEqual(doc);
+  });
+
+  it("migrates a v4 document without a brief additively to v5", () => {
+    const doc = createInitialDocument();
+    const payload = JSON.parse(JSON.stringify(doc)) as Record<string, unknown>;
+    payload.schemaVersion = 4;
+    delete payload.designBrief;
+
+    const parsed = parseDocument(payload);
+
+    expect(parsed.schemaVersion).toBe(5);
+    expect(parsed).not.toHaveProperty("designBrief");
+    expect(parsed.id).toBe(doc.id);
+    expect(parsed.artboards).toEqual(doc.artboards);
+    expect(parsed.nodes).toEqual(doc.nodes);
+    expect(parsed.palettes).toEqual(doc.palettes);
+  });
+
+  it("sanitizes, bounds, strips, and round-trips a design brief", () => {
+    const doc = createInitialDocument();
+    const payload = JSON.parse(JSON.stringify(doc)) as Record<string, unknown>;
+    payload.unrecognizedDocumentField = true;
+    payload.designBrief = {
+      brandName: `  ${"B".repeat(DESIGN_BRIEF_LIMITS.brandNameLength + 20)}  `,
+      offering: "  Collaborative identity tools  ",
+      audience: "   ",
+      attributes: ["  precise ", "", "precise", " approachable  "],
+      avoid: ["generic", " generic ", "   "],
+      competitors: [],
+      primaryUseCases: Array.from(
+        { length: DESIGN_BRIEF_LIMITS.listItems + 5 },
+        (_, index) => ` Use ${index} `,
+      ),
+      mustKeep: ["M".repeat(DESIGN_BRIEF_LIMITS.listItemLength + 10)],
+      constraints: "\n Works in one color. \n",
+      notes: "  Retain the open counter.  ",
+      unrecognizedBriefField: "strip me",
+    };
+
+    const parsed = parseDocument(payload);
+
+    expect(parsed.designBrief).toEqual({
+      brandName: "B".repeat(DESIGN_BRIEF_LIMITS.brandNameLength),
+      offering: "Collaborative identity tools",
+      attributes: ["precise", "approachable"],
+      avoid: ["generic"],
+      primaryUseCases: Array.from(
+        { length: DESIGN_BRIEF_LIMITS.listItems },
+        (_, index) => `Use ${index}`,
+      ),
+      mustKeep: ["M".repeat(DESIGN_BRIEF_LIMITS.listItemLength)],
+      constraints: "Works in one color.",
+      notes: "Retain the open counter.",
+    });
+    expect(parsed).not.toHaveProperty("unrecognizedDocumentField");
+    expect(parsed.designBrief).not.toHaveProperty("unrecognizedBriefField");
+    expect(
+      parseDocument(JSON.parse(JSON.stringify(parsed))),
+    ).toEqual(parsed);
   });
 
   it("rejects malformed documents", () => {

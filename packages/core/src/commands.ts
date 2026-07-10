@@ -2,10 +2,12 @@
 // effect-ts modules come in under aliases here.
 import * as Data from "effect/Data";
 import * as Fx from "effect/Effect";
+import { sanitizeDesignBrief } from "./brief";
 import type { PathGeometry } from "./path-data";
 import { collectSubtreeIds, findContainerId } from "./queries";
 import type {
   Artboard,
+  DesignBrief,
   Effect,
   GroupNode,
   LogoDocument,
@@ -187,6 +189,11 @@ export type Command =
       artboardId: string;
     }
   | {
+      /** Full replacement; omit `brief` to clear it from the document. */
+      type: "update-brief";
+      brief?: DesignBrief;
+    }
+  | {
       type: "rename-document";
       name: string;
     }
@@ -218,6 +225,40 @@ function pickInversePatch(node: LogoNode, patch: NodePatch): NodePatch {
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
+
+function stringArraysEqual(
+  left: readonly string[] | undefined,
+  right: readonly string[] | undefined,
+): boolean {
+  return (
+    left === right ||
+    (left !== undefined &&
+      right !== undefined &&
+      left.length === right.length &&
+      left.every((value, index) => value === right[index]))
+  );
+}
+
+function designBriefsEqual(
+  left: DesignBrief | undefined,
+  right: DesignBrief | undefined,
+): boolean {
+  return (
+    left === right ||
+    (left !== undefined &&
+      right !== undefined &&
+      left.brandName === right.brandName &&
+      left.offering === right.offering &&
+      left.audience === right.audience &&
+      stringArraysEqual(left.attributes, right.attributes) &&
+      stringArraysEqual(left.avoid, right.avoid) &&
+      stringArraysEqual(left.competitors, right.competitors) &&
+      stringArraysEqual(left.primaryUseCases, right.primaryUseCases) &&
+      stringArraysEqual(left.mustKeep, right.mustKeep) &&
+      left.constraints === right.constraints &&
+      left.notes === right.notes)
+  );
+}
 
 export function sanitizePaint(paint: Paint): Paint {
   if (paint.type === "solid") {
@@ -1569,6 +1610,7 @@ export function applyCommand(
 
     case "set-active-artboard": {
       if (
+        document.activeArtboardId === command.artboardId ||
         !document.artboards.some(
           (artboard) => artboard.id === command.artboardId,
         )
@@ -1584,7 +1626,36 @@ export function applyCommand(
       };
     }
 
+    case "update-brief": {
+      const previous = document.designBrief;
+      const brief =
+        command.brief === undefined
+          ? undefined
+          : sanitizeDesignBrief(command.brief);
+      if (designBriefsEqual(previous, brief)) {
+        return { document, inverse: command };
+      }
+
+      const next: LogoDocument = { ...document };
+      if (brief === undefined) {
+        delete next.designBrief;
+      } else {
+        next.designBrief = brief;
+      }
+
+      return {
+        document: next,
+        inverse:
+          previous === undefined
+            ? { type: "update-brief" }
+            : { type: "update-brief", brief: previous },
+      };
+    }
+
     case "rename-document": {
+      if (document.name === command.name) {
+        return { document, inverse: command };
+      }
       return {
         document: { ...document, name: command.name },
         inverse: { type: "rename-document", name: document.name },
@@ -1595,6 +1666,12 @@ export function applyCommand(
       const previous = document.palettes.find(
         (item) => item.id === command.paletteId,
       );
+      if (
+        previous === undefined ||
+        stringArraysEqual(previous.colors, command.colors)
+      ) {
+        return { document, inverse: command };
+      }
       return {
         document: {
           ...document,

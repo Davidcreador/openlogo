@@ -1,4 +1,16 @@
-import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  Component,
+  lazy,
+  memo,
+  Suspense,
+  type ErrorInfo,
+  type ReactNode,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 // Aliased: this file already imports the domain `Effect` (layer effect) type.
 import { Effect as Fx } from "effect";
 import {
@@ -26,7 +38,6 @@ import {
   PenTool,
   RotateCw,
   Shapes,
-  Sparkles,
   Spline,
   Square,
   Type,
@@ -44,7 +55,6 @@ import {
   type Paint,
   type Stroke,
   type TextNode,
-  analyzeLogoDocument,
   collectLeafNodeIds,
   findContainerId,
   getClippingMaskOwnerId,
@@ -87,6 +97,12 @@ import { convertTextToPath } from "../lib/text-to-path";
 import { documentStore, useDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
 
+const DesignMateSection = lazy(() =>
+  import("./DesignMateSection").then((module) => ({
+    default: module.DesignMateSection,
+  })),
+);
+
 const WEIGHT_LABELS: Record<number, string> = {
   400: "Regular",
   500: "Medium",
@@ -128,6 +144,35 @@ const STROKE_HEAD =
   "mb-6 flex items-center justify-between text-[11px] font-[650] uppercase tracking-[0.06em] text-ink-dim";
 const STROKE_TOGGLE_BASE =
   "inline-flex items-center gap-5 rounded-field border bg-card px-9 py-4 text-[11.5px] transition-[border-color,color] duration-140 ease-studio";
+
+class DesignMateErrorBoundary extends Component<
+  { children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown, info: ErrorInfo): void {
+    console.error("Design Mate panel failed to load.", error, info);
+  }
+
+  render(): ReactNode {
+    if (this.state.failed) {
+      return (
+        <section className={SECTION} role="status">
+          <h2 className={SECTION_H2}>Design mate</h2>
+          <p className={`${MUTED} mt-7`}>
+            Design Mate is unavailable. The rest of the editor is still ready.
+          </p>
+        </section>
+      );
+    }
+    return this.props.children;
+  }
+}
 const STROKE_TOGGLE = `${STROKE_TOGGLE_BASE} border-field-border text-ink-dim hover:border-accent hover:text-accent`;
 const STROKE_TOGGLE_ACTIVE = `${STROKE_TOGGLE_BASE} border-accent text-accent`;
 const SELECT =
@@ -2359,56 +2404,6 @@ function LayersSection() {
   );
 }
 
-function AssistantSection() {
-  const review = useEditorStore((state) => state.review);
-  const setReview = useEditorStore((state) => state.setReview);
-
-  return (
-    <section className={SECTION}>
-      <header className={SECTION_HEAD}>
-        <h2 className={SECTION_H2}>Design mate</h2>
-      </header>
-      <button
-        type="button"
-        className="flex w-full items-center justify-center gap-7 rounded-m bg-linear-to-b from-[#5d77f7] to-accent px-10 py-8 text-[12.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.22),0_1px_3px_rgb(79_107_246/0.35)] transition-[filter] duration-140 ease-studio hover:brightness-[1.08]"
-        onClick={() =>
-          setReview(analyzeLogoDocument(documentStore.committedDocument))
-        }
-      >
-        <Sparkles size={14} />
-        Review active logo
-      </button>
-      {review && (
-        <div className="mt-10" aria-live="polite" aria-atomic="true">
-          {review.findings.length === 0 ? (
-            <p className={MUTED}>No issues found in this pass.</p>
-          ) : (
-            <ul className="m-0 grid list-none gap-8 p-0">
-              {review.findings.map((finding) => (
-                <li
-                  key={`${finding.title}-${finding.detail}`}
-                  data-severity={finding.severity}
-                  className={`rounded-[7px] border-l-[3px] px-10 py-8 text-[12px] ${
-                    finding.severity === "warning"
-                      ? "border-[#f59e0b] bg-[#fdf6e9]"
-                      : finding.severity === "strong"
-                        ? "border-danger bg-[#fdf1f0]"
-                        : "border-accent bg-accent-soft"
-                  }`}
-                >
-                  <span className="font-[650]">{finding.title}</span>
-                  <p className="mx-0 my-4 text-[#55515c]">{finding.detail}</p>
-                  <em className="text-[11.5px] text-ink-dim">{finding.action}</em>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-    </section>
-  );
-}
-
 function MultiDesignSection({
   nodes,
   patchSelection,
@@ -2600,7 +2595,17 @@ export function Inspector() {
         </section>
       )}
       <SwatchesSection />
-      <AssistantSection />
+      <DesignMateErrorBoundary>
+        <Suspense
+          fallback={
+            <section className={SECTION} aria-busy="true">
+              <h2 className={SECTION_H2}>Design mate</h2>
+            </section>
+          }
+        >
+          <DesignMateSection />
+        </Suspense>
+      </DesignMateErrorBoundary>
       </div>
       {/* Bottom-anchored and never squeezed by the card above: layout
           changes there must not move the rows (double-click rename

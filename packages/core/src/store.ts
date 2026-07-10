@@ -40,6 +40,8 @@ export class DocumentStore {
   private listeners = new Set<DocumentListener>();
   /** Changes only when an entirely different document is adopted. */
   private generation = 0;
+  /** Monotonic within one document generation; previews never advance it. */
+  private revision = 0;
 
   constructor(initial: LogoDocument) {
     this.current = initial;
@@ -56,6 +58,10 @@ export class DocumentStore {
 
   get documentGeneration(): number {
     return this.generation;
+  }
+
+  get committedRevision(): number {
+    return this.revision;
   }
 
   get canUndo(): boolean {
@@ -103,6 +109,7 @@ export class DocumentStore {
       this.undoStack.shift();
     }
     this.redoStack = [];
+    this.revision += 1;
     this.emit("committed");
   }
 
@@ -145,9 +152,14 @@ export class DocumentStore {
       this.undoStack.push(entry);
       return;
     }
+    if (result.document === this.committed) {
+      this.undoStack.push(entry);
+      return;
+    }
     this.committed = result.document;
     this.current = result.document;
     this.redoStack.push(entry);
+    this.revision += 1;
     this.emit("committed");
   }
 
@@ -162,15 +174,21 @@ export class DocumentStore {
       this.redoStack.push(entry);
       return;
     }
+    if (result.document === this.committed) {
+      this.redoStack.push(entry);
+      return;
+    }
     this.committed = result.document;
     this.current = result.document;
     this.undoStack.push({ inverse: result.inverse, redo: entry.redo });
+    this.revision += 1;
     this.emit("committed");
   }
 
   /** Replace the whole document (load from disk / new file). Clears history. */
   reset(document: LogoDocument): void {
     this.generation += 1;
+    this.revision = 0;
     this.current = document;
     this.committed = document;
     this.undoStack = [];

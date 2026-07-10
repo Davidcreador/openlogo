@@ -1,7 +1,9 @@
 import { create } from "zustand";
-import type { DesignReview } from "@openlogo/core";
+import type { DesignReview, ReviewScope } from "@openlogo/core";
+import type { DocumentIdentity } from "@openlogo/design-mate";
 import { type Camera, createCamera } from "@openlogo/renderer";
 import type { DocumentSessionState } from "../lib/document-session";
+import type { DesignMateRequestSignature } from "../lib/design-mate-review";
 import { loadPrefs, savePrefs } from "../lib/prefs";
 
 export type Tool =
@@ -20,6 +22,15 @@ export type Tool =
   | "gradient"
   | "shapeBuilder";
 
+export type DesignMateReviewSnapshot = {
+  review: DesignReview;
+  identity: DocumentIdentity;
+  scope: ReviewScope;
+  request: DesignMateRequestSignature;
+};
+
+export type DesignMateStatus = "idle" | "reviewing" | "complete" | "error";
+
 type EditorState = {
   tool: Tool;
   selectedNodeIds: string[];
@@ -31,7 +42,10 @@ type EditorState = {
    */
   keyObjectId: string | null;
   camera: Camera;
-  review: DesignReview | null;
+  designMateReview: DesignMateReviewSnapshot | null;
+  designMateScope: ReviewScope;
+  designMateStatus: DesignMateStatus;
+  designMateError: string | null;
   rendererReady: boolean;
   /** Local document hydration/autosave state shown in the app chrome. */
   documentSessionState: DocumentSessionState;
@@ -66,7 +80,10 @@ type EditorState = {
   setSelection: (ids: string[]) => void;
   setKeyObjectId: (id: string | null) => void;
   setCamera: (camera: Camera) => void;
-  setReview: (review: DesignReview | null) => void;
+  setDesignMateReview: (review: DesignMateReviewSnapshot | null) => void;
+  setDesignMateScope: (scope: ReviewScope) => void;
+  setDesignMateStatus: (status: DesignMateStatus) => void;
+  setDesignMateError: (error: string | null) => void;
   setRendererReady: (ready: boolean) => void;
   setDocumentSessionState: (state: DocumentSessionState) => void;
 };
@@ -76,7 +93,10 @@ export const useEditorStore = create<EditorState>((set) => ({
   selectedNodeIds: [],
   keyObjectId: null,
   camera: createCamera(),
-  review: null,
+  designMateReview: null,
+  designMateScope: "active-artboard",
+  designMateStatus: "idle",
+  designMateError: null,
   rendererReady: false,
   documentSessionState: "loading",
   editingPathId: null,
@@ -113,7 +133,10 @@ export const useEditorStore = create<EditorState>((set) => ({
     })),
   setKeyObjectId: (keyObjectId) => set({ keyObjectId }),
   setCamera: (camera) => set({ camera }),
-  setReview: (review) => set({ review }),
+  setDesignMateReview: (designMateReview) => set({ designMateReview }),
+  setDesignMateScope: (designMateScope) => set({ designMateScope }),
+  setDesignMateStatus: (designMateStatus) => set({ designMateStatus }),
+  setDesignMateError: (designMateError) => set({ designMateError }),
   setRendererReady: (rendererReady) => set({ rendererReady }),
   setDocumentSessionState: (documentSessionState) =>
     set({ documentSessionState }),
