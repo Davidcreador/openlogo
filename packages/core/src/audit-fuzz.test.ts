@@ -9,7 +9,7 @@ import {
 } from "./factory";
 import { expandDeletionSet } from "./queries";
 import { DocumentStore } from "./store";
-import type { GroupNode, LogoDocument } from "./types";
+import type { DesignBrief, GroupNode, LogoDocument } from "./types";
 
 /**
  * AUDIT: random command fuzzing of undo/redo integrity.
@@ -190,6 +190,25 @@ function randomPatch(rng: Rng): NodePatch {
   return pick(rng, patches);
 }
 
+function randomBrief(rng: Rng): DesignBrief {
+  const attribute = `attribute-${int(rng, 8)}`;
+  return {
+    ...(rng() > 0.2 ? { brandName: ` Brand ${int(rng, 20)} ` } : {}),
+    ...(rng() > 0.3
+      ? {
+          attributes: [
+            ` ${attribute} `,
+            attribute,
+            `attribute-${int(rng, 8)}`,
+            "",
+          ],
+        }
+      : {}),
+    ...(rng() > 0.5 ? { avoid: [` cliché-${int(rng, 6)} `] } : {}),
+    ...(rng() > 0.6 ? { notes: ` Note ${int(rng, 30)} ` } : {}),
+  };
+}
+
 /** One random editor-shaped command, or null when none applies. */
 function randomCommand(
   rng: Rng,
@@ -210,6 +229,8 @@ function randomCommand(
     "group",
     "ungroup",
     "ungroup",
+    "brief",
+    "brief",
     "batch",
     ...(opts.artboardOps
       ? [
@@ -253,6 +274,10 @@ function randomCommand(
       if (!id) return null;
       return { type: "update-nodes", updates: [{ nodeId: id, patch: randomPatch(rng) }] };
     }
+    case "brief":
+      return rng() > 0.25
+        ? { type: "update-brief", brief: randomBrief(rng) }
+        : { type: "update-brief" };
     case "reorder": {
       const containers = containerIds(doc).filter(
         (c) => containerChildren(doc, c).length > 1,

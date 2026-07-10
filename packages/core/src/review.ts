@@ -1,5 +1,9 @@
-import { getActiveArtboard, getRenderNodesForArtboard } from "./queries";
-import type { LogoDocument, LogoNode, Paint } from "./types";
+import {
+  collectLeafNodeIds,
+  getActiveArtboard,
+  getRenderNodesForArtboard,
+} from "./queries";
+import type { Artboard, LogoDocument, LogoNode, Paint } from "./types";
 
 /**
  * Deterministic "design mate" review pass. Pure heuristics, runs locally.
@@ -7,17 +11,59 @@ import type { LogoDocument, LogoNode, Paint } from "./types";
  * consumes the same findings shape.
  */
 
+export type ReviewCategory =
+  | "concept"
+  | "composition"
+  | "typography"
+  | "geometry"
+  | "color"
+  | "scalability"
+  | "variants"
+  | "production";
+
+export type ReviewEvidence = {
+  label: string;
+  value: string | number;
+  unit?: string;
+};
+
+export type ReviewSuggestedAction = {
+  id: string;
+  label: string;
+};
+
+export type ReviewKind = "objective" | "judgment";
+
 export type ReviewFinding = {
+  id: string;
   severity: "info" | "warning" | "strong";
+  category: ReviewCategory;
+  kind: ReviewKind;
   title: string;
   detail: string;
   action: string;
+  nodeIds?: string[];
+  artboardId?: string;
+  evidence: ReviewEvidence[];
+  suggestedActions: ReviewSuggestedAction[];
 };
 
 export type DesignReview = {
   summary: string;
   findings: ReviewFinding[];
 };
+
+export type ReviewScope = "selection" | "active-artboard" | "document";
+
+export type AnalyzeLogoOptions = {
+  scope?: ReviewScope;
+  selectionIds?: readonly string[];
+};
+
+const findingId = (rule: string, ...references: string[]): string =>
+  [rule, ...references.map((reference) => encodeURIComponent(reference))].join(
+    ":",
+  );
 
 function paintColor(paint: Paint): string {
   if (paint.type === "solid") {
@@ -51,60 +97,108 @@ function contrastRatio(a: string, b: string): number {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-function reviewScale(nodes: LogoNode[]): ReviewFinding[] {
+function reviewScale(
+  nodes: LogoNode[],
+  artboardId: string,
+): ReviewFinding[] {
   const findings: ReviewFinding[] = [];
   const smallDetails = nodes.filter(
     (node) => Math.min(node.width, node.height) < 16,
   );
 
   if (smallDetails.length > 0) {
+    const action =
+      "Simplify or enlarge those details before exporting small icons.";
     findings.push({
+      id: findingId("scalability.tiny-details", artboardId),
       severity: "warning",
+      category: "scalability",
+      kind: "objective",
       title: "Tiny details may fail at favicon size",
       detail: `${smallDetails.length} visible object${
         smallDetails.length === 1 ? "" : "s"
       } fall below 16px in one dimension.`,
-      action: "Simplify or enlarge those details before exporting small icons.",
+      action,
+      nodeIds: smallDetails.map((node) => node.id),
+      artboardId,
+      evidence: [
+        { label: "Objects below threshold", value: smallDetails.length },
+        { label: "Detail-size threshold", value: 16, unit: "px" },
+      ],
+      suggestedActions: [{ id: "simplify-small-details", label: action }],
     });
   }
 
   return findings;
 }
 
-function reviewTypography(nodes: LogoNode[]): ReviewFinding[] {
+function reviewTypography(
+  nodes: LogoNode[],
+  artboardId: string,
+  includeAbsenceFinding: boolean,
+): ReviewFinding[] {
   const textNodes = nodes.filter((node) => node.type === "text");
   const findings: ReviewFinding[] = [];
 
   for (const node of textNodes) {
     if (node.content.length > 14 && node.fontSize > 42) {
+      const action =
+        "Check tight pairs manually, then preview the wordmark around 180px wide.";
       findings.push({
+        id: findingId("typography.long-wordmark", artboardId, node.id),
         severity: "info",
+        category: "typography",
+        kind: "judgment",
         title: "Long wordmark needs spacing review",
         detail: `"${node.content}" is long enough that tracking and optical spacing will matter.`,
-        action:
-          "Check tight pairs manually, then preview the wordmark around 180px wide.",
+        action,
+        nodeIds: [node.id],
+        artboardId,
+        evidence: [
+          { label: "Character count", value: node.content.length },
+          { label: "Font size", value: node.fontSize, unit: "px" },
+        ],
+        suggestedActions: [{ id: "review-wordmark-spacing", label: action }],
       });
     }
 
     if (node.letterSpacing === 0 && node.fontWeight >= 700) {
+      const action =
+        "Try tightening broad uppercase pairs and loosening cramped lowercase joins.";
       findings.push({
+        id: findingId("typography.heavy-tracking", artboardId, node.id),
         severity: "info",
+        category: "typography",
+        kind: "judgment",
         title: "Heavy type may benefit from optical tracking",
         detail:
           "Bold wordmarks often need slightly negative or pair-specific spacing.",
-        action:
-          "Try tightening broad uppercase pairs and loosening cramped lowercase joins.",
+        action,
+        nodeIds: [node.id],
+        artboardId,
+        evidence: [
+          { label: "Font weight", value: node.fontWeight },
+          { label: "Letter spacing", value: node.letterSpacing, unit: "px" },
+        ],
+        suggestedActions: [{ id: "adjust-optical-tracking", label: action }],
       });
     }
   }
 
-  if (textNodes.length === 0) {
+  if (includeAbsenceFinding && textNodes.length === 0) {
+    const action = "Add a text object when you are ready to test logo lockups.";
     findings.push({
+      id: findingId("typography.no-wordmark", artboardId),
       severity: "info",
+      category: "typography",
+      kind: "objective",
       title: "No wordmark yet",
       detail:
         "A logo system usually needs at least an icon-only and wordmark/horizontal version.",
-      action: "Add a text object when you are ready to test logo lockups.",
+      action,
+      artboardId,
+      evidence: [{ label: "Visible text objects", value: 0 }],
+      suggestedActions: [{ id: "add-wordmark", label: action }],
     });
   }
 
@@ -112,24 +206,36 @@ function reviewTypography(nodes: LogoNode[]): ReviewFinding[] {
 }
 
 function reviewContrast(
-  document: LogoDocument,
+  artboard: Artboard,
   nodes: LogoNode[],
 ): ReviewFinding[] {
-  const artboard = getActiveArtboard(document);
   const findings: ReviewFinding[] = [];
 
   for (const node of nodes) {
-    const ratio = contrastRatio(paintColor(node.fill), artboard.background);
+    const foreground = paintColor(node.fill);
+    const ratio = contrastRatio(foreground, artboard.background);
 
     if (ratio < 2.6 && node.opacity > 0.5) {
+      const action =
+        "Test a darker fill, lighter background, or create a reversed dark-mode variant.";
       findings.push({
+        id: findingId("color.low-contrast", artboard.id, node.id),
         severity: "warning",
+        category: "color",
+        kind: "objective",
         title: "Low contrast against current background",
         detail: `${node.name} has a contrast ratio near ${ratio.toFixed(
           1,
         )}:1 against the artboard background.`,
-        action:
-          "Test a darker fill, lighter background, or create a reversed dark-mode variant.",
+        action,
+        nodeIds: [node.id],
+        artboardId: artboard.id,
+        evidence: [
+          { label: "Contrast ratio", value: Number(ratio.toFixed(2)) },
+          { label: "Foreground", value: foreground },
+          { label: "Background", value: artboard.background },
+        ],
+        suggestedActions: [{ id: "increase-color-contrast", label: action }],
       });
     }
   }
@@ -144,54 +250,204 @@ function reviewLogoSystem(document: LogoDocument): ReviewFinding[] {
   const findings: ReviewFinding[] = [];
 
   if (!purposes.has("icon")) {
+    const action =
+      "Duplicate the primary artboard into an icon variant and simplify it for square use.";
     findings.push({
+      id: "variants.missing-icon",
       severity: "info",
+      category: "variants",
+      kind: "objective",
       title: "Icon-only variant is missing",
       detail: "The current file only has a primary lockup.",
-      action:
-        "Duplicate the primary artboard into an icon variant and simplify it for square use.",
+      action,
+      evidence: [
+        { label: "Icon artboards", value: 0 },
+        { label: "Total artboards", value: document.artboards.length },
+      ],
+      suggestedActions: [{ id: "create-icon-variant", label: action }],
     });
   }
 
   if (!purposes.has("wordmark")) {
+    const action =
+      "Create a wordmark artboard once the typography direction is stable.";
     findings.push({
+      id: "variants.missing-wordmark",
       severity: "info",
+      category: "variants",
+      kind: "objective",
       title: "Wordmark variant is missing",
       detail:
         "A standalone wordmark is useful for wide placements and brand systems.",
-      action: "Create a wordmark artboard once the typography direction is stable.",
+      action,
+      evidence: [
+        { label: "Wordmark artboards", value: 0 },
+        { label: "Total artboards", value: document.artboards.length },
+      ],
+      suggestedActions: [{ id: "create-wordmark-variant", label: action }],
     });
   }
 
   return findings;
 }
 
-export function analyzeLogoDocument(document: LogoDocument): DesignReview {
-  // Flattened leaves so grouped shapes are reviewed individually.
-  const activeNodes = getRenderNodesForArtboard(document);
-  const visibleNodes = activeNodes.filter((node) => node.visible);
-  const findings = [
-    ...reviewScale(visibleNodes),
-    ...reviewTypography(visibleNodes),
-    ...reviewContrast(document, visibleNodes),
-    ...reviewLogoSystem(document),
-  ];
+type ReviewContext = {
+  artboard: Artboard;
+  nodes: LogoNode[];
+};
 
-  if (visibleNodes.length > 8) {
-    findings.push({
-      severity: "warning",
-      title: "Logo is getting visually complex",
-      detail: `${visibleNodes.length} visible objects are present on the active artboard.`,
-      action:
-        "Try a monochrome pass and remove any shape that does not survive small-size preview.",
+function contextForArtboard(
+  document: LogoDocument,
+  artboard: Artboard,
+): ReviewContext {
+  return {
+    artboard,
+    // Flattened leaves so grouped shapes are reviewed individually.
+    nodes: getRenderNodesForArtboard(document, artboard.id).filter(
+      (node) => node.visible,
+    ),
+  };
+}
+
+function resolveReviewScope(
+  document: LogoDocument,
+  options: AnalyzeLogoOptions,
+): { scope: ReviewScope; contexts: ReviewContext[] } {
+  const requestedScope = options.scope ?? "active-artboard";
+  if (requestedScope === "document") {
+    return {
+      scope: "document",
+      contexts: document.artboards.map((artboard) =>
+        contextForArtboard(document, artboard),
+      ),
+    };
+  }
+
+  const activeContext = () =>
+    contextForArtboard(document, getActiveArtboard(document));
+  if (requestedScope !== "selection") {
+    return { scope: "active-artboard", contexts: [activeContext()] };
+  }
+
+  const leafArtboards = new Map<string, string>();
+  for (const artboard of document.artboards) {
+    for (const nodeId of collectLeafNodeIds(document, artboard.nodeIds)) {
+      if (!leafArtboards.has(nodeId)) {
+        leafArtboards.set(nodeId, artboard.id);
+      }
+    }
+  }
+
+  const selectedLeafIds = new Set(
+    collectLeafNodeIds(document, options.selectionIds ?? []).filter((nodeId) =>
+      leafArtboards.has(nodeId),
+    ),
+  );
+  if (selectedLeafIds.size === 0) {
+    return { scope: "active-artboard", contexts: [activeContext()] };
+  }
+
+  const contexts: ReviewContext[] = [];
+  for (const artboard of document.artboards) {
+    const hasSelectedLeaf = [...selectedLeafIds].some(
+      (nodeId) => leafArtboards.get(nodeId) === artboard.id,
+    );
+    if (!hasSelectedLeaf) {
+      continue;
+    }
+    contexts.push({
+      artboard,
+      nodes: getRenderNodesForArtboard(document, artboard.id).filter(
+        (node) => selectedLeafIds.has(node.id) && node.visible,
+      ),
     });
   }
 
+  return { scope: "selection", contexts };
+}
+
+function reviewComplexity(
+  nodes: LogoNode[],
+  artboard: Artboard,
+  isActiveArtboard: boolean,
+): ReviewFinding[] {
+  if (nodes.length <= 8) {
+    return [];
+  }
+
+  const action =
+    "Try a monochrome pass and remove any shape that does not survive small-size preview.";
+  return [
+    {
+      id: findingId("composition.visual-complexity", artboard.id),
+      severity: "warning",
+      category: "composition",
+      kind: "judgment",
+      title: "Logo is getting visually complex",
+      detail: `${nodes.length} visible objects are present on ${
+        isActiveArtboard ? "the active artboard" : `"${artboard.name}"`
+      }.`,
+      action,
+      nodeIds: nodes.map((node) => node.id),
+      artboardId: artboard.id,
+      evidence: [
+        { label: "Visible objects", value: nodes.length },
+        { label: "Complexity threshold", value: 8 },
+      ],
+      suggestedActions: [{ id: "simplify-composition", label: action }],
+    },
+  ];
+}
+
+export function analyzeLogoDocument(
+  document: LogoDocument,
+  options: AnalyzeLogoOptions = {},
+): DesignReview {
+  const review = resolveReviewScope(document, options);
+  const includeArtboardAbsenceFindings = review.scope !== "selection";
+  const findings: ReviewFinding[] = [];
+
+  for (const context of review.contexts) {
+    findings.push(
+      ...reviewScale(context.nodes, context.artboard.id),
+      ...reviewTypography(
+        context.nodes,
+        context.artboard.id,
+        includeArtboardAbsenceFindings,
+      ),
+      ...reviewContrast(context.artboard, context.nodes),
+    );
+  }
+
+  // Variant coverage describes the whole file, never a selected subset.
+  if (review.scope !== "selection") {
+    findings.push(...reviewLogoSystem(document));
+  }
+  for (const context of review.contexts) {
+    findings.push(
+      ...reviewComplexity(
+        context.nodes,
+        context.artboard,
+        context.artboard.id === document.activeArtboardId,
+      ),
+    );
+  }
+
+  const cleanSummary =
+    review.scope === "selection"
+      ? "The selected logo elements have a clean starting structure."
+      : review.scope === "document"
+        ? "The logo system has a clean starting structure across its artboards."
+        : "The active logo has a clean starting structure. Keep refining spacing, scale, and variants.";
+  const findingsSummary =
+    review.scope === "selection"
+      ? "I reviewed the selected logo elements like a production-minded design mate."
+      : review.scope === "document"
+        ? "I reviewed every artboard like a production-minded design mate."
+        : "I reviewed the active artboard like a production-minded design mate.";
+
   return {
-    summary:
-      findings.length === 0
-        ? "The active logo has a clean starting structure. Keep refining spacing, scale, and variants."
-        : "I reviewed the active artboard like a production-minded design mate.",
+    summary: findings.length === 0 ? cleanSummary : findingsSummary,
     findings,
   };
 }

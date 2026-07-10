@@ -306,7 +306,24 @@ export type ColorPalette = {
   colors: string[];
 };
 
-export const DOCUMENT_SCHEMA_VERSION = 4;
+/**
+ * Product and brand context supplied to Design Mate. Every field is optional
+ * so a brief can be built incrementally without inventing placeholder values.
+ */
+export type DesignBrief = {
+  brandName?: string;
+  offering?: string;
+  audience?: string;
+  attributes?: string[];
+  avoid?: string[];
+  competitors?: string[];
+  primaryUseCases?: string[];
+  mustKeep?: string[];
+  constraints?: string;
+  notes?: string;
+};
+
+export const DOCUMENT_SCHEMA_VERSION = 5;
 
 export type LogoDocument = {
   schemaVersion: number;
@@ -316,4 +333,5 @@ export type LogoDocument = {
   artboards: Artboard[];
   nodes: Record<string, LogoNode>;
   palettes: ColorPalette[];
+  designBrief?: DesignBrief;
 };

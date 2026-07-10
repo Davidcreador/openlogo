@@ -58,6 +58,66 @@ describe("applyCommand", () => {
     expect(reverted.nodes[nodeId]!.opacity).toBe(original.opacity);
   });
 
+  it("update-brief replaces and sanitizes the complete brief", () => {
+    const doc = createInitialDocument();
+    const { document: next, inverse } = applyCommand(doc, {
+      type: "update-brief",
+      brief: {
+        brandName: "  Northstar  ",
+        audience: "   ",
+        attributes: [" bold ", "bold", "", " dependable "],
+        constraints: "  Must work in one color. ",
+      },
+    });
+
+    expect(next.designBrief).toEqual({
+      brandName: "Northstar",
+      attributes: ["bold", "dependable"],
+      constraints: "Must work in one color.",
+    });
+    const { document: reverted } = applyCommand(next, inverse);
+    expect(reverted).toEqual(doc);
+    expect(reverted).not.toHaveProperty("designBrief");
+  });
+
+  it("update-brief clears by omission and its inverse restores the exact brief", () => {
+    const doc = {
+      ...createInitialDocument(),
+      designBrief: {
+        notes: "Keep this exact note",
+        mustKeep: ["Symbol", "Wordmark"],
+      },
+    };
+
+    const { document: cleared, inverse } = applyCommand(doc, {
+      type: "update-brief",
+    });
+    expect(cleared).not.toHaveProperty("designBrief");
+
+    const { document: restored } = applyCommand(cleared, inverse);
+    expect(restored).toEqual(doc);
+  });
+
+  it("update-brief no-ops when the sanitized replacement is structurally equal", () => {
+    const doc = {
+      ...createInitialDocument(),
+      designBrief: {
+        brandName: "Northstar",
+        attributes: ["bold", "dependable"],
+      },
+    };
+
+    const result = applyCommand(doc, {
+      type: "update-brief",
+      brief: {
+        attributes: [" bold ", "bold", " dependable "],
+        brandName: " Northstar ",
+      },
+    });
+
+    expect(result.document).toBe(doc);
+  });
+
   it("updates and restores a path fill rule", () => {
     const doc = createInitialDocument();
     const path = Object.values(doc.nodes).find((node) => node.type === "path")!;

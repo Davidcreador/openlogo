@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { Command } from "./commands";
 import { createInitialDocument } from "./factory";
 import { getActiveArtboard } from "./queries";
 import { DocumentStore, type DocumentChangeKind } from "./store";
@@ -161,6 +162,56 @@ describe("DocumentStore", () => {
 
     store.reset(createInitialDocument());
     expect(store.documentGeneration).toBe(generation + 1);
+  });
+
+  it("tracks successful committed transitions within each generation", () => {
+    const store = new DocumentStore(createInitialDocument());
+    const nodeId = firstNodeId(store);
+    const generation = store.documentGeneration;
+    expect(store.committedRevision).toBe(0);
+
+    store.preview([{ nodeId, patch: { x: 700 } }]);
+    store.cancelPreview();
+    store.apply({
+      type: "set-active-artboard",
+      artboardId: "missing-artboard",
+    });
+    expect(store.committedRevision).toBe(0);
+
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      store.apply({
+        type: "batch",
+        commands: [{ type: "malformed-command" } as unknown as Command],
+      });
+    } finally {
+      error.mockRestore();
+    }
+    expect(store.committedRevision).toBe(0);
+
+    store.apply({
+      type: "update-brief",
+      brief: { brandName: " Northstar ", attributes: ["bold", "bold"] },
+    });
+    expect(store.committedRevision).toBe(1);
+
+    store.apply({
+      type: "update-brief",
+      brief: { attributes: [" bold "], brandName: "Northstar" },
+    });
+    expect(store.committedRevision).toBe(1);
+
+    store.undo();
+    expect(store.committedRevision).toBe(2);
+    store.redo();
+    expect(store.committedRevision).toBe(3);
+
+    store.reset(createInitialDocument());
+    expect(store.documentGeneration).toBe(generation + 1);
+    expect(store.committedRevision).toBe(0);
+    store.undo();
+    store.redo();
+    expect(store.committedRevision).toBe(0);
   });
 
   it("sanitizes previews and does not record rejected no-op commands", () => {

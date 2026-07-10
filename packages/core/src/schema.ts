@@ -1,10 +1,11 @@
 import { Data, Effect } from "effect";
 import { z } from "zod";
+import { DESIGN_BRIEF_LIMITS, sanitizeDesignBrief } from "./brief";
 import { boundsUnion } from "./geometry";
 import { createGroup } from "./factory";
 import { sanitizeNodePatch } from "./commands";
 import { ARTBOARD_GAP, nodeBounds } from "./queries";
-import type { Artboard, LogoDocument, LogoNode } from "./types";
+import type { Artboard, DesignBrief, LogoDocument, LogoNode } from "./types";
 import { DOCUMENT_SCHEMA_VERSION } from "./types";
 
 /**
@@ -210,6 +211,48 @@ const artboardSchema = z.object({
     .optional(),
 });
 
+const unboundedDesignBriefSchema = z.object({
+  brandName: z.string().optional(),
+  offering: z.string().optional(),
+  audience: z.string().optional(),
+  attributes: z.array(z.string()).optional(),
+  avoid: z.array(z.string()).optional(),
+  competitors: z.array(z.string()).optional(),
+  primaryUseCases: z.array(z.string()).optional(),
+  mustKeep: z.array(z.string()).optional(),
+  constraints: z.string().optional(),
+  notes: z.string().optional(),
+});
+
+const briefListSchema = z
+  .array(z.string().max(DESIGN_BRIEF_LIMITS.listItemLength))
+  .max(DESIGN_BRIEF_LIMITS.listItems);
+
+/**
+ * The first object pass preserves Zod's default unknown-key stripping and
+ * validates runtime types. The shared sanitizer then canonicalizes and bounds
+ * values before this final schema asserts the persisted limits.
+ */
+const boundedDesignBriefSchema = z.object({
+  brandName: z.string().max(DESIGN_BRIEF_LIMITS.brandNameLength).optional(),
+  offering: z.string().max(DESIGN_BRIEF_LIMITS.proseLength).optional(),
+  audience: z.string().max(DESIGN_BRIEF_LIMITS.proseLength).optional(),
+  attributes: briefListSchema.optional(),
+  avoid: briefListSchema.optional(),
+  competitors: briefListSchema.optional(),
+  primaryUseCases: briefListSchema.optional(),
+  mustKeep: briefListSchema.optional(),
+  constraints: z.string().max(DESIGN_BRIEF_LIMITS.proseLength).optional(),
+  notes: z.string().max(DESIGN_BRIEF_LIMITS.proseLength).optional(),
+});
+
+export const designBriefSchema = z.preprocess((value) => {
+  const parsed = unboundedDesignBriefSchema.safeParse(value);
+  return parsed.success
+    ? sanitizeDesignBrief(parsed.data as DesignBrief)
+    : value;
+}, boundedDesignBriefSchema);
+
 export const documentSchema = z.object({
   schemaVersion: z.number(),
   id: z.string(),
@@ -224,6 +267,7 @@ export const documentSchema = z.object({
       colors: z.array(z.string()),
     }),
   ),
+  designBrief: designBriefSchema.optional(),
 });
 
 /**
