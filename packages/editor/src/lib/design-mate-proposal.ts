@@ -1,5 +1,7 @@
 import {
   findContainerId,
+  paintBounds,
+  type Bounds,
   type DocumentStore,
   type LogoDocument,
 } from "@openlogo/core";
@@ -8,6 +10,7 @@ import {
   type PreparedDesignMateProposal,
 } from "@openlogo/design-mate";
 import { documentToSvg, nodesToSvg } from "./export";
+import { catalogEntry } from "./font-catalog";
 import { fontStore } from "./font-store";
 
 export type DesignMateProposalPreview = {
@@ -27,7 +30,15 @@ export type ApplyPreparedDesignMateProposalResult =
   | { readonly status: "stale" }
   | { readonly status: "rejected" };
 
-function svgDataUrl(svg: string): string {
+const DESIGN_MATE_PREVIEW_SVG_BYTES = 256 * 1_024;
+
+function svgDataUrl(svg: string): string | null {
+  if (
+    new TextEncoder().encode(svg).byteLength >
+    DESIGN_MATE_PREVIEW_SVG_BYTES
+  ) {
+    return null;
+  }
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
@@ -49,6 +60,47 @@ const GEOMETRY_ACTION_TYPES = new Set([
   "align-nodes",
   "distribute-nodes",
 ]);
+
+function commonNodePreviewBounds(
+  before: LogoDocument,
+  after: LogoDocument,
+  nodeIds: readonly string[],
+): Bounds | null {
+  const bounds = nodeIds.flatMap((nodeId) => {
+    const beforeBounds = paintBounds(before, nodeId);
+    const afterBounds = paintBounds(after, nodeId);
+    return [
+      ...(beforeBounds ? [beforeBounds] : []),
+      ...(afterBounds ? [afterBounds] : []),
+    ];
+  });
+  if (bounds.length === 0) {
+    return null;
+  }
+  const minX = Math.min(...bounds.map((item) => item.x));
+  const minY = Math.min(...bounds.map((item) => item.y));
+  const maxX = Math.max(...bounds.map((item) => item.x + item.width));
+  const maxY = Math.max(...bounds.map((item) => item.y + item.height));
+  const width = maxX - minX;
+  const height = maxY - minY;
+  if (
+    !Number.isFinite(minX) ||
+    !Number.isFinite(minY) ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    return null;
+  }
+  const padding = Math.max(2, Math.max(width, height) * 0.08);
+  return {
+    x: minX - padding,
+    y: minY - padding,
+    width: width + padding * 2,
+    height: height + padding * 2,
+  };
+}
 
 function owningArtboardId(
   document: LogoDocument,
@@ -126,16 +178,23 @@ export function createDesignMateProposalPreview(
         return null;
       }
 
+      const beforeUrl = svgDataUrl(
+        documentToSvg(baseDocument, sourceArtboard),
+      );
+      const afterUrl = svgDataUrl(
+        documentToSvg(prepared.previewDocument, createdArtboard),
+      );
+      if (!beforeUrl || !afterUrl) {
+        return null;
+      }
       return {
         kind: "variant",
         before: {
-          dataUrl: svgDataUrl(documentToSvg(baseDocument, sourceArtboard)),
+          dataUrl: beforeUrl,
           label: `Before · ${sourceArtboard.name}`,
         },
         after: {
-          dataUrl: svgDataUrl(
-            documentToSvg(prepared.previewDocument, createdArtboard),
-          ),
+          dataUrl: afterUrl,
           label: `After · ${createdArtboard.name}`,
         },
       };
@@ -150,6 +209,17 @@ export function createDesignMateProposalPreview(
           prepared.previewDocument.nodes[nodeId] !== undefined,
       )
     ) {
+      return null;
+    }
+    if (
+      prepared.proposal.actions.some(
+        (action) =>
+          action.type === "set-font-family" ||
+          action.type === "set-font-weight",
+      )
+    ) {
+      // Data-URL SVG images cannot reliably share the editor's FontFace
+      // registry. Textual impact is safer than a fallback-font comparison.
       return null;
     }
     if (
@@ -172,45 +242,38 @@ export function createDesignMateProposalPreview(
       ) {
         return null;
       }
-      const beforeArtboard = baseDocument.artboards.find(
-        (artboard) => artboard.id === artboardId,
-      );
-      const afterArtboard = prepared.previewDocument.artboards.find(
-        (artboard) => artboard.id === artboardId,
-      );
-      if (!beforeArtboard || !afterArtboard) {
-        return null;
-      }
-      return {
-        kind: "nodes",
-        before: {
-          dataUrl: svgDataUrl(
-            documentToSvg(baseDocument, beforeArtboard),
-          ),
-          label: `Before · ${beforeArtboard.name}`,
-        },
-        after: {
-          dataUrl: svgDataUrl(
-            documentToSvg(prepared.previewDocument, afterArtboard),
-          ),
-          label: `After · ${afterArtboard.name}`,
-        },
-      };
     }
-    const beforeSvg = nodesToSvg(baseDocument, nodeIds);
-    const afterSvg = nodesToSvg(prepared.previewDocument, nodeIds);
+    const frame = commonNodePreviewBounds(
+      baseDocument,
+      prepared.previewDocument,
+      nodeIds,
+    );
+    if (!frame) {
+      return null;
+    }
+    const beforeSvg = nodesToSvg(baseDocument, nodeIds, frame);
+    const afterSvg = nodesToSvg(
+      prepared.previewDocument,
+      nodeIds,
+      frame,
+    );
     if (!beforeSvg || !afterSvg) {
+      return null;
+    }
+    const beforeUrl = svgDataUrl(beforeSvg);
+    const afterUrl = svgDataUrl(afterSvg);
+    if (!beforeUrl || !afterUrl) {
       return null;
     }
 
     return {
       kind: "nodes",
       before: {
-        dataUrl: svgDataUrl(beforeSvg),
+        dataUrl: beforeUrl,
         label: `Before · ${nodeTargetLabel(baseDocument, nodeIds)}`,
       },
       after: {
-        dataUrl: svgDataUrl(afterSvg),
+        dataUrl: afterUrl,
         label: `After · ${nodeTargetLabel(prepared.previewDocument, nodeIds)}`,
       },
     };
@@ -219,10 +282,10 @@ export function createDesignMateProposalPreview(
   }
 }
 
-/** Warm the final text faces after an approved family or weight change. */
-export function ensureDesignMateProposalFonts(
+/** Load exact final text faces before an approved family or weight change. */
+export async function prepareDesignMateProposalFonts(
   prepared: PreparedDesignMateProposal,
-): void {
+): Promise<boolean> {
   if (
     !prepared.proposal.actions.some(
       (action) =>
@@ -230,25 +293,44 @@ export function ensureDesignMateProposalFonts(
         action.type === "set-font-weight",
     )
   ) {
-    return;
+    return true;
   }
   const seen = new Set<string>();
-  for (const nodeId of prepared.impact.changedNodeIds) {
+  const targetIds = prepared.proposal.actions.flatMap((action) =>
+    action.type === "set-font-family" ||
+    action.type === "set-font-weight"
+      ? [action.nodeId]
+      : [],
+  );
+  for (const nodeId of targetIds) {
     const node = prepared.previewDocument.nodes[nodeId];
     if (node?.type !== "text") {
-      continue;
+      return false;
     }
-    const key = `${node.fontFamily}\u0000${node.fontWeight}\u0000${node.fontStyle ?? "normal"}`;
+    const family = catalogEntry(node.fontFamily);
+    const style = node.fontStyle ?? "normal";
+    if (
+      !family ||
+      !family.weights.includes(node.fontWeight) ||
+      !family.styles.includes(style)
+    ) {
+      return false;
+    }
+    const key = `${family.name}\u0000${node.fontWeight}\u0000${style}`;
     if (seen.has(key)) {
       continue;
     }
     seen.add(key);
-    void fontStore.ensure(
-      node.fontFamily,
+    const bytes = await fontStore.ensure(
+      family.name,
       node.fontWeight,
-      node.fontStyle ?? "normal",
+      style,
     );
+    if (!bytes) {
+      return false;
+    }
   }
+  return true;
 }
 
 /**

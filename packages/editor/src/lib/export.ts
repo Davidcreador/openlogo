@@ -506,6 +506,7 @@ export function documentToSvg(
 export function nodesToSvg(
   document: LogoDocument,
   nodeIds: readonly string[],
+  frame?: Bounds,
 ): string | null {
   const boxes = nodeIds
     .map((id) => paintBounds(document, id))
@@ -513,11 +514,22 @@ export function nodesToSvg(
   if (boxes.length === 0) {
     return null;
   }
-  const minX = Math.min(...boxes.map((b) => b.x));
-  const minY = Math.min(...boxes.map((b) => b.y));
-  const width = Math.max(...boxes.map((b) => b.x + b.width)) - minX;
-  const height = Math.max(...boxes.map((b) => b.y + b.height)) - minY;
-  if (width <= 0 || height <= 0) {
+  const minX = frame?.x ?? Math.min(...boxes.map((b) => b.x));
+  const minY = frame?.y ?? Math.min(...boxes.map((b) => b.y));
+  const width =
+    frame?.width ??
+    Math.max(...boxes.map((b) => b.x + b.width)) - minX;
+  const height =
+    frame?.height ??
+    Math.max(...boxes.map((b) => b.y + b.height)) - minY;
+  if (
+    !Number.isFinite(minX) ||
+    !Number.isFinite(minY) ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
     return null;
   }
 

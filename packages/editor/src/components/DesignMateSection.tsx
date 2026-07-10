@@ -626,16 +626,25 @@ export function DesignMateSection() {
     try {
       const {
         applyPreparedDesignMateProposal,
-        ensureDesignMateProposalFonts,
+        prepareDesignMateProposalFonts,
       } = await import(
         "../lib/design-mate-proposal"
       );
       if (latestProposalAction.current !== actionId) {
         return;
       }
+      const fontsReady = await prepareDesignMateProposalFonts(prepared);
+      if (latestProposalAction.current !== actionId) {
+        return;
+      }
+      if (!fontsReady) {
+        setToast(
+          "The requested font face could not be loaded exactly, so the proposal was not applied.",
+        );
+        return;
+      }
       const outcome = applyPreparedDesignMateProposal(documentStore, prepared);
       if (outcome.status === "applied") {
-        ensureDesignMateProposalFonts(prepared);
         const removeApplied = (
           current: readonly PreparedDesignMateProposal[],
         ): readonly PreparedDesignMateProposal[] =>

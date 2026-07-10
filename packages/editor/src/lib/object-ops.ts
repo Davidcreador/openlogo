@@ -18,6 +18,7 @@ import {
   scalePathGeometry,
   translatePathGeometry,
   unitBounds,
+  visualBounds,
 } from "@openlogo/core";
 import { expandStroke } from "@openlogo/renderer";
 import { getCanvasKit } from "./canvaskit";
@@ -30,7 +31,10 @@ type Unit = { id: string; bounds: Bounds };
  * Selection units: a group counts as one unit with derived bounds, so
  * align/distribute move whole groups instead of scattering children.
  */
-function selectedUnits(nodeIds: readonly string[]): Unit[] {
+function selectedUnits(
+  nodeIds: readonly string[],
+  boundsMode: "visual" | "unrotated" = "visual",
+): Unit[] {
   const document = documentStore.document;
   return nodeIds
     .map((id) => {
@@ -38,7 +42,10 @@ function selectedUnits(nodeIds: readonly string[]): Unit[] {
       if (!node || node.locked) {
         return null;
       }
-      const bounds = unitBounds(document, id);
+      const bounds =
+        boundsMode === "visual"
+          ? visualBounds(document, id)
+          : unitBounds(document, id);
       return bounds ? { id, bounds } : null;
     })
     .filter((unit): unit is Unit => unit !== null);
@@ -162,7 +169,7 @@ export function flipNodes(
   axis: "horizontal" | "vertical",
 ): void {
   const document = documentStore.document;
-  const units = selectedUnits(nodeIds);
+  const units = selectedUnits(nodeIds, "unrotated");
   const bounds = unionBounds(units);
   if (!bounds) {
     return;

@@ -13,7 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   applyPreparedDesignMateProposal,
   createDesignMateProposalPreview,
-  ensureDesignMateProposalFonts,
+  prepareDesignMateProposalFonts,
 } from "./design-mate-proposal";
 import { fontStore } from "./font-store";
 
@@ -113,10 +113,9 @@ describe("Design Mate proposal previews", () => {
     ).toBeNull();
   });
 
-  it("uses a fixed artboard frame for geometry previews", () => {
+  it("uses one bounded frame for both geometry previews", () => {
     const document = createInitialDocument();
     const text = firstTextNode(document);
-    const artboard = document.artboards[0]!;
     const prepared = prepare(document, {
       id: "test-geometry-preview",
       label: "Move wordmark",
@@ -136,13 +135,58 @@ describe("Design Mate proposal previews", () => {
     const after = decodeSvg(preview!.after.dataUrl);
 
     expect(preview?.kind).toBe("nodes");
-    expect(preview?.before.label).toBe(`Before · ${artboard.name}`);
-    expect(before).toContain(`width="${artboard.width}"`);
-    expect(before).toContain(`height="${artboard.height}"`);
+    expect(before.match(/viewBox="([^"]+)"/)?.[1]).toBe(
+      after.match(/viewBox="([^"]+)"/)?.[1],
+    );
     expect(after).not.toBe(before);
   });
 
-  it("warms the final face after approved font-family changes", () => {
+  it("uses one frame for bounds-changing style previews", () => {
+    const document = createInitialDocument();
+    const text = firstTextNode(document);
+    const prepared = prepare(document, {
+      id: "test-font-size-preview",
+      label: "Increase wordmark size",
+      risk: "medium",
+      actions: [
+        {
+          type: "set-font-size",
+          nodeId: text.id,
+          fontSize: text.fontSize + 20,
+        },
+      ],
+    });
+    const preview = createDesignMateProposalPreview(document, prepared);
+    const before = decodeSvg(preview!.before.dataUrl);
+    const after = decodeSvg(preview!.after.dataUrl);
+
+    expect(before.match(/viewBox="([^"]+)"/)?.[1]).toBe(
+      after.match(/viewBox="([^"]+)"/)?.[1],
+    );
+    expect(after).not.toBe(before);
+  });
+
+  it("omits oversized SVG previews", () => {
+    const document = createInitialDocument();
+    const text = firstTextNode(document);
+    text.content = "x".repeat(300_000);
+    const prepared = prepare(document, {
+      id: "test-bounded-preview",
+      label: "Fade oversized wordmark",
+      risk: "medium",
+      actions: [
+        {
+          type: "set-opacity",
+          nodeId: text.id,
+          opacity: 0.5,
+        },
+      ],
+    });
+
+    expect(createDesignMateProposalPreview(document, prepared)).toBeNull();
+  });
+
+  it("loads the exact final face before approved font changes", async () => {
     const document = createInitialDocument();
     const text = firstTextNode(document);
     const prepared = prepare(document, {
@@ -162,11 +206,39 @@ describe("Design Mate proposal previews", () => {
         },
       ],
     });
-    const ensure = vi.spyOn(fontStore, "ensure").mockResolvedValue(null);
+    const ensure = vi
+      .spyOn(fontStore, "ensure")
+      .mockResolvedValue(new ArrayBuffer(1));
 
-    ensureDesignMateProposalFonts(prepared);
+    await expect(prepareDesignMateProposalFonts(prepared)).resolves.toBe(true);
 
     expect(ensure).toHaveBeenCalledWith("Montserrat", 600, "normal");
+    expect(createDesignMateProposalPreview(document, prepared)).toBeNull();
+    ensure.mockRestore();
+  });
+
+  it("rejects unavailable font faces before apply", async () => {
+    const document = createInitialDocument();
+    const text = firstTextNode(document);
+    const prepared = prepare(document, {
+      id: "test-font-unavailable",
+      label: "Use unavailable font",
+      risk: "medium",
+      actions: [
+        {
+          type: "set-font-family",
+          nodeId: text.id,
+          fontFamily: "Definitely Not A Catalog Family",
+        },
+      ],
+    });
+    const ensure = vi.spyOn(fontStore, "ensure");
+
+    await expect(prepareDesignMateProposalFonts(prepared)).resolves.toBe(
+      false,
+    );
+    expect(ensure).not.toHaveBeenCalled();
+    ensure.mockRestore();
   });
 });
 
@@ -181,7 +253,7 @@ describe("applying a prepared Design Mate proposal", () => {
       {
         id: "test-atomic-apply",
         label: "Update wordmark",
-        risk: "low",
+        risk: "medium",
         actions: [
           {
             type: "set-text-content",
