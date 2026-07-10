@@ -424,6 +424,8 @@ export const DESIGN_MATE_CHAT_LIMITS = Object.freeze({
   assistantTextLength: 16_000,
   deltaTextLength: 4_000,
   deltas: 512,
+  proposalCandidates: 4,
+  proposalSerializedBytes: 48 * 1_024,
   attachments: 3,
   attachmentBytes: 700 * 1_024,
   attachmentMinimumDimension: 32,
@@ -513,10 +515,23 @@ export type DesignMateChatWireRequest = {
   readonly document?: never;
 };
 
-export type DesignMateChatProviderChunk = {
+export type DesignMateChatTextDeltaChunk = {
   readonly type: "text-delta";
   readonly delta: string;
 };
+
+/**
+ * Untrusted structural intent from a provider. The client-side orchestrator
+ * must compile it against the frozen turn snapshot before it can reach UI.
+ */
+export type DesignMateChatProposalCandidateChunk = {
+  readonly type: "proposal-candidate";
+  readonly proposal: DesignMateProposal;
+};
+
+export type DesignMateChatProviderChunk =
+  | DesignMateChatTextDeltaChunk
+  | DesignMateChatProposalCandidateChunk;
 
 export interface DesignMateChatProvider {
   readonly id: string;
@@ -582,6 +597,27 @@ export type DesignMateChatTextDeltaEvent = {
   readonly delta: string;
 };
 
+export type DesignMateChatProposalPreparedEvent = {
+  readonly type: "proposal-prepared";
+  readonly messageId: string;
+  readonly index: number;
+  readonly prepared: PreparedDesignMateProposal;
+};
+
+export type DesignMateChatProposalRejectedEvent = {
+  readonly type: "proposal-rejected";
+  readonly messageId: string;
+  readonly index: number;
+  readonly proposalId: string;
+  readonly error: DesignMateProposalError;
+};
+
+export type DesignMateChatRejectedProposal = {
+  readonly index: number;
+  readonly proposalId: string;
+  readonly error: DesignMateProposalError;
+};
+
 export type DesignMateChatMessageEndEvent = {
   readonly type: "message-end";
   readonly message: DesignMateChatMessage;
@@ -607,6 +643,8 @@ export type DesignMateChatEvent =
   | DesignMateChatContextEvent
   | DesignMateChatMessageStartEvent
   | DesignMateChatTextDeltaEvent
+  | DesignMateChatProposalPreparedEvent
+  | DesignMateChatProposalRejectedEvent
   | DesignMateChatMessageEndEvent
   | DesignMateChatCompletedEvent
   | DesignMateChatFailedEvent
@@ -624,6 +662,8 @@ export type DesignMateChatResult =
   | (DesignMateChatResultBase & {
       readonly status: "completed";
       readonly message: DesignMateChatMessage;
+      readonly preparedProposals: readonly PreparedDesignMateProposal[];
+      readonly rejectedProposals: readonly DesignMateChatRejectedProposal[];
     })
   | (DesignMateChatResultBase & {
       readonly status: "failed";

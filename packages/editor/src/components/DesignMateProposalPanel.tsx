@@ -8,6 +8,11 @@ export type DesignMateProposalPanelProps = {
   readonly proposals: readonly PreparedDesignMateProposal[];
   readonly stale: boolean;
   readonly applyingId: string | null;
+  readonly busy?: boolean;
+  readonly heading?: string;
+  readonly description?: string;
+  readonly staleMessage?: string;
+  readonly defaultRationale?: string;
   readonly onApply: (
     prepared: PreparedDesignMateProposal,
   ) => void | Promise<void>;
@@ -44,6 +49,8 @@ function ProposalCard({
   prepared,
   stale,
   applyingId,
+  busy,
+  defaultRationale,
   onApply,
   onDismiss,
 }: {
@@ -51,6 +58,8 @@ function ProposalCard({
   readonly prepared: PreparedDesignMateProposal;
   readonly stale: boolean;
   readonly applyingId: string | null;
+  readonly busy: boolean;
+  readonly defaultRationale: string;
   readonly onApply: (
     prepared: PreparedDesignMateProposal,
   ) => void | Promise<void>;
@@ -63,7 +72,7 @@ function ProposalCard({
   );
   const { proposal, impact } = prepared;
   const applying = applyingId === proposal.id;
-  const applyDisabled = stale || applyingId !== null;
+  const applyDisabled = stale || busy;
   const risk = RISK_BADGES[proposal.risk];
 
   return (
@@ -88,7 +97,7 @@ function ProposalCard({
 
       <p className="mx-0 mb-0 mt-5 text-[10.5px] leading-[1.45] text-ink-dim">
         {proposal.rationale ??
-          "A conservative change tied to an objective review finding."}
+          defaultRationale}
       </p>
 
       {impact.summaries.length > 0 && (
@@ -139,7 +148,7 @@ function ProposalCard({
           type="button"
           className={SECONDARY}
           onClick={() => onDismiss(proposal.id)}
-          disabled={applyingId !== null}
+          disabled={busy}
           aria-label={`Dismiss ${proposal.label}`}
         >
           Dismiss
@@ -154,8 +163,8 @@ function ProposalCard({
           }
           title={
             stale
-              ? "Re-run the design review before applying this proposal"
-              : applyingId !== null && !applying
+              ? "Refresh Design Mate suggestions before applying this proposal"
+              : busy && !applying
                 ? "Another proposal is being applied"
                 : undefined
           }
@@ -172,6 +181,11 @@ export function DesignMateProposalPanel({
   proposals,
   stale,
   applyingId,
+  busy = applyingId !== null,
+  heading = "Suggested changes",
+  description = "Conservative edits from objective findings.",
+  staleMessage = "The document changed. Re-run the review to apply a suggestion.",
+  defaultRationale = "A conservative change tied to an objective review finding.",
   onApply,
   onDismiss,
 }: DesignMateProposalPanelProps) {
@@ -181,7 +195,7 @@ export function DesignMateProposalPanel({
     <section
       className="rounded-[9px] border border-[rgb(79_107_246/0.22)] bg-accent-soft p-8"
       aria-labelledby={headingId}
-      aria-busy={applyingId !== null}
+      aria-busy={busy}
     >
       <div className="flex items-start justify-between gap-8">
         <div>
@@ -189,10 +203,10 @@ export function DesignMateProposalPanel({
             id={headingId}
             className="m-0 text-[10.5px] font-[650] uppercase tracking-[0.07em] text-ink"
           >
-            Suggested changes
+            {heading}
           </h3>
           <p className="m-0 mt-2 text-[9.5px] leading-[1.4] text-ink-dim">
-            Conservative edits from objective findings.
+            {description}
           </p>
         </div>
         <span className="shrink-0 rounded-full bg-card px-6 py-2 text-[8.5px] tabular-nums text-ink-dim">
@@ -208,7 +222,7 @@ export function DesignMateProposalPanel({
       >
         {stale
           ? "These proposals are out of date and cannot be applied."
-          : applyingId
+          : busy
             ? "Applying Design Mate proposal."
             : `${proposals.length} Design Mate ${
                 proposals.length === 1 ? "proposal" : "proposals"
@@ -217,7 +231,7 @@ export function DesignMateProposalPanel({
 
       {stale && (
         <p className="mx-0 mb-0 mt-7 rounded-[6px] border border-[#e7c883] bg-[#fff8e8] px-7 py-5 text-[9.5px] leading-[1.4] text-[#73551f]">
-          The document changed. Re-run the review to apply a suggestion.
+          {staleMessage}
         </p>
       )}
 
@@ -229,6 +243,8 @@ export function DesignMateProposalPanel({
             prepared={prepared}
             stale={stale}
             applyingId={applyingId}
+            busy={busy}
+            defaultRationale={defaultRationale}
             onApply={onApply}
             onDismiss={onDismiss}
           />

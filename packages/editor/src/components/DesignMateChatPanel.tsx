@@ -7,6 +7,7 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
+import type { LogoDocument } from "@openlogo/core";
 import {
   MessageCircle,
   Paperclip,
@@ -28,6 +29,7 @@ import {
   type DesignMateChatProvider,
   type DesignMateSelection,
   type DesignMateVisualAttachment,
+  type PreparedDesignMateProposal,
 } from "@openlogo/design-mate";
 import {
   DESIGN_MATE_CHAT_ENDPOINT,
@@ -39,6 +41,7 @@ import {
   isDesignMateTranscriptNearBottom,
   isDesignMateChatAnswerStale,
   reduceDesignMateChatTranscript,
+  type DesignMateChatAnswerContext,
 } from "../lib/design-mate-chat";
 import {
   createDesignMateRequestSignature,
@@ -70,6 +73,20 @@ type ActiveRun = {
   readonly provider: DesignMateChatProvider;
 };
 
+export type DesignMateChatProposalBatch = {
+  readonly baseDocument: LogoDocument;
+  readonly answerContext: DesignMateChatAnswerContext;
+  readonly proposals: readonly PreparedDesignMateProposal[];
+  readonly rejectedCount: number;
+};
+
+export type DesignMateChatPanelProps = {
+  readonly disabled?: boolean;
+  readonly onRunningChange?: (running: boolean) => void;
+  readonly onProposalsClear?: () => void;
+  readonly onProposalsReady?: (batch: DesignMateChatProposalBatch) => void;
+};
+
 function isoNow(): string {
   return new Date().toISOString();
 }
@@ -87,7 +104,12 @@ function visualCaptureNote(
   return `${count} bounded ${count === 1 ? "preview" : "previews"} attached.`;
 }
 
-export function DesignMateChatPanel() {
+export function DesignMateChatPanel({
+  disabled = false,
+  onRunningChange,
+  onProposalsClear,
+  onProposalsReady,
+}: DesignMateChatPanelProps) {
   const document = useDocument();
   const documentGeneration = documentStore.documentGeneration;
   const committedRevision = documentStore.committedRevision;
@@ -210,6 +232,15 @@ export function DesignMateChatPanel() {
       : undefined;
   const running = transcript.activeTurn !== null;
 
+  useEffect(() => {
+    onRunningChange?.(running);
+    return () => {
+      if (running) {
+        onRunningChange?.(false);
+      }
+    };
+  }, [onRunningChange, running]);
+
   function isCurrentRun(runId: number, controller: AbortController): boolean {
     return (
       runSequence.current === runId &&
@@ -240,6 +271,9 @@ export function DesignMateChatPanel() {
   }
 
   function clear(): void {
+    if (disabled) {
+      return;
+    }
     runSequence.current += 1;
     controllerRef.current?.abort();
     controllerRef.current = null;
@@ -248,6 +282,7 @@ export function DesignMateChatPanel() {
     stickTranscriptToBottomRef.current = true;
     dispatch({ type: "clear" });
     setVisualNote(null);
+    onProposalsClear?.();
   }
 
   async function sendPrompt(text = prompt): Promise<void> {
@@ -255,7 +290,11 @@ export function DesignMateChatPanel() {
       0,
       DESIGN_MATE_CHAT_LIMITS.userTextLength,
     );
-    if (userText.length === 0 || controllerRef.current !== null) {
+    if (
+      disabled ||
+      userText.length === 0 ||
+      controllerRef.current !== null
+    ) {
       return;
     }
 
@@ -365,6 +404,9 @@ export function DesignMateChatPanel() {
       return;
     }
     try {
+      const preparedProposals: PreparedDesignMateProposal[] = [];
+      let rejectedCount = 0;
+      let completed = false;
       const stream = streamDesignMateChat(
         committedDocument,
         selection,
@@ -388,7 +430,22 @@ export function DesignMateChatPanel() {
         if (!isCurrentRun(runId, controller)) {
           return;
         }
+        if (event.type === "proposal-prepared") {
+          preparedProposals.push(event.prepared);
+        } else if (event.type === "proposal-rejected") {
+          rejectedCount += 1;
+        } else if (event.type === "completed") {
+          completed = true;
+        }
         dispatch({ type: "stream-event", turnId, event });
+      }
+      if (completed && isCurrentRun(runId, controller)) {
+        onProposalsReady?.({
+          baseDocument: committedDocument,
+          answerContext: { identity, request },
+          proposals: preparedProposals,
+          rejectedCount,
+        });
       }
     } catch {
       if (!isCurrentRun(runId, controller)) {
@@ -441,7 +498,7 @@ export function DesignMateChatPanel() {
             Ask Design Mate
           </h3>
           <p className="m-0 mt-2 text-[9.5px] leading-[1.4] text-ink-dim">
-            Conversation only — it never changes the canvas.
+            Suggestions require your approval — nothing changes automatically.
           </p>
         </div>
         <span className="shrink-0 rounded-full bg-accent-soft px-6 py-2 text-[8px] font-[650] uppercase tracking-[0.05em] text-accent">
@@ -472,7 +529,7 @@ export function DesignMateChatPanel() {
                 type="button"
                 className="rounded-[6px] border border-panel-hairline bg-card px-7 py-5 text-left text-[10px] leading-[1.35] text-ink transition-colors hover:border-accent hover:text-accent"
                 onClick={() => void sendPrompt(starter)}
-                disabled={running}
+                disabled={running || disabled}
               >
                 {starter}
               </button>
@@ -559,7 +616,7 @@ export function DesignMateChatPanel() {
           onKeyDown={onComposerKeyDown}
           placeholder="Ask about hierarchy, distinctiveness, scale, or the brief…"
           aria-describedby={visualNote ? statusId : undefined}
-          disabled={running}
+          disabled={running || disabled}
         />
         <div className="flex flex-wrap items-center justify-between gap-5">
           <div className="flex items-center gap-5">
@@ -567,7 +624,10 @@ export function DesignMateChatPanel() {
               type="button"
               className={SECONDARY}
               onClick={clear}
-              disabled={transcript.entries.length === 0 && !running}
+              disabled={
+                disabled ||
+                (transcript.entries.length === 0 && !running)
+              }
             >
               <Trash2 size={11} aria-hidden="true" />
               Clear
@@ -577,7 +637,7 @@ export function DesignMateChatPanel() {
                 type="button"
                 className={SECONDARY}
                 onClick={() => void sendPrompt(retryPrompt)}
-                disabled={running}
+                disabled={running || disabled}
               >
                 <RotateCcw size={11} aria-hidden="true" />
                 Retry
@@ -598,7 +658,9 @@ export function DesignMateChatPanel() {
               type="button"
               className={PRIMARY}
               onClick={() => void sendPrompt()}
-              disabled={running || prompt.trim().length === 0}
+              disabled={
+                running || disabled || prompt.trim().length === 0
+              }
             >
               <Send size={11} aria-hidden="true" />
               Send

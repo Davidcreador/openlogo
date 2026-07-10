@@ -1,6 +1,8 @@
 import {
   DESIGN_MATE_CHAT_LIMITS,
+  DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
   type DesignMateChatPrompt,
+  type DesignMateChatProviderChunk,
   type DesignMateProviderError,
 } from "@openlogo/design-mate";
 import { describe, expect, it, vi } from "vitest";
@@ -87,9 +89,37 @@ async function collect(
 ): Promise<string> {
   const deltas: string[] = [];
   for await (const chunk of modelTransport.stream(prompt(), signal)) {
-    deltas.push(chunk.delta);
+    if (chunk.type === "text-delta") {
+      deltas.push(chunk.delta);
+    }
   }
   return deltas.join("");
+}
+
+async function collectChunks(
+  modelTransport: DesignMateModelTransport,
+): Promise<readonly DesignMateChatProviderChunk[]> {
+  const chunks: DesignMateChatProviderChunk[] = [];
+  for await (const chunk of modelTransport.stream(prompt())) {
+    chunks.push(chunk);
+  }
+  return chunks;
+}
+
+function proposalArguments(): Record<string, unknown> {
+  return {
+    label: "Create an icon variant",
+    rationale: "A square variant improves small-size usage.",
+    risk: "low",
+    sourceFindingIds: null,
+    actions: [
+      {
+        type: "create-logo-variant",
+        sourceArtboardId: "artboard-primary",
+        purpose: "icon",
+      },
+    ],
+  };
 }
 
 async function captureError(
@@ -140,6 +170,13 @@ describe("OpenAI Responses model transport", () => {
       }[];
       readonly stream: boolean;
       readonly store: boolean;
+      readonly tool_choice: string;
+      readonly parallel_tool_calls: boolean;
+      readonly tools: readonly {
+        readonly type: string;
+        readonly name: string;
+        readonly strict: boolean;
+      }[];
     };
     expect(body).toMatchObject({
       model: "required-model",
@@ -147,7 +184,16 @@ describe("OpenAI Responses model transport", () => {
       max_output_tokens: 1_234,
       stream: true,
       store: false,
+      tool_choice: "auto",
+      parallel_tool_calls: false,
     });
+    expect(body.tools).toEqual([
+      expect.objectContaining({
+        type: "function",
+        name: DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
+        strict: true,
+      }),
+    ]);
     expect(capturedInit?.redirect).toBe("error");
     expect(body.input.map((message) => message.role)).toEqual([
       "user",
@@ -189,6 +235,176 @@ describe("OpenAI Responses model transport", () => {
     await expect(collect(transport(fetchMock))).resolves.toBe(
       "Balance ✨ and rhythm.",
     );
+  });
+
+  it("streams a validated proposal from official function-call events without text", async () => {
+    const argumentsJson = JSON.stringify(proposalArguments());
+    const payload = [
+      frame("response.output_item.added", {
+        output_index: 0,
+        item: {
+          id: "function-call-1",
+          type: "function_call",
+          name: DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
+          arguments: "",
+        },
+      }),
+      frame("response.function_call_arguments.delta", {
+        item_id: "function-call-1",
+        output_index: 0,
+        delta: argumentsJson,
+      }),
+      frame("response.function_call_arguments.done", {
+        item_id: "function-call-1",
+        output_index: 0,
+        arguments: argumentsJson,
+      }),
+      frame("response.output_item.done", {
+        output_index: 0,
+        item: {
+          id: "function-call-1",
+          type: "function_call",
+          name: DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
+          arguments: argumentsJson,
+        },
+      }),
+      frame("response.completed", {
+        response: { status: "completed" },
+      }),
+    ].join("");
+    const fetchMock = vi.fn(
+      async () => sseResponse(payload),
+    ) as unknown as typeof fetch;
+
+    const chunks = await collectChunks(transport(fetchMock));
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]).toMatchObject({
+      type: "proposal-candidate",
+      proposal: {
+        id: expect.stringMatching(/^chat-proposal-/),
+        label: "Create an icon variant",
+        actions: [
+          {
+            type: "create-logo-variant",
+            sourceArtboardId: "artboard-primary",
+            purpose: "icon",
+          },
+        ],
+      },
+    });
+    expect(
+      chunks[0]?.type === "proposal-candidate" &&
+        Object.isFrozen(chunks[0].proposal),
+    ).toBe(true);
+  });
+
+  it("accepts item-wrapped final arguments and optional output-item names", async () => {
+    const argumentsJson = JSON.stringify(proposalArguments());
+    const payload = [
+      frame("response.output_item.added", {
+        output_index: 0,
+        item: {
+          id: "function-call-wrapped",
+          type: "function_call",
+          name: DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
+          arguments: "",
+        },
+      }),
+      frame("response.function_call_arguments.done", {
+        output_index: 0,
+        item: {
+          id: "function-call-wrapped",
+          name: DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
+          arguments: argumentsJson,
+        },
+      }),
+      frame("response.output_item.done", {
+        output_index: 0,
+        item: {
+          id: "function-call-wrapped",
+          type: "function_call",
+          arguments: argumentsJson,
+        },
+      }),
+      frame("response.completed", {
+        response: { status: "completed" },
+      }),
+    ].join("");
+    const candidate = transport(
+      vi.fn(async () => sseResponse(payload)) as unknown as typeof fetch,
+    );
+    await expect(collectChunks(candidate)).resolves.toEqual([
+      expect.objectContaining({ type: "proposal-candidate" }),
+    ]);
+  });
+
+  it("fails closed on unknown, malformed, mismatched, and incomplete function calls", async () => {
+    const argumentsJson = JSON.stringify(proposalArguments());
+    const added = (name = DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME) =>
+      frame("response.output_item.added", {
+        output_index: 0,
+        item: {
+          id: "function-call-invalid",
+          type: "function_call",
+          name,
+          arguments: "",
+        },
+      });
+    const cases = [
+      added("arbitrary_command"),
+      [
+        added(),
+        frame("response.function_call_arguments.done", {
+          item_id: "function-call-invalid",
+          output_index: 0,
+          name: DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
+          arguments: "{",
+        }),
+      ].join(""),
+      [
+        added(),
+        frame("response.function_call_arguments.delta", {
+          item_id: "function-call-invalid",
+          output_index: 0,
+          delta: argumentsJson,
+        }),
+        frame("response.function_call_arguments.done", {
+          item_id: "function-call-invalid",
+          output_index: 0,
+          name: DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
+          arguments: JSON.stringify({
+            ...proposalArguments(),
+            label: "Mismatched final arguments",
+          }),
+        }),
+      ].join(""),
+      [
+        added(),
+        frame("response.completed", {
+          response: { status: "completed" },
+        }),
+      ].join(""),
+      [
+        added(),
+        frame("response.function_call_arguments.delta", {
+          item_id: "function-call-invalid",
+          output_index: 0,
+          delta: "x".repeat(
+            DESIGN_MATE_CHAT_LIMITS.proposalSerializedBytes + 1,
+          ),
+        }),
+      ].join(""),
+    ];
+
+    for (const payload of cases) {
+      const candidate = transport(
+        vi.fn(async () => sseResponse(payload)) as unknown as typeof fetch,
+      );
+      await expect(captureError(candidate)).resolves.toMatchObject({
+        code: "invalid-chat-response",
+        retryable: false,
+      });
+    }
   });
 
   it.each([

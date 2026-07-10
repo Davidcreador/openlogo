@@ -15,6 +15,7 @@ import {
   makeDesignMateProviderError,
   snapshotValidDesignMateChatProviderChunk,
   snapshotValidDesignMateChatWireRequest,
+  type DesignMateChatProviderChunk,
   type DesignMateProviderError,
   type DesignMateProviderErrorCode,
 } from "@openlogo/design-mate";
@@ -1054,10 +1055,7 @@ export function createDesignMateService(
         upstreamTimer.unref();
         providerId = transport.id;
 
-        let stream: AsyncIterable<{
-          readonly type: "text-delta";
-          readonly delta: string;
-        }>;
+        let stream: AsyncIterable<DesignMateChatProviderChunk>;
         try {
           stream = transport.stream(prompt, upstreamController.signal);
           if (
@@ -1103,6 +1101,7 @@ export function createDesignMateService(
         logStatus = 200;
 
         let deltaCount = 0;
+        let proposalCount = 0;
         let textLength = 0;
         try {
           for await (const candidate of streamWithAbort(
@@ -1112,20 +1111,30 @@ export function createDesignMateService(
             if (upstreamController.signal.aborted) {
               throw new Error("aborted");
             }
-            deltaCount += 1;
-            if (deltaCount > DESIGN_MATE_CHAT_LIMITS.deltas) {
-              throw new InvalidTransportOutput();
-            }
             const chunk =
               snapshotValidDesignMateChatProviderChunk(candidate);
             if (!chunk) {
               throw new InvalidTransportOutput();
             }
-            textLength += chunk.delta.length;
-            if (
-              textLength > DESIGN_MATE_CHAT_LIMITS.assistantTextLength
-            ) {
-              throw new InvalidTransportOutput();
+            if (chunk.type === "text-delta") {
+              deltaCount += 1;
+              if (deltaCount > DESIGN_MATE_CHAT_LIMITS.deltas) {
+                throw new InvalidTransportOutput();
+              }
+              textLength += chunk.delta.length;
+              if (
+                textLength > DESIGN_MATE_CHAT_LIMITS.assistantTextLength
+              ) {
+                throw new InvalidTransportOutput();
+              }
+            } else {
+              proposalCount += 1;
+              if (
+                proposalCount >
+                DESIGN_MATE_CHAT_LIMITS.proposalCandidates
+              ) {
+                throw new InvalidTransportOutput();
+              }
             }
             await writeSseFrame(
               response,
@@ -1136,7 +1145,7 @@ export function createDesignMateService(
           if (upstreamController.signal.aborted) {
             throw new Error("aborted");
           }
-          if (deltaCount === 0) {
+          if (deltaCount === 0 && proposalCount === 0) {
             throw new InvalidTransportOutput();
           }
           await writeSseFrame(
