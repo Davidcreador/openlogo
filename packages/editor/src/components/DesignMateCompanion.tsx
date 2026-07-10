@@ -2,6 +2,7 @@ import {
   Component,
   lazy,
   Suspense,
+  useRef,
   useState,
   type ErrorInfo,
   type ReactNode,
@@ -69,6 +70,7 @@ function MateMark({ thinking = false }: { thinking?: boolean }) {
 export function DesignMateCompanion() {
   const [open, setOpen] = useState(false);
   const [activated, setActivated] = useState(false);
+  const launcherRef = useRef<HTMLButtonElement | null>(null);
   const status = useEditorStore((state) => state.designMateStatus);
   const snapshot = useEditorStore((state) => state.designMateReview);
   const findingCount = snapshot?.review.findings.length ?? 0;
@@ -88,6 +90,11 @@ export function DesignMateCompanion() {
   function toggle(): void {
     setActivated(true);
     setOpen((current) => !current);
+  }
+
+  function close(): void {
+    setOpen(false);
+    requestAnimationFrame(() => launcherRef.current?.focus());
   }
 
   return (
@@ -127,7 +134,7 @@ export function DesignMateCompanion() {
             <button
               type="button"
               className="grid h-28 w-28 shrink-0 place-items-center rounded-m text-chrome-dim transition-colors duration-140 ease-studio hover:bg-chrome-raised hover:text-chrome-text"
-              onClick={() => setOpen(false)}
+              onClick={close}
               aria-label="Close Design Mate"
             >
               <X size={14} aria-hidden="true" />
@@ -155,6 +162,7 @@ export function DesignMateCompanion() {
       )}
 
       <button
+        ref={launcherRef}
         type="button"
         data-design-mate-trigger
         className={`pointer-events-auto group flex min-w-216 items-center gap-9 rounded-[16px] border px-7 py-7 text-left shadow-[0_2px_7px_rgb(28_25_33/0.16),0_12px_32px_rgb(28_25_33/0.15)] transition-[transform,background-color,border-color,box-shadow] duration-180 ease-studio hover:-translate-y-1 hover:shadow-[0_3px_9px_rgb(28_25_33/0.18),0_16px_40px_rgb(28_25_33/0.2)] ${
