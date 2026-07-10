@@ -1,4 +1,13 @@
-import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  memo,
+  Suspense,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 // Aliased: this file already imports the domain `Effect` (layer effect) type.
 import { Effect as Fx } from "effect";
 import {
@@ -54,7 +63,6 @@ import {
 } from "@openlogo/core";
 import { catalogEntry, nearestWeight } from "../lib/font-catalog";
 import { fontStore } from "../lib/font-store";
-import { DesignMateSection } from "./DesignMateSection";
 import { FontPicker } from "./FontPicker";
 import { PaintEditor } from "./PaintEditor";
 import {
@@ -85,6 +93,12 @@ import {
 import { convertTextToPath } from "../lib/text-to-path";
 import { documentStore, useDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
+
+const DesignMateSection = lazy(() =>
+  import("./DesignMateSection").then((module) => ({
+    default: module.DesignMateSection,
+  })),
+);
 
 const WEIGHT_LABELS: Record<number, string> = {
   400: "Regular",
@@ -2549,7 +2563,15 @@ export function Inspector() {
         </section>
       )}
       <SwatchesSection />
-      <DesignMateSection />
+      <Suspense
+        fallback={
+          <section className={SECTION} aria-busy="true">
+            <h2 className={SECTION_H2}>Design mate</h2>
+          </section>
+        }
+      >
+        <DesignMateSection />
+      </Suspense>
       </div>
       {/* Bottom-anchored and never squeezed by the card above: layout
           changes there must not move the rows (double-click rename
