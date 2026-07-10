@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DESIGN_MATE_CHAT_LIMITS,
   assembleDesignMateChatPrompt,
+  assembleDesignMateChatWirePrompt,
   buildDocumentIdentity,
   createFakeDesignMateChatProvider,
   createFallbackDesignMateChatProvider,
@@ -10,6 +11,7 @@ import {
   makeDesignMateProviderError,
   orchestrateDesignMateChat,
   prepareDesignMateChatRequest,
+  toDesignMateChatWireRequest,
   type DesignMateChatEvent,
   type DesignMateChatResult,
   type DesignMateChatTurnRequest,
@@ -98,8 +100,12 @@ describe("chat prompt assembly", () => {
     const request = makeRequest(true);
     const first = assembleDesignMateChatPrompt(request);
     const second = assembleDesignMateChatPrompt(request);
+    const fromWire = assembleDesignMateChatWirePrompt(
+      toDesignMateChatWireRequest(request),
+    );
 
     expect(first).toEqual(second);
+    expect(fromWire).toEqual(first);
     expect(first.system).toContain("logo-design expert");
     expect(first.system).toContain("Bounded DesignContext JSON");
     expect(first.system).toContain("proposal approval pipeline");

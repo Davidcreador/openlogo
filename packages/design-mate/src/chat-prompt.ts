@@ -3,6 +3,7 @@ import {
   type DesignMateChatPromptImage,
   type DesignMateChatPromptMessage,
   type DesignMateChatTurnRequest,
+  type DesignMateChatWireRequest,
 } from "./contracts";
 import { toDesignMateChatWireRequest } from "./chat-request";
 import { deepFreeze } from "./snapshot";
@@ -29,10 +30,9 @@ function canonicalJson(value: unknown): string {
  * DesignContext projection crosses this boundary; the LogoDocument snapshot
  * is deliberately never inspected or serialized here.
  */
-export function assembleDesignMateChatPrompt(
-  request: DesignMateChatTurnRequest,
+export function assembleDesignMateChatWirePrompt(
+  wire: DesignMateChatWireRequest,
 ): DesignMateChatPrompt {
-  const wire = toDesignMateChatWireRequest(request);
   const contextJson = canonicalJson(wire.context);
   const system = [
     "You are Design Mate, a logo-design expert in a manual-first vector design tool.",
@@ -69,4 +69,17 @@ export function assembleDesignMateChatPrompt(
   );
 
   return deepFreeze({ system, messages, images });
+}
+
+/**
+ * Local-provider convenience overload. Remote services should validate and
+ * snapshot their wire input, then call `assembleDesignMateChatWirePrompt`
+ * directly so a LogoDocument is never reconstructed.
+ */
+export function assembleDesignMateChatPrompt(
+  request: DesignMateChatTurnRequest,
+): DesignMateChatPrompt {
+  return assembleDesignMateChatWirePrompt(
+    toDesignMateChatWireRequest(request),
+  );
 }
