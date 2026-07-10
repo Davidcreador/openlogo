@@ -54,6 +54,26 @@ type Item =
   | { kind: "header"; label: string }
   | { kind: "font"; family: FontFamily };
 
+/**
+ * Decide whether a focus move should dismiss the picker.
+ *
+ * Options are non-focusable `role="option"` rows, so clicking one blurs the
+ * search field with a null `relatedTarget`. Closing on that would unmount the
+ * panel before the option's click fires. Real outside dismissals are handled
+ * by the pointerdown listener (and by a non-null relatedTarget when focus
+ * moves to another control).
+ */
+export function shouldCloseFontPickerOnBlur(
+  panel: { contains(other: Node | null): boolean },
+  trigger: { contains(other: Node | null): boolean } | null,
+  relatedTarget: Node | null,
+): boolean {
+  if (relatedTarget == null) {
+    return false;
+  }
+  return !panel.contains(relatedTarget) && !trigger?.contains(relatedTarget);
+}
+
 function loadRecents(): string[] {
   try {
     const raw = localStorage.getItem(RECENTS_KEY);
@@ -113,6 +133,8 @@ function FontRow({
       } ${current ? "text-accent" : ""}`}
       style={{ height: ROW_H, fontFamily: ready ? `"${family.name}"` : undefined }}
       onPointerEnter={onHover}
+      // Keep search focused so the panel's blur handler never races the click.
+      onMouseDown={(event) => event.preventDefault()}
       onClick={() => onApply(family)}
     >
       <span className="truncate">{family.name}</span>
@@ -329,10 +351,12 @@ export function FontPicker({
           aria-label="Choose a font family"
           onKeyDown={onPanelKeyDown}
           onBlur={(event) => {
-            const next = event.relatedTarget as Node | null;
             if (
-              !event.currentTarget.contains(next) &&
-              !triggerRef.current?.contains(next)
+              shouldCloseFontPickerOnBlur(
+                event.currentTarget,
+                triggerRef.current,
+                event.relatedTarget as Node | null,
+              )
             ) {
               setOpen(false);
             }
