@@ -93,8 +93,8 @@ class DesignMateProposalErrorBoundary extends Component<
           role="alert"
           className="rounded-[7px] border border-[rgb(194_70_62/0.28)] bg-[#fdf1f0] px-9 py-7 text-[10.5px] leading-[1.45] text-danger"
         >
-          Suggested changes are unavailable. The review findings above are
-          still safe to use.
+          Suggested changes are unavailable. The other Design Mate tools are
+          still available.
         </div>
       );
     }
@@ -531,11 +531,40 @@ export function DesignMateSection() {
   }
 
   function receiveChatProposals(batch: DesignMateChatProposalBatch): void {
+    const currentDocument = documentStore.committedDocument;
+    const currentEditorState = useEditorStore.getState();
     if (
       batch.answerContext.identity.documentId !==
-        documentStore.committedDocument.id ||
+        currentDocument.id ||
       batch.answerContext.identity.generation !==
         documentStore.documentGeneration
+    ) {
+      return;
+    }
+    const currentScope = resolveEffectiveDesignMateScope(
+      currentEditorState.designMateScope,
+      currentDocument,
+      currentEditorState.selectedNodeIds,
+    );
+    const latestRequest = createDesignMateRequestSignature(currentScope, {
+      selectedNodeIds: currentEditorState.selectedNodeIds,
+      ...(currentEditorState.keyObjectId
+        ? { keyObjectId: currentEditorState.keyObjectId }
+        : {}),
+      ...(currentEditorState.activeGroupId
+        ? { activeGroupId: currentEditorState.activeGroupId }
+        : {}),
+    });
+    const currentIdentity = buildDocumentIdentity(currentDocument, {
+      generation: documentStore.documentGeneration,
+      revision: documentStore.committedRevision,
+    });
+    if (
+      isDesignMateChatAnswerStale(
+        batch.answerContext,
+        currentIdentity,
+        latestRequest,
+      )
     ) {
       return;
     }
@@ -568,9 +597,11 @@ export function DesignMateSection() {
     setChatProposalContext(
       proposals.length > 0 ? batch.answerContext : null,
     );
-    if (proposals.length === 0 && batch.rejectedCount > 0) {
+    if (batch.rejectedCount > 0) {
       setToast(
-        "Design Mate suggested a change, but it could not be prepared safely.",
+        `${batch.rejectedCount} Design Mate ${
+          batch.rejectedCount === 1 ? "suggestion" : "suggestions"
+        } could not be prepared safely.`,
       );
     }
   }
@@ -938,7 +969,8 @@ export function DesignMateSection() {
               }
             >
               <DesignMateChatPanel
-                onProposalTurnStart={clearChatProposals}
+                disabled={applyingProposal !== null}
+                onProposalsClear={clearChatProposals}
                 onProposalsReady={receiveChatProposals}
               />
             </Suspense>
@@ -975,6 +1007,7 @@ export function DesignMateSection() {
                     heading="Conversation suggestions"
                     description="Prepared from the latest completed Design Mate answer."
                     staleMessage="The canvas or conversation scope changed. Ask Design Mate again to refresh these suggestions."
+                    defaultRationale="A suggested change from your latest Design Mate conversation."
                     onApply={(prepared) =>
                       applyProposal(prepared, "chat")
                     }

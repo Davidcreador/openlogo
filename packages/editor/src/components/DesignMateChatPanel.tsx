@@ -81,7 +81,8 @@ export type DesignMateChatProposalBatch = {
 };
 
 export type DesignMateChatPanelProps = {
-  readonly onProposalTurnStart?: () => void;
+  readonly disabled?: boolean;
+  readonly onProposalsClear?: () => void;
   readonly onProposalsReady?: (batch: DesignMateChatProposalBatch) => void;
 };
 
@@ -103,7 +104,8 @@ function visualCaptureNote(
 }
 
 export function DesignMateChatPanel({
-  onProposalTurnStart,
+  disabled = false,
+  onProposalsClear,
   onProposalsReady,
 }: DesignMateChatPanelProps) {
   const document = useDocument();
@@ -258,6 +260,9 @@ export function DesignMateChatPanel({
   }
 
   function clear(): void {
+    if (disabled) {
+      return;
+    }
     runSequence.current += 1;
     controllerRef.current?.abort();
     controllerRef.current = null;
@@ -266,7 +271,7 @@ export function DesignMateChatPanel({
     stickTranscriptToBottomRef.current = true;
     dispatch({ type: "clear" });
     setVisualNote(null);
-    onProposalTurnStart?.();
+    onProposalsClear?.();
   }
 
   async function sendPrompt(text = prompt): Promise<void> {
@@ -274,7 +279,11 @@ export function DesignMateChatPanel({
       0,
       DESIGN_MATE_CHAT_LIMITS.userTextLength,
     );
-    if (userText.length === 0 || controllerRef.current !== null) {
+    if (
+      disabled ||
+      userText.length === 0 ||
+      controllerRef.current !== null
+    ) {
       return;
     }
 
@@ -328,7 +337,6 @@ export function DesignMateChatPanel({
       turnId,
       provider: providerSetup.provider,
     };
-    onProposalTurnStart?.();
     dispatch({
       type: "start-turn",
       turnId,
@@ -510,7 +518,7 @@ export function DesignMateChatPanel({
                 type="button"
                 className="rounded-[6px] border border-panel-hairline bg-card px-7 py-5 text-left text-[10px] leading-[1.35] text-ink transition-colors hover:border-accent hover:text-accent"
                 onClick={() => void sendPrompt(starter)}
-                disabled={running}
+                disabled={running || disabled}
               >
                 {starter}
               </button>
@@ -597,7 +605,7 @@ export function DesignMateChatPanel({
           onKeyDown={onComposerKeyDown}
           placeholder="Ask about hierarchy, distinctiveness, scale, or the brief…"
           aria-describedby={visualNote ? statusId : undefined}
-          disabled={running}
+          disabled={running || disabled}
         />
         <div className="flex flex-wrap items-center justify-between gap-5">
           <div className="flex items-center gap-5">
@@ -605,7 +613,10 @@ export function DesignMateChatPanel({
               type="button"
               className={SECONDARY}
               onClick={clear}
-              disabled={transcript.entries.length === 0 && !running}
+              disabled={
+                disabled ||
+                (transcript.entries.length === 0 && !running)
+              }
             >
               <Trash2 size={11} aria-hidden="true" />
               Clear
@@ -615,7 +626,7 @@ export function DesignMateChatPanel({
                 type="button"
                 className={SECONDARY}
                 onClick={() => void sendPrompt(retryPrompt)}
-                disabled={running}
+                disabled={running || disabled}
               >
                 <RotateCcw size={11} aria-hidden="true" />
                 Retry
@@ -636,7 +647,9 @@ export function DesignMateChatPanel({
               type="button"
               className={PRIMARY}
               onClick={() => void sendPrompt()}
-              disabled={running || prompt.trim().length === 0}
+              disabled={
+                running || disabled || prompt.trim().length === 0
+              }
             >
               <Send size={11} aria-hidden="true" />
               Send

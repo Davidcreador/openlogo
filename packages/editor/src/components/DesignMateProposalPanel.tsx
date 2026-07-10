@@ -12,6 +12,7 @@ export type DesignMateProposalPanelProps = {
   readonly heading?: string;
   readonly description?: string;
   readonly staleMessage?: string;
+  readonly defaultRationale?: string;
   readonly onApply: (
     prepared: PreparedDesignMateProposal,
   ) => void | Promise<void>;
@@ -49,6 +50,7 @@ function ProposalCard({
   stale,
   applyingId,
   busy,
+  defaultRationale,
   onApply,
   onDismiss,
 }: {
@@ -57,6 +59,7 @@ function ProposalCard({
   readonly stale: boolean;
   readonly applyingId: string | null;
   readonly busy: boolean;
+  readonly defaultRationale: string;
   readonly onApply: (
     prepared: PreparedDesignMateProposal,
   ) => void | Promise<void>;
@@ -94,7 +97,7 @@ function ProposalCard({
 
       <p className="mx-0 mb-0 mt-5 text-[10.5px] leading-[1.45] text-ink-dim">
         {proposal.rationale ??
-          "A conservative change tied to an objective review finding."}
+          defaultRationale}
       </p>
 
       {impact.summaries.length > 0 && (
@@ -182,6 +185,7 @@ export function DesignMateProposalPanel({
   heading = "Suggested changes",
   description = "Conservative edits from objective findings.",
   staleMessage = "The document changed. Re-run the review to apply a suggestion.",
+  defaultRationale = "A conservative change tied to an objective review finding.",
   onApply,
   onDismiss,
 }: DesignMateProposalPanelProps) {
@@ -218,7 +222,7 @@ export function DesignMateProposalPanel({
       >
         {stale
           ? "These proposals are out of date and cannot be applied."
-          : applyingId
+          : busy
             ? "Applying Design Mate proposal."
             : `${proposals.length} Design Mate ${
                 proposals.length === 1 ? "proposal" : "proposals"
@@ -240,6 +244,7 @@ export function DesignMateProposalPanel({
             stale={stale}
             applyingId={applyingId}
             busy={busy}
+            defaultRationale={defaultRationale}
             onApply={onApply}
             onDismiss={onDismiss}
           />
