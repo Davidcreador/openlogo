@@ -40,6 +40,7 @@ import {
   RotateCw,
   Shapes,
   SlidersHorizontal,
+  Sparkles,
   Spline,
   Square,
   Type,
@@ -121,6 +122,8 @@ const NODE_ICONS = {
   text: Type,
   group: Folder,
 } as const;
+
+const INSPECTOR_VIEWS = ["properties", "layers", "review"] as const;
 
 /* Recurring utility recipes. Each section is its own card on the panel's
    paper background; fields share the warm sunken look with an accent
@@ -2662,9 +2665,10 @@ function MultiDesignSection({
 
 export function Inspector() {
   const document = useDocument();
-  const [activeView, setActiveView] = useState<"properties" | "layers">(
-    "properties",
-  );
+  const activeView = useEditorStore((state) => state.inspectorView);
+  const setActiveView = useEditorStore((state) => state.setInspectorView);
+  const designMateReview = useEditorStore((state) => state.designMateReview);
+  const designMateStatus = useEditorStore((state) => state.designMateStatus);
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   // Selection may reach inside groups, so look nodes up directly.
   const selectedNodes = selectedNodeIds
@@ -2681,28 +2685,55 @@ export function Inspector() {
   const layerObjectCount = activeArtboard
     ? collectLeafNodeIds(document, activeArtboard.nodeIds).length
     : 0;
-  const ContextIcon = selectedNode ? NODE_ICONS[selectedNode.type] : Shapes;
+  const ContextIcon =
+    activeView === "review"
+      ? Sparkles
+      : selectedNode
+        ? NODE_ICONS[selectedNode.type]
+        : Shapes;
+  const reviewFindingCount = designMateReview?.review.findings.length ?? 0;
   const contextTitle =
-    selectedNode
-      ? selectedNode.name
-      : selectedNodes.length > 1
-        ? `${selectedNodes.length} objects selected`
-        : "Nothing selected";
+    activeView === "review"
+      ? "Design Mate"
+      : selectedNode
+        ? selectedNode.name
+        : selectedNodes.length > 1
+          ? `${selectedNodes.length} objects selected`
+          : "Nothing selected";
   const contextMeta =
-    selectedNode
-      ? selectedNode.type === "path" && selectedNode.shape
-        ? shapeDisplayName(selectedNode.shape.kind)
-        : selectedNode.type[0]!.toUpperCase() + selectedNode.type.slice(1)
-      : selectedNodes.length > 1
-        ? "Selection"
-        : "Canvas";
+    activeView === "review"
+      ? designMateStatus === "reviewing"
+        ? "Reviewing…"
+        : designMateReview
+          ? `${reviewFindingCount} ${
+              reviewFindingCount === 1 ? "finding" : "findings"
+            }`
+          : "Creative review"
+      : selectedNode
+        ? selectedNode.type === "path" && selectedNode.shape
+          ? shapeDisplayName(selectedNode.shape.kind)
+          : selectedNode.type[0]!.toUpperCase() + selectedNode.type.slice(1)
+        : selectedNodes.length > 1
+          ? "Selection"
+          : "Canvas";
 
   function handleTabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+    const currentIndex = INSPECTOR_VIEWS.indexOf(activeView);
+    const nextIndex =
+      event.key === "ArrowLeft"
+        ? (currentIndex - 1 + INSPECTOR_VIEWS.length) % INSPECTOR_VIEWS.length
+        : event.key === "ArrowRight"
+          ? (currentIndex + 1) % INSPECTOR_VIEWS.length
+          : event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? INSPECTOR_VIEWS.length - 1
+              : null;
+    if (nextIndex === null) {
       return;
     }
     event.preventDefault();
-    const next = activeView === "properties" ? "layers" : "properties";
+    const next = INSPECTOR_VIEWS[nextIndex]!;
     setActiveView(next);
     requestAnimationFrame(() =>
       window.document.getElementById(`inspector-${next}-tab`)?.focus(),
@@ -2732,8 +2763,8 @@ export function Inspector() {
     documentStore.preview(leafIds.map((nodeId) => ({ nodeId, patch })));
   }
 
-  // Properties and layers each get the full rail. This keeps long gradient
-  // controls readable and gives deep layer trees a stable, full-height target.
+  // Each workspace gets the full rail: object controls, layer management, and
+  // document-level review no longer compete in one scrolling properties view.
   return (
     <aside
       className="inspector flex min-h-0 flex-col overflow-hidden border-l border-panel-border bg-panel shadow-[-10px_0_32px_rgb(28_25_33/0.055)]"
@@ -2749,7 +2780,7 @@ export function Inspector() {
           </span>
           <div className="min-w-0 flex-1">
             <span className="mb-2 block text-[9.5px] font-[680] uppercase tracking-[0.09em] text-ink-dim">
-              Inspector
+              {activeView === "review" ? "Review workspace" : "Inspector"}
             </span>
             <strong
               className="block truncate text-[13px] font-[650] text-ink"
@@ -2763,7 +2794,7 @@ export function Inspector() {
           </span>
         </div>
         <div
-          className="grid grid-cols-2 gap-3 rounded-m border border-field-border bg-field p-3"
+          className="grid grid-cols-3 gap-3 rounded-m border border-field-border bg-field p-3"
           role="tablist"
           aria-label="Inspector views"
         >
@@ -2811,6 +2842,43 @@ export function Inspector() {
             >
               {layerObjectCount}
             </span>
+          </button>
+          <button
+            id="inspector-review-tab"
+            type="button"
+            role="tab"
+            className={`flex h-28 items-center justify-center gap-5 rounded-[6px] text-[11.5px] transition-[background-color,color,box-shadow] duration-140 ease-studio ${
+              activeView === "review"
+                ? "bg-card font-semibold text-ink shadow-[0_1px_3px_rgb(28_25_33/0.12)]"
+                : "text-ink-dim hover:text-ink"
+            }`}
+            aria-selected={activeView === "review"}
+            aria-controls="inspector-review-panel"
+            tabIndex={activeView === "review" ? 0 : -1}
+            onKeyDown={handleTabKeyDown}
+            onClick={() => setActiveView("review")}
+          >
+            <Sparkles
+              size={13}
+              className={
+                designMateStatus === "reviewing" ? "animate-pulse text-accent" : ""
+              }
+            />
+            Review
+            {designMateReview && (
+              <span
+                className={`rounded-full px-5 py-1 text-[9.5px] tabular-nums ${
+                  activeView === "review"
+                    ? "bg-accent-soft text-accent-deep"
+                    : "bg-card text-ink-dim"
+                }`}
+                aria-label={`${reviewFindingCount} ${
+                  reviewFindingCount === 1 ? "finding" : "findings"
+                }`}
+              >
+                {reviewFindingCount}
+              </span>
+            )}
           </button>
         </div>
       </header>
@@ -2888,17 +2956,6 @@ export function Inspector() {
         </section>
       )}
       <SwatchesSection />
-      <DesignMateErrorBoundary>
-        <Suspense
-          fallback={
-            <section className={SECTION} aria-busy="true">
-              <h2 className={SECTION_H2}>Design mate</h2>
-            </section>
-          }
-        >
-          <DesignMateSection />
-        </Suspense>
-      </DesignMateErrorBoundary>
       </div>
       <div
         id="inspector-layers-panel"
@@ -2909,6 +2966,26 @@ export function Inspector() {
         }`}
       >
         <LayersSection />
+      </div>
+      <div
+        id="inspector-review-panel"
+        role="tabpanel"
+        aria-labelledby="inspector-review-tab"
+        className={`inspector-card min-h-0 flex-1 flex-col gap-10 overflow-y-auto p-10 ${
+          activeView === "review" ? "flex" : "hidden"
+        }`}
+      >
+        <DesignMateErrorBoundary>
+          <Suspense
+            fallback={
+              <section className={SECTION} aria-busy="true">
+                <h2 className={SECTION_H2}>Preparing Design Mate…</h2>
+              </section>
+            }
+          >
+            <DesignMateSection />
+          </Suspense>
+        </DesignMateErrorBoundary>
       </div>
     </aside>
   );
