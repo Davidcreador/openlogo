@@ -157,6 +157,29 @@
    cluster (drop indicators, hover reveals, thumbnails). Everything else
    lives as utilities in JSX. */
 @layer components {
+  /* ---------- Production previews ---------- */
+
+  .preview-transparency {
+    background-color: #fff;
+    background-image:
+      linear-gradient(45deg, rgb(28 25 33 / 0.1) 25%, transparent 25%),
+      linear-gradient(-45deg, rgb(28 25 33 / 0.1) 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, rgb(28 25 33 / 0.1) 75%),
+      linear-gradient(-45deg, transparent 75%, rgb(28 25 33 / 0.1) 75%);
+    background-position:
+      0 0,
+      0 4px,
+      4px -4px,
+      -4px 0;
+    background-size: 8px 8px;
+  }
+
+  .production-preview svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
   /* ---------- Menus (dark, match the chrome) ---------- */
 
   .menu {
