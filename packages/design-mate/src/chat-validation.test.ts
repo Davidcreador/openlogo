@@ -12,7 +12,7 @@ import {
 } from "./index";
 
 const PNG_BASE64 =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAGklEQVR4nO3BAQEAAACCIP+vbkhAAQAAAO8GECAAARlDNO4AAAAASUVORK5CYII=";
 const CREATED_AT = "2026-07-10T20:00:00.000Z";
 
 function base64ByteLength(value: string): number {
@@ -276,6 +276,7 @@ describe("untrusted chat wire validation", () => {
       { ...attachment, dataBase64: "AAAAAAAAAAAA", byteLength: 9 },
       { ...attachment, byteLength: attachment.byteLength + 1 },
       { ...attachment, width: 31 },
+      { ...attachment, width: 33 },
       { ...attachment, height: 1_025 },
       { ...attachment, width: 1_024, height: 1_024 },
       {

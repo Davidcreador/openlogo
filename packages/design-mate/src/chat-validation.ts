@@ -39,6 +39,7 @@ const PAINT_TYPES = new Set([
   "radial-gradient",
 ]);
 const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10] as const;
+const PNG_HEADER_BYTES = 33;
 const BASE64_ALPHABET =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -253,6 +254,57 @@ function decodeBase64Prefix(value: string, byteCount: number): number[] {
   return bytes;
 }
 
+function readBigEndianUint32(bytes: ArrayLike<number>, offset: number): number {
+  return (
+    (bytes[offset]! * 0x1_00_00_00) +
+    (bytes[offset + 1]! << 16) +
+    (bytes[offset + 2]! << 8) +
+    bytes[offset + 3]!
+  );
+}
+
+/**
+ * Read and validate the fixed PNG signature and IHDR prefix. Checking the
+ * encoded dimensions prevents a small compressed payload from lying about a
+ * huge image and bypassing the visual-context pixel budget.
+ */
+export function readDesignMatePngDimensions(
+  bytes: ArrayLike<number>,
+): { readonly width: number; readonly height: number } | null {
+  if (
+    bytes.length < PNG_HEADER_BYTES ||
+    !PNG_SIGNATURE.every((byte, index) => bytes[index] === byte) ||
+    readBigEndianUint32(bytes, 8) !== 13 ||
+    bytes[12] !== 73 ||
+    bytes[13] !== 72 ||
+    bytes[14] !== 68 ||
+    bytes[15] !== 82
+  ) {
+    return null;
+  }
+  const width = readBigEndianUint32(bytes, 16);
+  const height = readBigEndianUint32(bytes, 20);
+  const bitDepth = bytes[24];
+  const colorType = bytes[25];
+  const validBitDepth =
+    (colorType === 0 && [1, 2, 4, 8, 16].includes(bitDepth!)) ||
+    (colorType === 2 && (bitDepth === 8 || bitDepth === 16)) ||
+    (colorType === 3 && [1, 2, 4, 8].includes(bitDepth!)) ||
+    (colorType === 4 && (bitDepth === 8 || bitDepth === 16)) ||
+    (colorType === 6 && (bitDepth === 8 || bitDepth === 16));
+  if (
+    width <= 0 ||
+    height <= 0 ||
+    !validBitDepth ||
+    bytes[26] !== 0 ||
+    bytes[27] !== 0 ||
+    (bytes[28] !== 0 && bytes[28] !== 1)
+  ) {
+    return null;
+  }
+  return { width, height };
+}
+
 function isVisualAttachment(
   value: unknown,
   requestIdentity: DocumentIdentity,
@@ -302,8 +354,13 @@ function isVisualAttachment(
   if (decodedLength === null || decodedLength !== value.byteLength) {
     return false;
   }
-  const signature = decodeBase64Prefix(value.dataBase64, PNG_SIGNATURE.length);
-  return PNG_SIGNATURE.every((byte, index) => signature[index] === byte);
+  const header = decodeBase64Prefix(value.dataBase64, PNG_HEADER_BYTES);
+  const dimensions = readDesignMatePngDimensions(header);
+  return (
+    dimensions !== null &&
+    dimensions.width === value.width &&
+    dimensions.height === value.height
+  );
 }
 
 function isSelection(value: unknown): value is DesignMateSelection {

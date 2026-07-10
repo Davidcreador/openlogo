@@ -23,7 +23,7 @@ import {
 } from "./index";
 
 const PNG_BASE64 =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAGklEQVR4nO3BAQEAAACCIP+vbkhAAQAAAO8GECAAARlDNO4AAAAASUVORK5CYII=";
 const ALLOWED_ORIGIN = "https://design.example";
 const SERVICE_TOKEN = "AUTH_SECRET_SENTINEL";
 
@@ -373,7 +373,7 @@ describe("Design Mate HTTP service", () => {
     const baseUrl = await listen(
       createDesignMateService({ config: config(), transport }),
     );
-    const wire = makeWire();
+    const wire = makeWire(true);
 
     expect(
       (await postWire(baseUrl, { ...wire, document: {} })).status,
@@ -383,6 +383,14 @@ describe("Design Mate HTTP service", () => {
         await postWire(baseUrl, {
           ...wire,
           identity: { ...wire.identity, contentFingerprint: "" },
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await postWire(baseUrl, {
+          ...wire,
+          attachments: [{ ...wire.attachments[0]!, width: 33 }],
         })
       ).status,
     ).toBe(400);
