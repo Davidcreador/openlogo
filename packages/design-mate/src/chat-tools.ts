@@ -2,10 +2,7 @@ import {
   DESIGN_MATE_CHAT_LIMITS,
   type DesignMateProposal,
 } from "./contracts";
-import {
-  DESIGN_MATE_MUTATION_TOOLS,
-  designMateRiskForActions,
-} from "./actions";
+import { designMateRiskForActions } from "./actions";
 import {
   DESIGN_MATE_PROPOSAL_LIMITS,
   snapshotValidDesignMateProposal,
