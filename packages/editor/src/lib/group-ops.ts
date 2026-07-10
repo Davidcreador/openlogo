@@ -292,31 +292,45 @@ export function cloneUnits(
   unitIds: readonly string[],
   offset = 0,
 ): { nodes: LogoNode[]; rootIds: string[] } {
-  const nodes: LogoNode[] = [];
-  const rootIds: string[] = [];
-
-  const cloneSubtree = (id: string): string | null => {
+  const sourceIds: string[] = [];
+  const seen = new Set<string>();
+  const collectSubtree = (id: string): void => {
+    if (seen.has(id)) {
+      return;
+    }
     const node = document.nodes[id];
     if (!node) {
-      return null;
+      return;
     }
-    const clone = structuredClone(node) as LogoNode;
-    clone.id = createId(node.type === "group" ? "group" : "node");
+    seen.add(id);
+    if (node.type === "group") {
+      node.children.forEach(collectSubtree);
+    }
+    sourceIds.push(id);
+  };
+
+  for (const id of unitIds) {
+    collectSubtree(id);
+  }
+
+  const idMap = new Map(
+    sourceIds.map((id) => {
+      const node = document.nodes[id]!;
+      return [id, createId(node.type === "group" ? "group" : "node")] as const;
+    }),
+  );
+  const nodes = sourceIds.map((id) => {
+    const clone = structuredClone(document.nodes[id]!) as LogoNode;
+    clone.id = idMap.get(id)!;
     if (clone.type === "group") {
-      const sourceChildren = [...clone.children];
-      const clonedChildren = sourceChildren.map((sourceId) => ({
-        sourceId,
-        cloneId: cloneSubtree(sourceId),
-      }));
-      clone.children = clonedChildren
-        .map((item) => item.cloneId)
-        .filter((childId): childId is string => childId !== null);
+      clone.children = clone.children.flatMap((childId) => {
+        const mapped = idMap.get(childId);
+        return mapped ? [mapped] : [];
+      });
       if (clone.clippingMaskId) {
-        const clonedMaskId = clonedChildren.find(
-          (item) => item.sourceId === clone.clippingMaskId,
-        )?.cloneId;
-        if (clonedMaskId) {
-          clone.clippingMaskId = clonedMaskId;
+        const mappedMask = idMap.get(clone.clippingMaskId);
+        if (mappedMask) {
+          clone.clippingMaskId = mappedMask;
         } else {
           delete clone.clippingMaskId;
         }
@@ -324,17 +338,21 @@ export function cloneUnits(
     } else {
       clone.x += offset;
       clone.y += offset;
+      if (clone.type === "text" && clone.onPath) {
+        const mappedPath = idMap.get(clone.onPath.pathId);
+        if (mappedPath) {
+          clone.onPath = { ...clone.onPath, pathId: mappedPath };
+        } else {
+          delete clone.onPath;
+        }
+      }
     }
-    nodes.push(clone);
-    return clone.id;
-  };
-
-  for (const id of unitIds) {
-    const rootId = cloneSubtree(id);
-    if (rootId) {
-      rootIds.push(rootId);
-    }
-  }
+    return clone;
+  });
+  const rootIds = unitIds.flatMap((id) => {
+    const mapped = idMap.get(id);
+    return mapped ? [mapped] : [];
+  });
 
   return { nodes, rootIds };
 }

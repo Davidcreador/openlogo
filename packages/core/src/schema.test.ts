@@ -62,6 +62,40 @@ describe("parseDocument", () => {
 
     expect(() => parseDocument(JSON.parse(JSON.stringify(doc)))).toThrow();
   });
+
+  it("repairs legacy gradient offsets and unsafe OpenType feature tags", () => {
+    const doc = createInitialDocument();
+    const drawable = Object.values(doc.nodes).find(
+      (node) => node.type !== "group",
+    )!;
+    drawable.fill = {
+      type: "linear-gradient",
+      angle: 0,
+      stops: [
+        { offset: 2, color: "#fff" },
+        { offset: -1, color: "#000" },
+      ],
+    };
+    const text = Object.values(doc.nodes).find((node) => node.type === "text");
+    if (text?.type === "text") {
+      text.otFeatures = {
+        liga: false,
+        [`x';filter:url(evil)`]: true,
+      };
+    }
+
+    const parsed = parseDocument(JSON.parse(JSON.stringify(doc)));
+    const fill = parsed.nodes[drawable.id]!.fill;
+    expect(fill.type).toBe("linear-gradient");
+    if (fill.type === "linear-gradient") {
+      expect(fill.stops.map((stop) => stop.offset)).toEqual([0, 1]);
+    }
+    if (text?.type === "text") {
+      expect(parsed.nodes[text.id]).toMatchObject({
+        otFeatures: { liga: false },
+      });
+    }
+  });
 });
 
 describe("artboard position migration", () => {

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { applyCommand } from "./commands";
-import { createInitialDocument, createPath, createText } from "./factory";
+import {
+  cloneArtboardForVariant,
+  createInitialDocument,
+  createPath,
+  createText,
+} from "./factory";
 import {
   pathGeometryLength,
   pathGeometryToSvg,
@@ -143,6 +148,57 @@ describe("text on a path", () => {
     (bogus.nodes[textId] as TextNode).onPath!.pathId = textId;
     const repaired2 = parseDocument(bogus);
     expect((repaired2.nodes[textId] as TextNode).onPath).toBeUndefined();
+  });
+
+  it("clears a runtime attachment when its path is deleted and restores it on undo", () => {
+    const { document, textId, pathId } = fixture();
+    const attached = applyCommand(document, {
+      type: "update-nodes",
+      updates: [
+        {
+          nodeId: textId,
+          patch: { onPath: { pathId, startOffset: 9, flip: true } },
+        },
+      ],
+    }).document;
+    const deletion = applyCommand(attached, {
+      type: "delete-nodes",
+      nodeIds: [pathId],
+    });
+    expect((deletion.document.nodes[textId] as TextNode).onPath).toBeUndefined();
+
+    const restored = applyCommand(deletion.document, deletion.inverse).document;
+    expect((restored.nodes[textId] as TextNode).onPath).toEqual({
+      pathId,
+      startOffset: 9,
+      flip: true,
+    });
+  });
+
+  it("remaps text-on-path references when cloning an artboard variant", () => {
+    const { document, textId, pathId } = fixture();
+    (document.nodes[textId] as TextNode).onPath = {
+      pathId,
+      startOffset: 4,
+      flip: false,
+    };
+    const cloned = cloneArtboardForVariant(
+      document,
+      document.activeArtboardId,
+      "icon",
+    );
+    const clonedText = cloned.nodes.find(
+      (node): node is TextNode =>
+        node.type === "text" && node.content === "Curve",
+    )!;
+    const clonedPath = cloned.nodes.find(
+      (node) => node.type === "path" && node.id !== pathId,
+    );
+    expect(clonedText.onPath?.pathId).not.toBe(pathId);
+    expect(cloned.nodes.some((node) => node.id === clonedText.onPath?.pathId)).toBe(
+      true,
+    );
+    expect(clonedPath).toBeDefined();
   });
 });
 

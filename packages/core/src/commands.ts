@@ -10,6 +10,7 @@ import type {
   GroupNode,
   LogoDocument,
   LogoNode,
+  Paint,
   PathFillRule,
   ShapeParams,
   TextPathAttachment,
@@ -102,6 +103,12 @@ export type Command =
         node: LogoNode;
         containerId: string;
         index: number;
+      }>;
+      /** Relationships cleared on surviving nodes while targets were deleted. */
+      clippingMasks?: Array<{ groupId: string; maskId: string }>;
+      textPaths?: Array<{
+        textId: string;
+        attachment: TextPathAttachment;
       }>;
     }
   | {
@@ -209,8 +216,304 @@ function pickInversePatch(node: LogoNode, patch: NodePatch): NodePatch {
   return inverse as NodePatch;
 }
 
+const clamp = (value: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, value));
+
+export function sanitizePaint(paint: Paint): Paint {
+  if (paint.type === "solid") {
+    return { ...paint };
+  }
+  const stops = paint.stops
+    .map((stop) => ({
+      ...stop,
+      offset: Number.isFinite(stop.offset) ? clamp(stop.offset, 0, 1) : 0,
+      ...(stop.alpha !== undefined
+        ? {
+            alpha: Number.isFinite(stop.alpha)
+              ? clamp(stop.alpha, 0, 1)
+              : 1,
+          }
+        : {}),
+    }))
+    .sort((a, b) => a.offset - b.offset);
+  if (paint.type === "linear-gradient") {
+    const validPoint = (point: { x: number; y: number } | undefined) =>
+      point && Number.isFinite(point.x) && Number.isFinite(point.y)
+        ? { ...point }
+        : undefined;
+    const start = validPoint(paint.start);
+    const end = validPoint(paint.end);
+    const { start: _start, end: _end, ...base } = paint;
+    return {
+      ...base,
+      angle: Number.isFinite(paint.angle) ? paint.angle : 0,
+      stops,
+      ...(start && end ? { start, end } : {}),
+    };
+  }
+  const { fx: _fx, fy: _fy, ...base } = paint;
+  return {
+    ...base,
+    cx: Number.isFinite(paint.cx) ? paint.cx : 0.5,
+    cy: Number.isFinite(paint.cy) ? paint.cy : 0.5,
+    r: Number.isFinite(paint.r) ? Math.max(0, paint.r) : 0.5,
+    ...(paint.fx !== undefined && Number.isFinite(paint.fx)
+      ? { fx: paint.fx }
+      : {}),
+    ...(paint.fy !== undefined && Number.isFinite(paint.fy)
+      ? { fy: paint.fy }
+      : {}),
+    stops,
+  };
+}
+
+/**
+ * Command and preview patches share one scalar/paint safety boundary. Invalid
+ * coordinates are ignored; bounded values are clamped into the document
+ * schema's domain.
+ */
+export function sanitizeNodePatch(node: LogoNode, patch: NodePatch): NodePatch {
+  const safe = { ...patch };
+  const removeKeys = (keys: readonly (keyof NodePatch)[]) => {
+    for (const key of keys) {
+      delete safe[key];
+    }
+  };
+  const pathKeys = [
+    "d",
+    "intrinsicWidth",
+    "intrinsicHeight",
+    "fillRule",
+    "geometry",
+    "shape",
+  ] as const;
+  const textKeys = [
+    "content",
+    "fontFamily",
+    "fontSize",
+    "fontWeight",
+    "fontStyle",
+    "letterSpacing",
+    "lineHeight",
+    "align",
+    "kerning",
+    "otFeatures",
+    "onPath",
+  ] as const;
+  if (node.type !== "path") {
+    removeKeys(pathKeys);
+  }
+  if (node.type !== "text") {
+    removeKeys(textKeys);
+  }
+  if (node.type !== "rectangle") {
+    delete safe.cornerRadius;
+  }
+  const finiteKeys: Array<keyof NodePatch> = [
+    "x",
+    "y",
+    "rotation",
+    "letterSpacing",
+  ];
+  for (const key of finiteKeys) {
+    const value = safe[key];
+    if (key in safe && (typeof value !== "number" || !Number.isFinite(value))) {
+      delete safe[key];
+    }
+  }
+  for (const key of [
+    "width",
+    "height",
+    "intrinsicWidth",
+    "intrinsicHeight",
+    "fontSize",
+    "lineHeight",
+  ] as const) {
+    const value = safe[key];
+    if (key in safe) {
+      if (typeof value === "number" && Number.isFinite(value)) {
+        safe[key] = Math.max(0.01, value);
+      } else {
+        delete safe[key];
+      }
+    }
+  }
+  if ("opacity" in safe) {
+    if (typeof safe.opacity === "number" && Number.isFinite(safe.opacity)) {
+      safe.opacity = clamp(safe.opacity, 0, 1);
+    } else {
+      delete safe.opacity;
+    }
+  }
+  if ("cornerRadius" in safe) {
+    if (
+      typeof safe.cornerRadius === "number" &&
+      Number.isFinite(safe.cornerRadius)
+    ) {
+      safe.cornerRadius = Math.max(0, safe.cornerRadius);
+    } else {
+      delete safe.cornerRadius;
+    }
+  }
+  if ("fontWeight" in safe) {
+    if (
+      typeof safe.fontWeight === "number" &&
+      Number.isFinite(safe.fontWeight)
+    ) {
+      safe.fontWeight = Math.max(1, safe.fontWeight);
+    } else {
+      delete safe.fontWeight;
+    }
+  }
+  if ("fill" in safe) {
+    if (safe.fill) {
+      safe.fill = sanitizePaint(safe.fill);
+    } else {
+      delete safe.fill;
+    }
+  }
+  if (safe.stroke) {
+    safe.stroke = {
+      ...safe.stroke,
+      width: Number.isFinite(safe.stroke.width)
+        ? Math.max(0, safe.stroke.width)
+        : 0,
+      ...(safe.stroke.paint
+        ? { paint: sanitizePaint(safe.stroke.paint) }
+        : {}),
+    };
+  }
+  if (safe.effects) {
+    safe.effects = safe.effects.map((effect) => {
+      if (effect.type === "drop-shadow") {
+        return {
+          ...effect,
+          dx: Number.isFinite(effect.dx) ? effect.dx : 0,
+          dy: Number.isFinite(effect.dy) ? effect.dy : 0,
+          blur: Number.isFinite(effect.blur) ? Math.max(0, effect.blur) : 0,
+          opacity: Number.isFinite(effect.opacity)
+            ? clamp(effect.opacity, 0, 1)
+            : 1,
+        };
+      }
+      if (effect.type === "outline") {
+        return {
+          ...effect,
+          width: Number.isFinite(effect.width) ? Math.max(0, effect.width) : 0,
+          opacity: Number.isFinite(effect.opacity)
+            ? clamp(effect.opacity, 0, 1)
+            : 1,
+        };
+      }
+      if (effect.type === "glow") {
+        return {
+          ...effect,
+          blur: Number.isFinite(effect.blur) ? Math.max(0, effect.blur) : 0,
+          opacity: Number.isFinite(effect.opacity)
+            ? clamp(effect.opacity, 0, 1)
+            : 1,
+        };
+      }
+      return {
+        ...effect,
+        size: Number.isFinite(effect.size) ? Math.max(0, effect.size) : 0,
+        soften: Number.isFinite(effect.soften)
+          ? Math.max(0, effect.soften)
+          : 0,
+        intensity: Number.isFinite(effect.intensity)
+          ? clamp(effect.intensity, 0, 1)
+          : 1,
+      };
+    });
+  }
+  if (
+    safe.blendMode !== undefined &&
+    !["multiply", "screen", "overlay", "darken", "lighten"].includes(
+      safe.blendMode,
+    )
+  ) {
+    delete safe.blendMode;
+  }
+  if (
+    safe.fontStyle !== undefined &&
+    safe.fontStyle !== "normal" &&
+    safe.fontStyle !== "italic"
+  ) {
+    delete safe.fontStyle;
+  }
+  if (safe.onPath) {
+    safe.onPath = {
+      ...safe.onPath,
+      startOffset: Number.isFinite(safe.onPath.startOffset)
+        ? Math.max(0, safe.onPath.startOffset)
+        : 0,
+    };
+  }
+  if (safe.kerning) {
+    safe.kerning = Object.fromEntries(
+      Object.entries(safe.kerning).filter(
+        ([index, value]) =>
+          Number.isInteger(Number(index)) &&
+          Number(index) >= 0 &&
+          Number.isFinite(value),
+      ),
+    );
+  }
+  if (safe.otFeatures) {
+    safe.otFeatures = Object.fromEntries(
+      Object.entries(safe.otFeatures).filter(([tag]) =>
+        /^[A-Za-z0-9]{4}$/.test(tag),
+      ),
+    );
+  }
+  if (safe.shape) {
+    safe.shape = {
+      ...safe.shape,
+      ...(safe.shape.sides !== undefined
+        ? {
+            sides: Number.isFinite(safe.shape.sides)
+              ? clamp(Math.round(safe.shape.sides), 3, 100)
+              : 3,
+          }
+        : {}),
+      ...(safe.shape.innerRatio !== undefined
+        ? {
+            innerRatio: Number.isFinite(safe.shape.innerRatio)
+              ? clamp(safe.shape.innerRatio, 0.01, 0.99)
+              : 0.45,
+          }
+        : {}),
+    };
+  }
+  if (safe.geometry) {
+    const finitePoint = (point: {
+      x: number;
+      y: number;
+      handleIn?: { x: number; y: number };
+      handleOut?: { x: number; y: number };
+    }) =>
+      Number.isFinite(point.x) &&
+      Number.isFinite(point.y) &&
+      (!point.handleIn ||
+        (Number.isFinite(point.handleIn.x) &&
+          Number.isFinite(point.handleIn.y))) &&
+      (!point.handleOut ||
+        (Number.isFinite(point.handleOut.x) &&
+          Number.isFinite(point.handleOut.y)));
+    const valid = safe.geometry.subpaths.every(
+      (subpath) =>
+        subpath.points.length >= 2 && subpath.points.every(finitePoint),
+    );
+    if (!valid) {
+      delete safe.geometry;
+      delete safe.d;
+    }
+  }
+  return safe;
+}
+
 function patchNode(node: LogoNode, patch: NodePatch): LogoNode {
-  return { ...node, ...patch } as LogoNode;
+  return { ...node, ...sanitizeNodePatch(node, patch) } as LogoNode;
 }
 
 /**
@@ -251,6 +554,124 @@ function containerListOf(
   return node?.type === "group" ? node.children : null;
 }
 
+function artboardIdForNode(
+  document: LogoDocument,
+  nodeId: string,
+): string | null {
+  const seen = new Set<string>();
+  let current = nodeId;
+  while (!seen.has(current)) {
+    seen.add(current);
+    const containerId = findContainerId(document, current);
+    if (!containerId) {
+      return null;
+    }
+    if (document.artboards.some((artboard) => artboard.id === containerId)) {
+      return containerId;
+    }
+    current = containerId;
+  }
+  return null;
+}
+
+function artboardIdForContainer(
+  document: LogoDocument,
+  containerId: string,
+): string | null {
+  return document.artboards.some((artboard) => artboard.id === containerId)
+    ? containerId
+    : artboardIdForNode(document, containerId);
+}
+
+function isValidPaint(paint: Paint): boolean {
+  if (paint.type === "solid") {
+    return typeof paint.color === "string";
+  }
+  if (
+    paint.stops.some(
+      (stop) =>
+        !Number.isFinite(stop.offset) ||
+        stop.offset < 0 ||
+        stop.offset > 1 ||
+        (stop.alpha !== undefined &&
+          (!Number.isFinite(stop.alpha) ||
+            stop.alpha < 0 ||
+            stop.alpha > 1)),
+    )
+  ) {
+    return false;
+  }
+  if (paint.type === "linear-gradient") {
+    return (
+      Number.isFinite(paint.angle) &&
+      ((!paint.start && !paint.end) ||
+        Boolean(
+          paint.start &&
+            paint.end &&
+            Number.isFinite(paint.start.x) &&
+            Number.isFinite(paint.start.y) &&
+            Number.isFinite(paint.end.x) &&
+            Number.isFinite(paint.end.y),
+        ))
+    );
+  }
+  return (
+    Number.isFinite(paint.cx) &&
+    Number.isFinite(paint.cy) &&
+    Number.isFinite(paint.r) &&
+    paint.r >= 0 &&
+    (paint.fx === undefined || Number.isFinite(paint.fx)) &&
+    (paint.fy === undefined || Number.isFinite(paint.fy))
+  );
+}
+
+function isValidIncomingNode(node: LogoNode): boolean {
+  if (
+    !Number.isFinite(node.x) ||
+    !Number.isFinite(node.y) ||
+    !Number.isFinite(node.width) ||
+    node.width <= 0 ||
+    !Number.isFinite(node.height) ||
+    node.height <= 0 ||
+    !Number.isFinite(node.rotation) ||
+    !Number.isFinite(node.opacity) ||
+    node.opacity < 0 ||
+    node.opacity > 1 ||
+    !isValidPaint(node.fill) ||
+    (node.stroke &&
+      (!Number.isFinite(node.stroke.width) ||
+        node.stroke.width < 0 ||
+        (node.stroke.paint && !isValidPaint(node.stroke.paint))))
+  ) {
+    return false;
+  }
+  if (node.type === "rectangle") {
+    return Number.isFinite(node.cornerRadius) && node.cornerRadius >= 0;
+  }
+  if (node.type === "path") {
+    return (
+      Number.isFinite(node.intrinsicWidth) &&
+      node.intrinsicWidth > 0 &&
+      Number.isFinite(node.intrinsicHeight) &&
+      node.intrinsicHeight > 0
+    );
+  }
+  if (node.type === "text") {
+    return (
+      Number.isFinite(node.fontSize) &&
+      node.fontSize > 0 &&
+      Number.isFinite(node.fontWeight) &&
+      Number.isFinite(node.letterSpacing) &&
+      Number.isFinite(node.lineHeight) &&
+      node.lineHeight > 0 &&
+      (!node.onPath ||
+        (Number.isFinite(node.onPath.startOffset) &&
+          node.onPath.startOffset >= 0))
+    );
+  }
+  return true;
+}
+
 /** A command whose application threw — a malformed command or a model bug. */
 export class CommandApplyError extends Data.TaggedError("CommandApplyError")<{
   readonly command: Command;
@@ -278,31 +699,116 @@ export function applyCommand(
 ): ApplyResult {
   switch (command.type) {
     case "insert-nodes": {
+      const targetContainerId = command.containerId ?? command.artboardId;
+      const targetContainer = containerListOf(document, targetContainerId);
+      const targetArtboardId = artboardIdForContainer(
+        document,
+        targetContainerId,
+      );
+      const ids = command.nodes.map((node) => node.id);
+      const uniqueIds = new Set(ids);
+      if (
+        command.nodes.length === 0 ||
+        command.nodes.some((node) => !isValidIncomingNode(node)) ||
+        !targetContainer ||
+        !targetArtboardId ||
+        targetArtboardId !== command.artboardId ||
+        uniqueIds.size !== ids.length ||
+        ids.some(
+          (id) =>
+            document.nodes[id] !== undefined ||
+            document.artboards.some((artboard) => artboard.id === id),
+        )
+      ) {
+        return { document, inverse: command };
+      }
+
+      const incoming = new Map(command.nodes.map((node) => [node.id, node]));
+      const claimedChildren = new Set<string>();
+      let validTree = true;
+      for (const node of command.nodes) {
+        if (node.type === "group") {
+          for (const childId of node.children) {
+            if (
+              !incoming.has(childId) ||
+              childId === node.id ||
+              claimedChildren.has(childId)
+            ) {
+              validTree = false;
+              break;
+            }
+            claimedChildren.add(childId);
+          }
+          if (node.clippingMaskId) {
+            const mask = incoming.get(node.clippingMaskId);
+            if (
+              !node.children.includes(node.clippingMaskId) ||
+              (mask?.type !== "rectangle" &&
+                mask?.type !== "ellipse" &&
+                mask?.type !== "path")
+            ) {
+              validTree = false;
+            }
+          }
+        }
+        if (node.type === "text" && node.onPath) {
+          const path =
+            incoming.get(node.onPath.pathId) ??
+            document.nodes[node.onPath.pathId];
+          if (
+            path?.type !== "path" ||
+            (!incoming.has(node.onPath.pathId) &&
+              artboardIdForNode(document, node.onPath.pathId) !==
+                targetArtboardId)
+          ) {
+            validTree = false;
+          }
+        }
+      }
+
+      const rootIds = ids.filter((id) => !claimedChildren.has(id));
+      const visited = new Set<string>();
+      const visiting = new Set<string>();
+      const visitIncoming = (id: string): boolean => {
+        if (visiting.has(id)) {
+          return false;
+        }
+        if (visited.has(id)) {
+          return true;
+        }
+        visiting.add(id);
+        const node = incoming.get(id);
+        if (
+          !node ||
+          (node.type === "group" &&
+            !node.children.every((childId) => visitIncoming(childId)))
+        ) {
+          return false;
+        }
+        visiting.delete(id);
+        visited.add(id);
+        return true;
+      };
+      if (
+        !validTree ||
+        rootIds.length === 0 ||
+        !rootIds.every(visitIncoming) ||
+        visited.size !== command.nodes.length
+      ) {
+        return { document, inverse: command };
+      }
+
       const nodes = { ...document.nodes };
       for (const node of command.nodes) {
         nodes[node.id] = node;
       }
-
-      // Nodes referenced as children of an inserted group ride along in
-      // the node table; only roots enter the container's ordering.
-      const insertedChildIds = new Set<string>();
-      for (const node of command.nodes) {
-        if (node.type === "group") {
-          for (const childId of node.children) {
-            insertedChildIds.add(childId);
-          }
-        }
-      }
-      const rootIds = command.nodes
-        .map((node) => node.id)
-        .filter((id) => !insertedChildIds.has(id));
-
-      const containerId =
-        command.containerId && nodes[command.containerId]?.type === "group"
-          ? command.containerId
-          : command.artboardId;
-      const list = [...(containerListOf(document, containerId) ?? [])];
-      list.splice(command.index ?? list.length, 0, ...rootIds);
+      const containerId = targetContainerId;
+      const list = [...targetContainer];
+      list.splice(
+        Math.max(0, Math.min(command.index ?? list.length, list.length)),
+        0,
+        ...rootIds,
+      );
       const artboards = withContainerList(document.artboards, nodes, containerId, list);
 
       return {
@@ -325,6 +831,9 @@ export function applyCommand(
         }
       };
       command.nodeIds.forEach(visit);
+      if (removed.size === 0) {
+        return { document, inverse: command };
+      }
 
       const entries: Array<{
         node: LogoNode;
@@ -352,20 +861,61 @@ export function applyCommand(
         });
       }
 
+      const clippingMasks: Array<{ groupId: string; maskId: string }> = [];
+      const textPaths: Array<{
+        textId: string;
+        attachment: TextPathAttachment;
+      }> = [];
+      for (const node of Object.values(document.nodes)) {
+        if (
+          !removed.has(node.id) &&
+          node.type === "group" &&
+          node.clippingMaskId &&
+          removed.has(node.clippingMaskId)
+        ) {
+          clippingMasks.push({
+            groupId: node.id,
+            maskId: node.clippingMaskId,
+          });
+        }
+        if (
+          !removed.has(node.id) &&
+          node.type === "text" &&
+          node.onPath &&
+          removed.has(node.onPath.pathId)
+        ) {
+          textPaths.push({
+            textId: node.id,
+            attachment: { ...node.onPath },
+          });
+        }
+      }
+
       const nodes = { ...document.nodes };
       for (const nodeId of removed) {
         delete nodes[nodeId];
       }
-      // Surviving groups drop any removed children.
+      // Surviving groups drop removed children; relationship owners also
+      // clear references to deleted masks and text paths.
       for (const [id, node] of Object.entries(nodes)) {
-        if (
-          node.type === "group" &&
-          node.children.some((childId) => removed.has(childId))
-        ) {
-          nodes[id] = {
+        if (node.type === "group") {
+          const next = {
             ...node,
             children: node.children.filter((childId) => !removed.has(childId)),
           };
+          if (next.clippingMaskId && removed.has(next.clippingMaskId)) {
+            const { clippingMaskId: _removedMask, ...withoutMask } = next;
+            nodes[id] = withoutMask;
+          } else if (next.children.length !== node.children.length) {
+            nodes[id] = next;
+          }
+        } else if (
+          node.type === "text" &&
+          node.onPath &&
+          removed.has(node.onPath.pathId)
+        ) {
+          const { onPath: _removedPath, ...withoutPath } = node;
+          nodes[id] = withoutPath;
         }
       }
 
@@ -376,11 +926,45 @@ export function applyCommand(
 
       return {
         document: { ...document, nodes, artboards },
-        inverse: { type: "restore-nodes", entries },
+        inverse: {
+          type: "restore-nodes",
+          entries,
+          ...(clippingMasks.length > 0 ? { clippingMasks } : {}),
+          ...(textPaths.length > 0 ? { textPaths } : {}),
+        },
       };
     }
 
     case "restore-nodes": {
+      const entryIds = command.entries.map((entry) => entry.node.id);
+      const uniqueEntryIds = new Set(entryIds);
+      const prospectiveNodes: Record<string, LogoNode> = {
+        ...document.nodes,
+        ...Object.fromEntries(
+          command.entries.map((entry) => [entry.node.id, entry.node]),
+        ),
+      };
+      const containerWillExist = (containerId: string): boolean =>
+        document.artboards.some((artboard) => artboard.id === containerId) ||
+        prospectiveNodes[containerId]?.type === "group";
+      if (
+        command.entries.length === 0 ||
+        uniqueEntryIds.size !== entryIds.length ||
+        entryIds.some(
+          (id) =>
+            document.nodes[id] !== undefined ||
+            document.artboards.some((artboard) => artboard.id === id),
+        ) ||
+        command.entries.some((entry) => !isValidIncomingNode(entry.node)) ||
+        command.entries.some(
+          (entry) =>
+            entry.containerId === entry.node.id ||
+            !containerWillExist(entry.containerId),
+        )
+      ) {
+        return { document, inverse: command };
+      }
+
       const nodes = { ...document.nodes };
       for (const entry of command.entries) {
         nodes[entry.node.id] = entry.node;
@@ -401,7 +985,11 @@ export function applyCommand(
       ) => {
         for (const item of [...items].sort((a, b) => a.index - b.index)) {
           if (!list.includes(item.id)) {
-            list.splice(Math.min(item.index, list.length), 0, item.id);
+            list.splice(
+              Math.max(0, Math.min(item.index, list.length)),
+              0,
+              item.id,
+            );
           }
         }
         return list;
@@ -424,6 +1012,57 @@ export function applyCommand(
         }
       }
 
+      for (const relation of command.clippingMasks ?? []) {
+        const group = nodes[relation.groupId];
+        const mask = nodes[relation.maskId];
+        if (
+          group?.type === "group" &&
+          group.children.includes(relation.maskId) &&
+          (mask?.type === "rectangle" ||
+            mask?.type === "ellipse" ||
+            mask?.type === "path")
+        ) {
+          nodes[group.id] = { ...group, clippingMaskId: relation.maskId };
+        }
+      }
+      for (const relation of command.textPaths ?? []) {
+        const text = nodes[relation.textId];
+        if (
+          text?.type === "text" &&
+          nodes[relation.attachment.pathId]?.type === "path"
+        ) {
+          nodes[text.id] = {
+            ...text,
+            onPath: { ...relation.attachment },
+          };
+        }
+      }
+
+      const claimed = new Set<string>();
+      const visiting = new Set<string>();
+      const visit = (id: string): boolean => {
+        if (claimed.has(id) || visiting.has(id) || !nodes[id]) {
+          return false;
+        }
+        visiting.add(id);
+        const node = nodes[id]!;
+        if (
+          node.type === "group" &&
+          !node.children.every((childId) => visit(childId))
+        ) {
+          return false;
+        }
+        visiting.delete(id);
+        claimed.add(id);
+        return true;
+      };
+      if (
+        !artboards.every((artboard) => artboard.nodeIds.every(visit)) ||
+        entryIds.some((id) => !claimed.has(id))
+      ) {
+        return { document, inverse: command };
+      }
+
       return {
         document: { ...document, nodes, artboards },
         inverse: {
@@ -442,11 +1081,27 @@ export function applyCommand(
         if (!node) {
           continue;
         }
+        const patch = sanitizeNodePatch(node, update.patch);
+        if (
+          patch.onPath &&
+          (node.type !== "text" ||
+            document.nodes[patch.onPath.pathId]?.type !== "path" ||
+            artboardIdForNode(document, patch.onPath.pathId) !==
+              artboardIdForNode(document, node.id))
+        ) {
+          delete patch.onPath;
+        }
+        if (Object.keys(patch).length === 0) {
+          continue;
+        }
         inverseUpdates.push({
           nodeId: update.nodeId,
-          patch: pickInversePatch(node, update.patch),
+          patch: pickInversePatch(node, patch),
         });
-        nodes[update.nodeId] = patchNode(node, update.patch);
+        nodes[update.nodeId] = patchNode(node, patch);
+      }
+      if (inverseUpdates.length === 0) {
+        return { document, inverse: command };
       }
 
       return {
@@ -463,7 +1118,11 @@ export function applyCommand(
 
       const fromIndex = list.indexOf(command.nodeId);
       const next = list.filter((id) => id !== command.nodeId);
-      next.splice(Math.min(command.toIndex, next.length), 0, command.nodeId);
+      next.splice(
+        Math.max(0, Math.min(command.toIndex, next.length)),
+        0,
+        command.nodeId,
+      );
 
       const nodes = { ...document.nodes };
       const artboards = withContainerList(
@@ -504,7 +1163,11 @@ export function applyCommand(
       if (fromContainerId === command.toContainerId) {
         // Same container: remove-then-splice, like reorder-node.
         const next = fromList.filter((id) => id !== command.nodeId);
-        next.splice(Math.min(command.toIndex, next.length), 0, command.nodeId);
+        next.splice(
+          Math.max(0, Math.min(command.toIndex, next.length)),
+          0,
+          command.nodeId,
+        );
         artboards = withContainerList(artboards, nodes, fromContainerId, next);
       } else {
         const sourceNext = fromList.filter((id) => id !== command.nodeId);
@@ -516,7 +1179,7 @@ export function applyCommand(
         );
         const targetNext = [...targetList];
         targetNext.splice(
-          Math.min(command.toIndex, targetNext.length),
+          Math.max(0, Math.min(command.toIndex, targetNext.length)),
           0,
           command.nodeId,
         );
@@ -542,7 +1205,13 @@ export function applyCommand(
     case "group-nodes": {
       const { group } = command;
       const list = containerListOf(document, command.containerId);
-      if (!list) {
+      if (
+        !list ||
+        document.nodes[group.id] !== undefined ||
+        document.artboards.some((artboard) => artboard.id === group.id) ||
+        group.children.length === 0 ||
+        new Set(group.children).size !== group.children.length
+      ) {
         return { document, inverse: command };
       }
 
@@ -571,7 +1240,11 @@ export function applyCommand(
 
       const childSet = new Set(group.children);
       const next = list.filter((id) => !childSet.has(id));
-      next.splice(Math.min(command.index, next.length), 0, group.id);
+      next.splice(
+        Math.max(0, Math.min(command.index, next.length)),
+        0,
+        group.id,
+      );
 
       const nodes = { ...document.nodes, [group.id]: group };
       const artboards = withContainerList(
@@ -625,10 +1298,14 @@ export function applyCommand(
           }))
           .sort((a, b) => a.index - b.index);
         for (const pair of pairs) {
-          next.splice(Math.min(pair.index, next.length), 0, pair.id);
+          next.splice(
+            Math.max(0, Math.min(pair.index, next.length)),
+            0,
+            pair.id,
+          );
         }
       } else {
-        next.splice(fromIndex, 0, ...group.children);
+        next.splice(Math.max(0, fromIndex), 0, ...group.children);
       }
 
       const nodes = { ...document.nodes };
@@ -642,6 +1319,86 @@ export function applyCommand(
     }
 
     case "add-artboard": {
+      const incoming = new Map<string, LogoNode>();
+      let validTree =
+        !document.artboards.some(
+          (artboard) => artboard.id === command.artboard.id,
+        ) &&
+        document.nodes[command.artboard.id] === undefined &&
+        Number.isFinite(command.artboard.x) &&
+        Number.isFinite(command.artboard.y) &&
+        Number.isFinite(command.artboard.width) &&
+        command.artboard.width > 0 &&
+        Number.isFinite(command.artboard.height) &&
+        command.artboard.height > 0;
+      for (const node of command.nodes) {
+        if (
+          !isValidIncomingNode(node) ||
+          incoming.has(node.id) ||
+          document.nodes[node.id] ||
+          document.artboards.some(
+            (artboard) =>
+              artboard.id === node.id || artboard.id === command.artboard.id,
+          ) ||
+          node.id === command.artboard.id
+        ) {
+          validTree = false;
+        }
+        incoming.set(node.id, node);
+      }
+      const roots = command.artboard.nodeIds;
+      if (
+        new Set(roots).size !== roots.length ||
+        roots.some((id) => !incoming.has(id))
+      ) {
+        validTree = false;
+      }
+      const visited = new Set<string>();
+      const visiting = new Set<string>();
+      const visit = (id: string): boolean => {
+        if (visiting.has(id) || visited.has(id)) {
+          return false;
+        }
+        const node = incoming.get(id);
+        if (!node) {
+          return false;
+        }
+        visiting.add(id);
+        if (node.type === "group") {
+          if (
+            new Set(node.children).size !== node.children.length ||
+            !node.children.every(visit)
+          ) {
+            return false;
+          }
+          if (node.clippingMaskId) {
+            const mask = incoming.get(node.clippingMaskId);
+            if (
+              !node.children.includes(node.clippingMaskId) ||
+              (mask?.type !== "rectangle" &&
+                mask?.type !== "ellipse" &&
+                mask?.type !== "path")
+            ) {
+              return false;
+            }
+          }
+        } else if (node.type === "text" && node.onPath) {
+          if (incoming.get(node.onPath.pathId)?.type !== "path") {
+            return false;
+          }
+        }
+        visiting.delete(id);
+        visited.add(id);
+        return true;
+      };
+      if (
+        !validTree ||
+        !roots.every(visit) ||
+        visited.size !== command.nodes.length
+      ) {
+        return { document, inverse: command };
+      }
+
       const nodes = { ...document.nodes };
       for (const node of command.nodes) {
         nodes[node.id] = node;
@@ -649,7 +1406,10 @@ export function applyCommand(
 
       const artboards = [...document.artboards];
       artboards.splice(
-        Math.min(command.index ?? artboards.length, artboards.length),
+        Math.max(
+          0,
+          Math.min(command.index ?? artboards.length, artboards.length),
+        ),
         0,
         command.artboard,
       );
@@ -723,21 +1483,48 @@ export function applyCommand(
       const previous = document.artboards.find(
         (item) => item.id === command.artboardId,
       );
+      if (!previous) {
+        return { document, inverse: command };
+      }
+      const patch = { ...command.patch };
+      for (const key of ["x", "y"] as const) {
+        const value = patch[key];
+        if (value !== undefined && !Number.isFinite(value)) {
+          delete patch[key];
+        }
+      }
+      for (const key of ["width", "height"] as const) {
+        const value = patch[key];
+        if (value !== undefined) {
+          if (Number.isFinite(value)) {
+            patch[key] = Math.max(1, value);
+          } else {
+            delete patch[key];
+          }
+        }
+      }
+      if (patch.guides) {
+        patch.guides = {
+          v: patch.guides.v.filter(Number.isFinite),
+          h: patch.guides.h.filter(Number.isFinite),
+        };
+      }
+      if (Object.keys(patch).length === 0) {
+        return { document, inverse: command };
+      }
       const inversePatch: Record<string, unknown> = {};
 
-      if (previous) {
-        for (const key of Object.keys(command.patch)) {
-          inversePatch[key] = (previous as unknown as Record<string, unknown>)[
-            key
-          ];
-        }
+      for (const key of Object.keys(patch)) {
+        inversePatch[key] = (previous as unknown as Record<string, unknown>)[
+          key
+        ];
       }
 
       return {
         document: {
           ...document,
           artboards: document.artboards.map((item) =>
-            item.id === command.artboardId ? { ...item, ...command.patch } : item,
+            item.id === command.artboardId ? { ...item, ...patch } : item,
           ),
         },
         inverse: {
@@ -760,7 +1547,7 @@ export function applyCommand(
         (item) => item.id !== command.artboardId,
       );
       artboards.splice(
-        Math.min(command.toIndex, artboards.length),
+        Math.max(0, Math.min(command.toIndex, artboards.length)),
         0,
         document.artboards[fromIndex]!,
       );
@@ -772,6 +1559,13 @@ export function applyCommand(
     }
 
     case "set-active-artboard": {
+      if (
+        !document.artboards.some(
+          (artboard) => artboard.id === command.artboardId,
+        )
+      ) {
+        return { document, inverse: command };
+      }
       return {
         document: { ...document, activeArtboardId: command.artboardId },
         inverse: {

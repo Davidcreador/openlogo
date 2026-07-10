@@ -5,6 +5,7 @@ import {
   type Command,
   type NodePatch,
   applyCommandEffect,
+  sanitizeNodePatch,
 } from "./commands";
 import type { LogoDocument } from "./types";
 
@@ -37,6 +38,8 @@ export class DocumentStore {
   private undoStack: HistoryEntry[] = [];
   private redoStack: HistoryEntry[] = [];
   private listeners = new Set<DocumentListener>();
+  /** Changes only when an entirely different document is adopted. */
+  private generation = 0;
 
   constructor(initial: LogoDocument) {
     this.current = initial;
@@ -49,6 +52,10 @@ export class DocumentStore {
 
   get committedDocument(): LogoDocument {
     return this.committed;
+  }
+
+  get documentGeneration(): number {
+    return this.generation;
   }
 
   get canUndo(): boolean {
@@ -86,6 +93,9 @@ export class DocumentStore {
     if (!result) {
       return;
     }
+    if (result.document === this.committed) {
+      return;
+    }
     this.committed = result.document;
     this.current = result.document;
     this.undoStack.push({ inverse: result.inverse, redo: command });
@@ -106,7 +116,10 @@ export class DocumentStore {
     for (const update of updates) {
       const node = nodes[update.nodeId];
       if (node) {
-        nodes[update.nodeId] = { ...node, ...update.patch } as typeof node;
+        nodes[update.nodeId] = {
+          ...node,
+          ...sanitizeNodePatch(node, update.patch),
+        } as typeof node;
       }
     }
     this.current = { ...this.committed, nodes };
@@ -157,6 +170,7 @@ export class DocumentStore {
 
   /** Replace the whole document (load from disk / new file). Clears history. */
   reset(document: LogoDocument): void {
+    this.generation += 1;
     this.current = document;
     this.committed = document;
     this.undoStack = [];

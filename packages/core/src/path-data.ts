@@ -240,25 +240,26 @@ export function insertAnchor(
   if (!from || !to) {
     return null;
   }
+  const u = Number.isFinite(t) ? Math.min(1, Math.max(0, t)) : 0.5;
 
   let newFrom: PathPoint;
   let inserted: PathPoint;
   let newTo: PathPoint;
 
   if (!from.handleOut && !to.handleIn) {
-    const point = lerp(from, to, t);
+    const point = lerp(from, to, u);
     newFrom = { ...from };
     inserted = { x: point.x, y: point.y };
     newTo = { ...to };
   } else {
     const c1 = from.handleOut ?? { x: from.x, y: from.y };
     const c2 = to.handleIn ?? { x: to.x, y: to.y };
-    const q0 = lerp(from, c1, t);
-    const q1 = lerp(c1, c2, t);
-    const q2 = lerp(c2, to, t);
-    const r0 = lerp(q0, q1, t);
-    const r1 = lerp(q1, q2, t);
-    const s = lerp(r0, r1, t);
+    const q0 = lerp(from, c1, u);
+    const q1 = lerp(c1, c2, u);
+    const q2 = lerp(c2, to, u);
+    const r0 = lerp(q0, q1, u);
+    const r1 = lerp(q1, q2, u);
+    const s = lerp(r0, r1, u);
 
     newFrom = { ...from, handleOut: q0 };
     inserted = { x: s.x, y: s.y, handleIn: r0, handleOut: r1 };

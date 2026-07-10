@@ -148,4 +148,42 @@ describe("DocumentStore", () => {
 
     expect(store.canRedo).toBe(false);
   });
+
+  it("increments its identity generation only when a document is reset", () => {
+    const store = new DocumentStore(createInitialDocument());
+    const generation = store.documentGeneration;
+    const nodeId = firstNodeId(store);
+    store.apply({
+      type: "update-nodes",
+      updates: [{ nodeId, patch: { x: 42 } }],
+    });
+    expect(store.documentGeneration).toBe(generation);
+
+    store.reset(createInitialDocument());
+    expect(store.documentGeneration).toBe(generation + 1);
+  });
+
+  it("sanitizes previews and does not record rejected no-op commands", () => {
+    const store = new DocumentStore(createInitialDocument());
+    const nodeId = firstNodeId(store);
+    const original = store.document.nodes[nodeId]!;
+    store.preview([
+      {
+        nodeId,
+        patch: { x: Number.NaN, width: 0, opacity: -2 },
+      },
+    ]);
+    expect(store.document.nodes[nodeId]).toMatchObject({
+      x: original.x,
+      width: 0.01,
+      opacity: 0,
+    });
+    expect(store.canUndo).toBe(false);
+
+    store.apply({
+      type: "set-active-artboard",
+      artboardId: "missing-artboard",
+    });
+    expect(store.canUndo).toBe(false);
+  });
 });

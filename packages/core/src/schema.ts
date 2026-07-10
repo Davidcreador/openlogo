@@ -2,6 +2,7 @@ import { Data, Effect } from "effect";
 import { z } from "zod";
 import { boundsUnion } from "./geometry";
 import { createGroup } from "./factory";
+import { sanitizeNodePatch } from "./commands";
 import { ARTBOARD_GAP, nodeBounds } from "./queries";
 import type { Artboard, LogoDocument, LogoNode } from "./types";
 import { DOCUMENT_SCHEMA_VERSION } from "./types";
@@ -293,6 +294,23 @@ function migrateGroupIdTags(document: LogoDocument): LogoDocument {
 function sanitizeDocument(document: LogoDocument): LogoDocument {
   const nodes: Record<string, LogoNode> = { ...document.nodes };
   const claimed = new Set<string>();
+
+  // Repair bounded paint/text metadata accepted by older schemas instead of
+  // rejecting an otherwise recoverable document.
+  for (const [id, node] of Object.entries(nodes)) {
+    const patch = sanitizeNodePatch(node, {
+      fill: node.fill,
+      ...(node.stroke ? { stroke: node.stroke } : {}),
+      ...(node.type === "text"
+        ? {
+            ...(node.kerning ? { kerning: node.kerning } : {}),
+            ...(node.otFeatures ? { otFeatures: node.otFeatures } : {}),
+            ...(node.onPath ? { onPath: node.onPath } : {}),
+          }
+        : {}),
+    });
+    nodes[id] = { ...node, ...patch } as LogoNode;
+  }
 
   const sanitizeChildren = (ids: readonly string[]): string[] => {
     const kept: string[] = [];
