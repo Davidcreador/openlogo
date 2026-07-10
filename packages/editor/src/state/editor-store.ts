@@ -30,7 +30,6 @@ export type DesignMateReviewSnapshot = {
 };
 
 export type DesignMateStatus = "idle" | "reviewing" | "complete" | "error";
-export type InspectorView = "properties" | "layers" | "review";
 
 type EditorState = {
   tool: Tool;
@@ -65,8 +64,6 @@ type EditorState = {
   exportDialogOpen: boolean;
   /** Local multi-project library and version history visibility. */
   documentLibraryOpen: boolean;
-  /** Active right-rail workspace. Design Mate owns the dedicated review view. */
-  inspectorView: InspectorView;
   /** Round committed positions/dimensions to whole pixels (persisted). */
   pixelSnap: boolean;
   /** Transient status message (file open errors etc.); null = hidden. */
@@ -75,7 +72,6 @@ type EditorState = {
   setTransformDialogOpen: (open: boolean) => void;
   setExportDialogOpen: (open: boolean) => void;
   setDocumentLibraryOpen: (open: boolean) => void;
-  setInspectorView: (view: InspectorView) => void;
   setPixelSnap: (on: boolean) => void;
   setToast: (message: string | null) => void;
   setEditingPathId: (id: string | null) => void;
@@ -109,7 +105,6 @@ export const useEditorStore = create<EditorState>((set) => ({
   transformDialogOpen: false,
   exportDialogOpen: false,
   documentLibraryOpen: false,
-  inspectorView: "properties",
   pixelSnap: loadPrefs().pixelSnap,
   toast: null,
   setTool: (tool) => set({ tool }),
@@ -117,7 +112,6 @@ export const useEditorStore = create<EditorState>((set) => ({
   setExportDialogOpen: (exportDialogOpen) => set({ exportDialogOpen }),
   setDocumentLibraryOpen: (documentLibraryOpen) =>
     set({ documentLibraryOpen }),
-  setInspectorView: (inspectorView) => set({ inspectorView }),
   setPixelSnap: (pixelSnap) => {
     savePrefs({ ...loadPrefs(), pixelSnap });
     set({ pixelSnap });

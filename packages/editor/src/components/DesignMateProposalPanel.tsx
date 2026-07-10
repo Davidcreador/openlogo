@@ -183,9 +183,9 @@ export function DesignMateProposalPanel({
   applyingId,
   busy = applyingId !== null,
   heading = "Suggested changes",
-  description = "Conservative edits from objective findings.",
-  staleMessage = "The document changed. Re-run the review to apply a suggestion.",
-  defaultRationale = "A conservative change tied to an objective review finding.",
+  description = "Small, considered moves based on what Design Mate noticed.",
+  staleMessage = "The canvas changed. Ask Design Mate to look again before applying a suggestion.",
+  defaultRationale = "A conservative change tied to something Design Mate noticed.",
   onApply,
   onDismiss,
 }: DesignMateProposalPanelProps) {
