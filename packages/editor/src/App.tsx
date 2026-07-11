@@ -1,7 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Effect } from "effect";
 import { CanvasStage } from "./canvas/CanvasStage";
-import { DesignMateCompanion } from "./components/DesignMateCompanion";
 import { Inspector } from "./components/Inspector";
 import { PreviewStrip } from "./components/PreviewStrip";
 import { Toast } from "./components/Toast";
@@ -65,6 +64,11 @@ const ExportDialog = lazy(() =>
 const TransformDialog = lazy(() =>
   import("./components/TransformDialog").then((module) => ({
     default: module.TransformDialog,
+  })),
+);
+const DesignMateCompanion = lazy(() =>
+  import("./components/DesignMateCompanion").then((module) => ({
+    default: module.DesignMateCompanion,
   })),
 );
 
@@ -657,7 +661,9 @@ export default function App() {
           <CanvasStage />
           <ZoomControls />
           <PreviewStrip />
-          <DesignMateCompanion />
+          <Suspense fallback={null}>
+            <DesignMateCompanion />
+          </Suspense>
         </section>
         <Inspector />
       </div>
