@@ -15,6 +15,7 @@ export const DESIGN_MATE_SERVICE_DEFAULTS = Object.freeze({
   maxConcurrentRequestsPerSubject: 4,
   requestTimeoutMs: 90_000,
   upstreamTimeoutMs: 60_000,
+  upstreamRetryAttempts: 1,
   providerBaseUrl: "https://api.openai.com/v1",
   providerImageDetail: "auto" as const,
   providerMaxOutputTokens: 1_200,
@@ -40,6 +41,7 @@ export type DesignMateServiceConfig = {
   readonly maxConcurrentRequestsPerSubject: number;
   readonly requestTimeoutMs: number;
   readonly upstreamTimeoutMs: number;
+  readonly upstreamRetryAttempts: number;
   readonly serviceToken?: string;
   readonly provider?: DesignMateProviderConfig;
 };
@@ -333,6 +335,12 @@ export function validateDesignMateServiceConfig(
     10 * 60_000,
     "The upstream timeout",
   );
+  const upstreamRetryAttempts = validateIntegerConfig(
+    config.upstreamRetryAttempts,
+    0,
+    2,
+    "The upstream retry count",
+  );
   const serviceToken =
     config.serviceToken === undefined
       ? undefined
@@ -386,6 +394,7 @@ export function validateDesignMateServiceConfig(
     maxConcurrentRequestsPerSubject,
     requestTimeoutMs,
     upstreamTimeoutMs,
+    upstreamRetryAttempts,
     ...(serviceToken === undefined ? {} : { serviceToken }),
     ...(provider === undefined ? {} : { provider }),
   });
@@ -492,6 +501,16 @@ export function loadDesignMateServiceConfig(
     10 * 60_000,
     "The upstream timeout",
   );
+  const upstreamRetryAttempts = parseInteger(
+    readEnvironmentValue(environment, [
+      "DESIGN_MATE_SERVICE_UPSTREAM_RETRY_ATTEMPTS",
+      "DESIGN_MATE_UPSTREAM_RETRY_ATTEMPTS",
+    ]),
+    DESIGN_MATE_SERVICE_DEFAULTS.upstreamRetryAttempts,
+    0,
+    2,
+    "The upstream retry count",
+  );
   const serviceTokenValue = readEnvironmentValue(environment, [
     "DESIGN_MATE_SERVICE_TOKEN",
   ]);
@@ -544,6 +563,7 @@ export function loadDesignMateServiceConfig(
       maxConcurrentRequestsPerSubject,
       requestTimeoutMs,
       upstreamTimeoutMs,
+      upstreamRetryAttempts,
       ...(serviceToken === undefined ? {} : { serviceToken }),
       provider: {
         apiKey,

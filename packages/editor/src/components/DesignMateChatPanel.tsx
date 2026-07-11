@@ -39,6 +39,7 @@ import {
   designMateChatHistoryFromTranscript,
   designMateConversationMemoryFromTranscript,
   designMateChatModeLabel,
+  getDesignMateAccessToken,
   isDesignMateTranscriptNearBottom,
   isDesignMateChatAnswerStale,
   reduceDesignMateChatTranscript,
@@ -145,6 +146,7 @@ export function DesignMateChatPanel({
       createDesignMateChatProviderSetup(
         DESIGN_MATE_CHAT_ENDPOINT,
         PROVIDER_FACTORIES,
+        { getAccessToken: getDesignMateAccessToken },
       ),
     [],
   );

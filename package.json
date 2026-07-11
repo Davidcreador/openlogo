@@ -7,9 +7,13 @@
   "scripts": {
     "bench": "pnpm -r --if-present bench",
     "dev": "pnpm --filter @openlogo/editor dev",
+    "dev:design-mate": "pnpm --filter @openlogo/design-mate-service dev",
     "build": "pnpm -r build",
+    "build:design-mate-service": "pnpm --filter @openlogo/design-mate-service build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
+    "test:design-mate": "pnpm --filter @openlogo/design-mate --filter @openlogo/design-mate-service test",
+    "smoke:design-mate-service": "pnpm --filter @openlogo/design-mate-service build && pnpm --filter @openlogo/design-mate-service smoke",
     "poc": "pnpm --filter openlogo-poc dev"
   },
   "repository": {

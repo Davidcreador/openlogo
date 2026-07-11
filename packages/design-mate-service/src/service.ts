@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import {
   createServer,
   type IncomingMessage,
@@ -45,17 +45,25 @@ const UNKNOWN_ROUTE = "<unknown>";
 const REQUEST_TIMEOUT_REASON = "request-timeout";
 const UPSTREAM_TIMEOUT_REASON = "upstream-timeout";
 const CLIENT_DISCONNECT_REASON = "client-disconnect";
+const UPSTREAM_RETRY_BASE_DELAY_MS = 100;
 
 type KnownRoute = typeof HEALTH_ROUTE | typeof CHAT_ROUTE;
 type LoggedRoute = KnownRoute | typeof UNKNOWN_ROUTE;
 
 export type DesignMateServiceLogEntry = {
+  readonly schemaVersion: 1;
+  readonly event: "request-completed";
+  readonly level: "info" | "warn" | "error";
   readonly requestId: string;
   readonly route: LoggedRoute;
   readonly status: number;
   readonly durationMs: number;
   readonly providerId?: string;
   readonly errorCode?: DesignMateProviderErrorCode;
+  readonly subjectHash?: string;
+  readonly conversationHash?: string;
+  readonly turnHash?: string;
+  readonly upstreamDurationMs?: number;
 };
 
 export type DesignMateServiceLogger =
@@ -570,12 +578,126 @@ async function* streamWithAbort<T>(
   }
 }
 
+function canRetryTransport(
+  cause: unknown,
+  signal: AbortSignal,
+): boolean {
+  if (signal.aborted || cause instanceof InvalidTransportOutput) {
+    return false;
+  }
+  const candidate =
+    cause instanceof TransportStartError ? cause.cause : cause;
+  try {
+    if (isDesignMateProviderError(candidate)) {
+      return (
+        candidate.retryable &&
+        (candidate.code === "provider-failed" ||
+          candidate.code === "rate-limited" ||
+          candidate.code === "request-timeout")
+      );
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+function waitForTransportRetry(
+  signal: AbortSignal,
+  attempt: number,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const timeout = setTimeout(
+      () => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      },
+      UPSTREAM_RETRY_BASE_DELAY_MS * 2 ** attempt,
+    );
+    timeout.unref();
+    const onAbort = (): void => {
+      clearTimeout(timeout);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function assertTransportStream<T>(
+  value: AsyncIterable<T>,
+): AsyncIterable<T> {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    typeof value[Symbol.asyncIterator] !== "function"
+  ) {
+    throw new TypeError("invalid stream");
+  }
+  return value;
+}
+
+async function* streamTransportWithRetry<T>(
+  initial: AsyncIterable<T>,
+  createStream: () => AsyncIterable<T>,
+  signal: AbortSignal,
+  retryAttempts: number,
+): AsyncGenerator<T, void, void> {
+  let stream: AsyncIterable<T> | undefined = initial;
+  for (let attempt = 0; ; attempt += 1) {
+    if (!stream) {
+      try {
+        stream = assertTransportStream(createStream());
+      } catch (startCause) {
+        const wrapped = new TransportStartError(startCause);
+        if (
+          attempt >= retryAttempts ||
+          !canRetryTransport(wrapped, signal)
+        ) {
+          throw wrapped;
+        }
+        await waitForTransportRetry(signal, attempt);
+        continue;
+      }
+    }
+    let emitted = false;
+    try {
+      for await (const value of streamWithAbort(stream, signal)) {
+        emitted = true;
+        yield value;
+      }
+      return;
+    } catch (cause) {
+      if (
+        emitted ||
+        attempt >= retryAttempts ||
+        !canRetryTransport(cause, signal)
+      ) {
+        throw cause;
+      }
+      stream = undefined;
+      await waitForTransportRetry(signal, attempt);
+    }
+  }
+}
+
 function staticErrorMessage(code: DesignMateProviderErrorCode): string {
   switch (code) {
     case "rate-limited":
       return "The Design Mate model provider is rate limited.";
     case "invalid-request":
       return "The Design Mate model provider rejected the request.";
+    case "authentication-required":
+      return "The Design Mate model provider requires authentication.";
+    case "origin-not-allowed":
+      return "The Design Mate model provider rejected this origin.";
+    case "request-too-large":
+      return "The Design Mate model request is too large.";
+    case "request-timeout":
+      return "The Design Mate model request timed out.";
     case "invalid-chat-response":
     case "invalid-review":
       return "The Design Mate model provider returned an invalid response.";
@@ -598,7 +720,7 @@ function sanitizeTransportFailure(
     return makeDesignMateProviderError(
       providerId,
       "The Design Mate model request timed out.",
-      { code: "provider-failed", retryable: true },
+      { code: "request-timeout", retryable: true },
     );
   }
   if (signal.aborted) {
@@ -711,6 +833,12 @@ export function createDesignMateService(
     config.maxConcurrentRequestsPerSubject,
   );
   const allowedOrigins = new Set(config.allowedOrigins);
+  const logHashKey = randomBytes(32);
+  const hashForLog = (value: string): string =>
+    createHmac("sha256", logHashKey)
+      .update(value, "utf8")
+      .digest("hex")
+      .slice(0, 24);
 
   const server = createServer(
     {
@@ -725,6 +853,10 @@ export function createDesignMateService(
       let logStatus = 500;
       let providerId: string | undefined;
       let errorCode: DesignMateProviderErrorCode | undefined;
+      let subjectHash: string | undefined;
+      let conversationHash: string | undefined;
+      let turnHash: string | undefined;
+      let upstreamDurationMs: number | undefined;
       let releaseConcurrencyLease: (() => void) | undefined;
       response.setHeader("x-request-id", requestId);
 
@@ -863,6 +995,7 @@ export function createDesignMateService(
           );
           return;
         }
+        subjectHash = hashForLog(identity.subject);
 
         const rateLimit = limiter.take(identity.subject);
         if (!rateLimit.allowed) {
@@ -1021,6 +1154,8 @@ export function createDesignMateService(
           );
           return;
         }
+        conversationHash = hashForLog(wireRequest.conversationId);
+        turnHash = hashForLog(wireRequest.turnId);
 
         let prompt;
         try {
@@ -1038,6 +1173,7 @@ export function createDesignMateService(
         }
 
         const upstreamController = new AbortController();
+        const upstreamStartedAt = now(clock);
         const onRequestAbort = (): void => {
           upstreamController.abort(requestController.signal.reason);
         };
@@ -1057,15 +1193,14 @@ export function createDesignMateService(
 
         let stream: AsyncIterable<DesignMateChatProviderChunk>;
         try {
-          stream = transport.stream(prompt, upstreamController.signal);
-          if (
-            typeof stream !== "object" ||
-            stream === null ||
-            typeof stream[Symbol.asyncIterator] !== "function"
-          ) {
-            throw new TypeError("invalid stream");
-          }
+          stream = assertTransportStream(
+            transport.stream(prompt, upstreamController.signal),
+          );
         } catch (cause) {
+          upstreamDurationMs = Math.max(
+            0,
+            Math.round(now(clock) - upstreamStartedAt),
+          );
           clearTimeout(upstreamTimer);
           requestController.signal.removeEventListener(
             "abort",
@@ -1104,9 +1239,11 @@ export function createDesignMateService(
         let proposalCount = 0;
         let textLength = 0;
         try {
-          for await (const candidate of streamWithAbort(
+          for await (const candidate of streamTransportWithRetry(
             stream,
+            () => transport.stream(prompt, upstreamController.signal),
             upstreamController.signal,
+            config.upstreamRetryAttempts,
           )) {
             if (upstreamController.signal.aborted) {
               throw new Error("aborted");
@@ -1171,6 +1308,10 @@ export function createDesignMateService(
             writeTerminalFailure(response, error);
           }
         } finally {
+          upstreamDurationMs = Math.max(
+            0,
+            Math.round(now(clock) - upstreamStartedAt),
+          );
           clearTimeout(upstreamTimer);
           requestController.signal.removeEventListener(
             "abort",
@@ -1207,6 +1348,14 @@ export function createDesignMateService(
           request.removeListener("aborted", onClientAborted);
           response.removeListener("close", onResponseClose);
           logRequest(options.logger, {
+            schemaVersion: 1,
+            event: "request-completed",
+            level:
+              logStatus >= 500
+                ? "error"
+                : logStatus >= 400
+                  ? "warn"
+                  : "info",
             requestId,
             route: loggedRoute,
             status: logStatus,
@@ -1216,6 +1365,14 @@ export function createDesignMateService(
             ),
             ...(providerId === undefined ? {} : { providerId }),
             ...(errorCode === undefined ? {} : { errorCode }),
+            ...(subjectHash === undefined ? {} : { subjectHash }),
+            ...(conversationHash === undefined
+              ? {}
+              : { conversationHash }),
+            ...(turnHash === undefined ? {} : { turnHash }),
+            ...(upstreamDurationMs === undefined
+              ? {}
+              : { upstreamDurationMs }),
           });
         });
     },

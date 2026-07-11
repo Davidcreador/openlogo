@@ -6,13 +6,20 @@
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
+  "bin": {
+    "openlogo-design-mate": "./dist/server.js"
+  },
+  "files": [
+    "dist"
+  ],
   "exports": {
     ".": "./src/index.ts"
   },
   "scripts": {
     "dev": "tsx watch src/bin.ts",
-    "build": "esbuild src/bin.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/server.js",
+    "build": "esbuild src/bin.ts --bundle --platform=node --format=esm --target=node22 --banner:js=\"#!/usr/bin/env node\" --outfile=dist/server.js",
     "start": "node dist/server.js",
+    "smoke": "node scripts/smoke.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

@@ -38,21 +38,40 @@ export async function startDesignMateService(
 
 export function installDesignMateServiceSignalHandlers(
   server: Server,
+  shutdownTimeoutMs = 30_000,
 ): () => void {
+  if (
+    !Number.isSafeInteger(shutdownTimeoutMs) ||
+    shutdownTimeoutMs < 100 ||
+    shutdownTimeoutMs > 120_000
+  ) {
+    throw new TypeError("The shutdown timeout is invalid.");
+  }
   let closing = false;
-  const close = (): void => {
-    if (closing) {
-      return;
-    }
-    closing = true;
-    server.close(() => {
-      remove();
-    });
-  };
+  let forceTimer: NodeJS.Timeout | undefined;
   const remove = (): void => {
     process.removeListener("SIGINT", close);
     process.removeListener("SIGTERM", close);
     server.removeListener("close", remove);
+    if (forceTimer) {
+      clearTimeout(forceTimer);
+      forceTimer = undefined;
+    }
+  };
+  const close = (): void => {
+    if (closing) {
+      server.closeAllConnections();
+      return;
+    }
+    closing = true;
+    server.closeIdleConnections();
+    server.close(() => {
+      remove();
+    });
+    forceTimer = setTimeout(() => {
+      server.closeAllConnections();
+    }, shutdownTimeoutMs);
+    forceTimer.unref();
   };
   process.once("SIGINT", close);
   process.once("SIGTERM", close);

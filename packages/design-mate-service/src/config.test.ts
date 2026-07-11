@@ -33,6 +33,7 @@ function injectedConfig(
       DESIGN_MATE_SERVICE_DEFAULTS.maxConcurrentRequestsPerSubject,
     requestTimeoutMs: 5_000,
     upstreamTimeoutMs: 2_000,
+    upstreamRetryAttempts: 1,
     ...overrides,
   };
 }
@@ -117,11 +118,13 @@ describe("Design Mate service config", () => {
       ...AUTHENTICATED_PROVIDER_ENV,
       DESIGN_MATE_SERVICE_MAX_CONCURRENT_REQUESTS: "12",
       DESIGN_MATE_SERVICE_MAX_CONCURRENT_REQUESTS_PER_SUBJECT: "3",
+      DESIGN_MATE_SERVICE_UPSTREAM_RETRY_ATTEMPTS: "2",
       DESIGN_MATE_PROVIDER_MAX_OUTPUT_TOKENS: "2400",
     });
     expect(loaded).toMatchObject({
       maxConcurrentRequests: 12,
       maxConcurrentRequestsPerSubject: 3,
+      upstreamRetryAttempts: 2,
       provider: { maxOutputTokens: 2_400 },
     });
   });
@@ -139,6 +142,7 @@ describe("Design Mate service config", () => {
     ],
     ["DESIGN_MATE_SERVICE_REQUEST_TIMEOUT_MS", "-1"],
     ["DESIGN_MATE_SERVICE_UPSTREAM_TIMEOUT_MS", "Infinity"],
+    ["DESIGN_MATE_SERVICE_UPSTREAM_RETRY_ATTEMPTS", "3"],
     ["DESIGN_MATE_PROVIDER_MAX_OUTPUT_TOKENS", "15"],
     ["DESIGN_MATE_PROVIDER_MAX_OUTPUT_TOKENS", "16001"],
   ] as const)("rejects invalid numeric setting %s", (name, value) => {

@@ -268,7 +268,13 @@ describe("remote Design Mate chat provider", () => {
   });
 
   it.each([
+    [401, "authentication-required", false],
+    [403, "origin-not-allowed", false],
+    [408, "request-timeout", true],
+    [413, "request-too-large", false],
     [429, "rate-limited", true],
+    [502, "provider-failed", true],
+    [504, "request-timeout", true],
     [400, "invalid-request", false],
     [503, "provider-failed", true],
   ] as const)(
@@ -286,6 +292,63 @@ describe("remote Design Mate chat provider", () => {
       expect(error).toMatchObject({ code, retryable });
     },
   );
+
+  it("obtains a short-lived token and forwards the configured credentials mode", async () => {
+    let capturedInit: RequestInit | undefined;
+    const getAccessToken = vi.fn(async (_signal?: AbortSignal) => "session-token");
+    const provider = createRemoteDesignMateChatProvider({
+      endpoint: "https://example.test/chat",
+      getAccessToken,
+      credentials: "include",
+      fetch: vi.fn(
+        async (_input: RequestInfo | URL, init?: RequestInit) => {
+          capturedInit = init;
+          return sseResponse(
+            [
+              encodeDesignMateChatSseEvent({
+                type: "text-delta",
+                delta: "Authenticated guidance.",
+              }),
+              encodeDesignMateChatSseEvent({ type: "completed" }),
+            ].join(""),
+          );
+        },
+      ) as unknown as typeof fetch,
+    });
+    const controller = new AbortController();
+
+    await expect(
+      collectProvider(provider, makeRequest(), controller.signal),
+    ).resolves.toBe("Authenticated guidance.");
+    expect(getAccessToken).toHaveBeenCalledWith(controller.signal);
+    expect(new Headers(capturedInit?.headers).get("authorization")).toBe(
+      "Bearer session-token",
+    );
+    expect(capturedInit?.credentials).toBe("include");
+  });
+
+  it("fails closed when an access-token callback fails or returns an unsafe value", async () => {
+    for (const getAccessToken of [
+      async () => {
+        throw new Error("session unavailable");
+      },
+      async () => "token with spaces",
+    ]) {
+      const fetchMock = vi.fn() as unknown as typeof fetch;
+      const provider = createRemoteDesignMateChatProvider({
+        endpoint: "https://example.test/chat",
+        getAccessToken,
+        fetch: fetchMock,
+      });
+      await expect(
+        captureProviderError(provider, makeRequest()),
+      ).resolves.toMatchObject({
+        code: "authentication-required",
+        retryable: false,
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  });
 
   it("maps network failures, malformed SSE, and aborts distinctly", async () => {
     const networkProvider = createRemoteDesignMateChatProvider({

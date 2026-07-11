@@ -218,6 +218,15 @@ export type RemoteDesignMateChatProviderOptions = {
   readonly endpoint: string;
   readonly fetch?: typeof fetch;
   readonly id?: string;
+  /**
+   * Optional host-supplied short-lived credential. Do not bundle long-lived
+   * service secrets into browser code; same-origin proxies may omit this.
+   */
+  readonly getAccessToken?: (signal?: AbortSignal) =>
+    | string
+    | null
+    | Promise<string | null>;
+  readonly credentials?: RequestCredentials;
 };
 
 class RemoteBodyReadError {
@@ -315,6 +324,34 @@ function httpFailure(
       { code: "rate-limited", retryable: true },
     );
   }
+  if (status === 401) {
+    return makeDesignMateProviderError(
+      providerId,
+      "Authentication is required for the Design Mate service.",
+      { code: "authentication-required", retryable: false },
+    );
+  }
+  if (status === 403) {
+    return makeDesignMateProviderError(
+      providerId,
+      "This editor origin is not allowed by the Design Mate service.",
+      { code: "origin-not-allowed", retryable: false },
+    );
+  }
+  if (status === 408 || status === 504) {
+    return makeDesignMateProviderError(
+      providerId,
+      "The Design Mate service request timed out.",
+      { code: "request-timeout", retryable: true },
+    );
+  }
+  if (status === 413) {
+    return makeDesignMateProviderError(
+      providerId,
+      "The Design Mate request is too large.",
+      { code: "request-too-large", retryable: false },
+    );
+  }
   if (status >= 400 && status < 500) {
     return makeDesignMateProviderError(
       providerId,
@@ -343,6 +380,20 @@ export function createRemoteDesignMateChatProvider(
   if (typeof fetchImplementation !== "function") {
     throw new TypeError("A fetch implementation is required.");
   }
+  if (
+    options.getAccessToken !== undefined &&
+    typeof options.getAccessToken !== "function"
+  ) {
+    throw new TypeError("The remote access-token provider is invalid.");
+  }
+  const credentials = options.credentials ?? "same-origin";
+  if (
+    credentials !== "omit" &&
+    credentials !== "same-origin" &&
+    credentials !== "include"
+  ) {
+    throw new TypeError("The remote credentials mode is invalid.");
+  }
 
   return {
     id,
@@ -360,13 +411,47 @@ export function createRemoteDesignMateChatProvider(
       }
       let response: Response;
       try {
+        let accessToken: string | null = null;
+        if (options.getAccessToken) {
+          try {
+            accessToken = await options.getAccessToken(signal);
+          } catch (cause) {
+            if (signal?.aborted || isAbortLike(cause)) {
+              throw makeDesignMateChatCancelledError(id);
+            }
+            throw makeDesignMateProviderError(
+              id,
+              "The Design Mate access credential could not be obtained.",
+              { code: "authentication-required", retryable: false },
+            );
+          }
+        }
+        throwIfAborted(id, signal);
+        if (
+          accessToken !== null &&
+          (typeof accessToken !== "string" ||
+            accessToken.length === 0 ||
+            accessToken.length > 4_096 ||
+            accessToken.trim() !== accessToken ||
+            /\s|[\u0000-\u001f\u007f]/.test(accessToken))
+        ) {
+          throw makeDesignMateProviderError(
+            id,
+            "The Design Mate access credential is invalid.",
+            { code: "authentication-required", retryable: false },
+          );
+        }
         response = await fetchImplementation(options.endpoint, {
           method: "POST",
           redirect: "error",
           headers: {
             accept: "text/event-stream",
             "content-type": "application/json",
+            ...(accessToken === null
+              ? {}
+              : { authorization: `Bearer ${accessToken}` }),
           },
+          credentials,
           body: JSON.stringify(wire),
           ...(signal ? { signal } : {}),
         });
@@ -488,7 +573,8 @@ export function createFallbackDesignMateChatProvider(
           !signal?.aborted &&
           error.retryable &&
           (error.code === "provider-failed" ||
-            error.code === "rate-limited");
+            error.code === "rate-limited" ||
+            error.code === "request-timeout");
         if (!canFallback) {
           throw error;
         }

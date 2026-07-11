@@ -44,3 +44,6 @@ jobs:
 
       - name: Build production app
         run: pnpm build
+
+      - name: Smoke-test Design Mate service
+        run: pnpm --filter @openlogo/design-mate-service smoke

@@ -29,6 +29,12 @@ function digest(value: string): Buffer {
   return createHash("sha256").update(value, "utf8").digest();
 }
 
+function throwIfAuthAborted(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw signal.reason ?? new Error("Request authentication was cancelled.");
+  }
+}
+
 function bearerCredential(request: IncomingMessage): string {
   const authorization = request.headers.authorization;
   if (typeof authorization !== "string") {
@@ -77,8 +83,10 @@ export function createBearerTokenRequestAuth(token: string): RequestAuth {
   }
   const expected = digest(token);
   return {
-    authenticate: ({ request }) => {
+    authenticate: ({ request, signal }) => {
+      throwIfAuthAborted(signal);
       const candidate = digest(bearerCredential(request));
+      throwIfAuthAborted(signal);
       return timingSafeEqual(expected, candidate)
         ? Object.freeze({ subject: "service-token" })
         : null;
@@ -98,11 +106,13 @@ export function createDefaultRequestAuth(
     );
   }
   return {
-    authenticate: ({ remoteAddress }) =>
-      isLoopbackRemoteAddress(remoteAddress)
+    authenticate: ({ remoteAddress, signal }) => {
+      throwIfAuthAborted(signal);
+      return isLoopbackRemoteAddress(remoteAddress)
         ? Object.freeze({
             subject: `loopback:${remoteAddress ?? "unknown"}`,
           })
-        : null,
+        : null;
+    },
   };
 }

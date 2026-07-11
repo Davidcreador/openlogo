@@ -14,11 +14,13 @@ import {
   designMateChatHistoryFromTranscript,
   designMateConversationMemoryFromTranscript,
   designMateChatModeLabel,
+  getDesignMateAccessToken,
   isDesignMateTranscriptNearBottom,
   isDesignMateChatAnswerStale,
   normalizeDesignMateServiceUrl,
   reduceDesignMateChatTranscript,
   resolveDesignMateChatEndpoint,
+  setDesignMateAccessTokenProvider,
   type DesignMateChatAnswerContext,
   type DesignMateChatTranscriptState,
 } from "./design-mate-chat";
@@ -172,8 +174,20 @@ describe("Design Mate service URL configuration", () => {
 describe("Design Mate chat provider setup", () => {
   it("uses local-only mode without an endpoint and package fallback with one", () => {
     const calls: string[] = [];
+    let receivedTokenProvider:
+      | ((signal?: AbortSignal) => string | null | Promise<string | null>)
+      | undefined;
     const factories = {
-      createRemote: ({ endpoint }: { readonly endpoint: string }) => {
+      createRemote: ({
+        endpoint,
+        getAccessToken,
+      }: {
+        readonly endpoint: string;
+        readonly getAccessToken?: (
+          signal?: AbortSignal,
+        ) => string | null | Promise<string | null>;
+      }) => {
+        receivedTokenProvider = getAccessToken;
         calls.push(`remote:${endpoint}`);
         return provider("remote");
       },
@@ -199,6 +213,7 @@ describe("Design Mate chat provider setup", () => {
     const remote = createDesignMateChatProviderSetup(
       "/v1/design-mate/chat",
       factories,
+      { getAccessToken: () => "short-lived-token" },
     );
     expect(remote).toMatchObject({
       mode: "remote-with-fallback",
@@ -210,6 +225,20 @@ describe("Design Mate chat provider setup", () => {
       "remote:/v1/design-mate/chat",
       "fallback:remote:local",
     ]);
+    expect(receivedTokenProvider?.()).toBe("short-lived-token");
+  });
+
+  it("keeps only the host token callback in memory", async () => {
+    const tokenProvider = async () => "runtime-token";
+    setDesignMateAccessTokenProvider(tokenProvider);
+    await expect(getDesignMateAccessToken()).resolves.toBe("runtime-token");
+    setDesignMateAccessTokenProvider(null);
+    expect(getDesignMateAccessToken()).toBeNull();
+    expect(() =>
+      setDesignMateAccessTokenProvider(
+        "not-a-function" as unknown as () => string,
+      ),
+    ).toThrow(TypeError);
   });
 });
 

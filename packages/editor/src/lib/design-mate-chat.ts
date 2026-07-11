@@ -19,6 +19,31 @@ const RELATIVE_URL_BASE = "https://openlogo.invalid";
 export const DESIGN_MATE_TRANSCRIPT_LIMIT = 48;
 
 export type DesignMateChatMode = "remote-with-fallback" | "local";
+export type DesignMateAccessTokenProvider = (
+  signal?: AbortSignal,
+) => string | null | Promise<string | null>;
+
+let accessTokenProvider: DesignMateAccessTokenProvider | null = null;
+
+/**
+ * Host applications may install a short-lived token callback before opening
+ * Design Mate. The callback, rather than a credential, is retained in memory.
+ */
+export function setDesignMateAccessTokenProvider(
+  provider: DesignMateAccessTokenProvider | null,
+): void {
+  if (provider !== null && typeof provider !== "function") {
+    throw new TypeError("The Design Mate access-token provider is invalid.");
+  }
+  accessTokenProvider = provider;
+}
+
+export function getDesignMateAccessToken(
+  signal?: AbortSignal,
+): string | null | Promise<string | null> {
+  return accessTokenProvider?.(signal) ?? null;
+}
+
 export type DesignMateChatEntryStatus =
   | "complete"
   | "streaming"
@@ -177,6 +202,8 @@ export const DESIGN_MATE_CHAT_ENDPOINT = resolveDesignMateChatEndpoint(
 export type DesignMateChatProviderFactories = {
   readonly createRemote: (options: {
     readonly endpoint: string;
+    readonly getAccessToken?: DesignMateAccessTokenProvider;
+    readonly credentials?: RequestCredentials;
   }) => DesignMateChatProvider;
   readonly createLocal: () => DesignMateChatProvider;
   readonly createFallback: (
@@ -197,12 +224,16 @@ export type DesignMateChatProviderSetup = {
 export function createDesignMateChatProviderSetup(
   endpoint: string | null,
   factories: DesignMateChatProviderFactories,
+  remoteOptions: {
+    readonly getAccessToken?: DesignMateAccessTokenProvider;
+    readonly credentials?: RequestCredentials;
+  } = {},
 ): DesignMateChatProviderSetup {
   const local = factories.createLocal();
   if (!endpoint) {
     return { mode: "local", provider: local };
   }
-  const remote = factories.createRemote({ endpoint });
+  const remote = factories.createRemote({ endpoint, ...remoteOptions });
   return {
     mode: "remote-with-fallback",
     provider: factories.createFallback(remote, local),
@@ -258,6 +289,14 @@ export function designMateChatErrorLabel(
       return "The AI service is busy. Try again.";
     case "invalid-request":
       return "This request could not be sent. Try a shorter prompt.";
+    case "authentication-required":
+      return "The AI service needs a valid sign-in or access token.";
+    case "origin-not-allowed":
+      return "This OpenLogo address is not allowed by the AI service.";
+    case "request-too-large":
+      return "The request is too large. Try a smaller scope or fewer previews.";
+    case "request-timeout":
+      return "The AI service timed out. Try again.";
     case "invalid-chat-response":
     case "invalid-review":
       return "Design Mate returned an unusable response. Try again.";

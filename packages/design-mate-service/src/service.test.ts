@@ -5,6 +5,7 @@ import {
   DESIGN_MATE_CHAT_LIMITS,
   buildDocumentIdentity,
   decodeDesignMateChatSse,
+  makeDesignMateProviderError,
   prepareDesignMateChatRequest,
   toDesignMateChatWireRequest,
   type DesignMateChatProviderChunk,
@@ -124,6 +125,8 @@ function config(
       DESIGN_MATE_SERVICE_DEFAULTS.maxConcurrentRequestsPerSubject,
     requestTimeoutMs: 5_000,
     upstreamTimeoutMs: 2_000,
+    upstreamRetryAttempts:
+      DESIGN_MATE_SERVICE_DEFAULTS.upstreamRetryAttempts,
     ...overrides,
   };
 }
@@ -155,6 +158,7 @@ async function postWire(
     readonly origin?: string;
     readonly token?: string;
     readonly contentType?: string;
+    readonly contentEncoding?: string;
   } = {},
 ): Promise<Response> {
   return fetch(`${baseUrl}/v1/design-mate/chat`, {
@@ -167,6 +171,9 @@ async function postWire(
       ...(options.token === undefined
         ? {}
         : { authorization: `Bearer ${options.token}` }),
+      ...(options.contentEncoding === undefined
+        ? {}
+        : { "content-encoding": options.contentEncoding }),
     },
     body: JSON.stringify(wire),
   });
@@ -206,6 +213,17 @@ describe("Design Mate HTTP service", () => {
       status: "ok",
       version: "0.1.0",
     });
+    const preflight = await fetch(`${baseUrl}/health`, {
+      method: "OPTIONS",
+      headers: {
+        origin: ALLOWED_ORIGIN,
+        "access-control-request-method": "GET",
+      },
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-origin")).toBe(
+      ALLOWED_ORIGIN,
+    );
     expect(authenticate).not.toHaveBeenCalled();
     expect(transport.prompts).toHaveLength(0);
   });
@@ -355,6 +373,13 @@ describe("Design Mate HTTP service", () => {
           method: "POST",
           headers: { "content-type": "text/plain" },
           body: "{}",
+        })
+      ).status,
+    ).toBe(415);
+    expect(
+      (
+        await postWire(baseUrl, makeWire(), {
+          contentEncoding: "gzip",
         })
       ).status,
     ).toBe(415);
@@ -753,6 +778,93 @@ describe("Design Mate HTTP service", () => {
     ]);
   });
 
+  it("retries retryable upstream failures only before the first emitted chunk", async () => {
+    const retryable = makeDesignMateProviderError(
+      "fake-design-mate-model",
+      "temporary upstream failure",
+      { code: "provider-failed", retryable: true },
+    );
+    const recovered = createFakeDesignMateModelTransport({
+      respond: async function* (_prompt, index) {
+        if (index === 0) {
+          throw retryable;
+        }
+        yield { type: "text-delta", delta: "Recovered once." };
+      },
+    });
+    const recoveredUrl = await listen(
+      createDesignMateService({
+        config: config({ upstreamRetryAttempts: 1 }),
+        transport: recovered,
+      }),
+    );
+    expect(
+      await transportEvents(await postWire(recoveredUrl, makeWire())),
+    ).toEqual([
+      { type: "text-delta", delta: "Recovered once." },
+      { type: "completed" },
+    ]);
+    expect(recovered.prompts).toHaveLength(2);
+
+    const partial = createFakeDesignMateModelTransport({
+      respond: async function* () {
+        yield { type: "text-delta", delta: "Partial." };
+        throw retryable;
+      },
+    });
+    const partialUrl = await listen(
+      createDesignMateService({
+        config: config({ upstreamRetryAttempts: 2 }),
+        transport: partial,
+      }),
+    );
+    const partialEvents = await transportEvents(
+      await postWire(partialUrl, makeWire()),
+    );
+    expect(partialEvents[0]).toEqual({
+      type: "text-delta",
+      delta: "Partial.",
+    });
+    expect(partialEvents.at(-1)).toMatchObject({
+      type: "failed",
+      error: { code: "provider-failed" },
+    });
+    expect(partial.prompts).toHaveLength(1);
+  });
+
+  it("bounds asynchronous authentication with the request timeout", async () => {
+    const transport = createFakeDesignMateModelTransport();
+    const auth: RequestAuth = {
+      authenticate: ({ signal }) =>
+        new Promise((_resolve, reject) => {
+          if (signal.aborted) {
+            reject(signal.reason);
+            return;
+          }
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        }),
+    };
+    const baseUrl = await listen(
+      createDesignMateService({
+        config: config({
+          allowAnonymousLoopback: false,
+          requestTimeoutMs: 20,
+        }),
+        auth,
+        transport,
+      }),
+    );
+
+    const response = await postWire(baseUrl, makeWire());
+    expect(response.status).toBe(408);
+    expect(await response.json()).toMatchObject({
+      error: { code: "request-timeout" },
+    });
+    expect(transport.prompts).toHaveLength(0);
+  });
+
   it("turns an upstream timeout into one sanitized failed event", async () => {
     const transport = createFakeDesignMateModelTransport({
       respond: async function* () {
@@ -772,7 +884,7 @@ describe("Design Mate HTTP service", () => {
     expect(events[0]).toMatchObject({
       type: "failed",
       error: {
-        code: "provider-failed",
+        code: "request-timeout",
         message: "The Design Mate model request timed out.",
       },
     });
@@ -821,6 +933,9 @@ describe("Design Mate HTTP service", () => {
       "MESSAGE_SECRET_SENTINEL",
       "PROVIDER_SECRET_SENTINEL",
       PNG_BASE64,
+      "service-token",
+      "conversation-service",
+      "turn-service",
     ]) {
       expect(serializedLogs).not.toContain(secret);
     }
@@ -829,6 +944,12 @@ describe("Design Mate HTTP service", () => {
       status: 200,
       providerId: "fake-design-mate-model",
       errorCode: "provider-failed",
+      schemaVersion: 1,
+      event: "request-completed",
+      level: "info",
     });
+    expect(logs.at(-1)?.subjectHash).toMatch(/^[a-f0-9]{24}$/);
+    expect(logs.at(-1)?.conversationHash).toMatch(/^[a-f0-9]{24}$/);
+    expect(logs.at(-1)?.turnHash).toMatch(/^[a-f0-9]{24}$/);
   });
 });

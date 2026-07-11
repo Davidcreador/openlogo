@@ -18,6 +18,10 @@ const PROVIDER_ERROR_CODES = new Set<DesignMateProviderErrorCode>([
   "invalid-review",
   "invalid-chat-response",
   "invalid-request",
+  "authentication-required",
+  "origin-not-allowed",
+  "request-too-large",
+  "request-timeout",
   "rate-limited",
   "cancelled",
 ]);

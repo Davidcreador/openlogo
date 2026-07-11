@@ -2,11 +2,29 @@ import {
   installDesignMateServiceSignalHandlers,
   loadDesignMateServiceConfig,
   startDesignMateService,
+  DESIGN_MATE_SERVICE_VERSION,
   type DesignMateServiceLogEntry,
 } from "./index";
 
 function writeLog(entry: DesignMateServiceLogEntry): void {
   process.stdout.write(`${JSON.stringify(entry)}\n`);
+}
+
+function writeLifecycleLog(
+  level: "info" | "error",
+  event: "service-started" | "service-start-failed",
+  details: Readonly<Record<string, string | number>> = {},
+): void {
+  const destination = level === "error" ? process.stderr : process.stdout;
+  destination.write(
+    `${JSON.stringify({
+      schemaVersion: 1,
+      service: "openlogo-design-mate",
+      level,
+      event,
+      ...details,
+    })}\n`,
+  );
 }
 
 try {
@@ -16,8 +34,12 @@ try {
     logger: writeLog,
   });
   installDesignMateServiceSignalHandlers(server);
-  process.stdout.write("Design Mate service listening.\n");
+  writeLifecycleLog("info", "service-started", {
+    host: config.host,
+    port: config.port,
+    version: DESIGN_MATE_SERVICE_VERSION,
+  });
 } catch {
-  process.stderr.write("Design Mate service failed to start.\n");
+  writeLifecycleLog("error", "service-start-failed");
   process.exitCode = 1;
 }
