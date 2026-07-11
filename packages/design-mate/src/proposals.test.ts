@@ -235,6 +235,7 @@ describe("Design Mate proposal validation", () => {
     expect(Object.keys(DESIGN_MATE_MUTATION_TOOLS).sort()).toEqual([
       "align-nodes",
       "create-logo-variant",
+      "create-wordmark",
       "distribute-nodes",
       "rotate-nodes",
       "scale-nodes",
