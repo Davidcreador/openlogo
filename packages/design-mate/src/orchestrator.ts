@@ -32,6 +32,7 @@ export type PrepareDesignMateReviewOptions = BuildDocumentIdentityOptions & {
 
 export type RunDesignMateReviewOptions = PrepareDesignMateReviewOptions & {
   readonly provider?: DesignMateProvider;
+  readonly signal?: AbortSignal;
 };
 
 export function prepareDesignMateReviewRequest(
@@ -88,7 +89,18 @@ type ProviderOutcome =
 async function resolveProviderReview(
   provider: DesignMateProvider,
   request: DesignMateReviewRequest,
+  signal?: AbortSignal,
 ): Promise<ProviderOutcome> {
+  if (signal?.aborted) {
+    return {
+      ok: false,
+      error: makeDesignMateProviderError(
+        provider.id,
+        "The Design Mate review was cancelled.",
+        { code: "cancelled", retryable: false },
+      ),
+    };
+  }
   try {
     const reviewEffect = provider.review(request);
     return await Effect.runPromise(
@@ -98,8 +110,19 @@ async function resolveProviderReview(
           onSuccess: (review): ProviderOutcome => ({ ok: true, review }),
         }),
       ),
+      signal ? { signal } : undefined,
     );
   } catch (cause) {
+    if (signal?.aborted) {
+      return {
+        ok: false,
+        error: makeDesignMateProviderError(
+          provider.id,
+          "The Design Mate review was cancelled.",
+          { code: "cancelled", retryable: false },
+        ),
+      };
+    }
     return {
       ok: false,
       error: normalizeProviderFailure(provider.id, cause),
@@ -116,6 +139,7 @@ async function resolveProviderReview(
 export async function* orchestrateDesignMateReview(
   request: DesignMateReviewRequest,
   provider: DesignMateProvider = heuristicDesignMateProvider,
+  signal?: AbortSignal,
 ): AsyncGenerator<DesignMateReviewEvent, DesignMateStreamResult, void> {
   yield {
     type: "started",
@@ -125,7 +149,7 @@ export async function* orchestrateDesignMateReview(
   };
   yield { type: "context", context: request.context };
 
-  const outcome = await resolveProviderReview(provider, request);
+  const outcome = await resolveProviderReview(provider, request, signal);
   if (!outcome.ok) {
     yield { type: "failed", error: outcome.error };
     return {
@@ -160,6 +184,21 @@ export async function* orchestrateDesignMateReview(
     index < review.findings.length;
     index += 1
   ) {
+    if (signal?.aborted) {
+      const error = makeDesignMateProviderError(
+        provider.id,
+        "The Design Mate review was cancelled.",
+        { code: "cancelled", retryable: false },
+      );
+      yield { type: "failed", error };
+      return {
+        status: "failed",
+        scope: request.scope,
+        context: request.context,
+        identity: request.identity,
+        error,
+      };
+    }
     yield {
       type: "finding",
       index,
@@ -190,6 +229,7 @@ export async function* streamDesignMateReview(
   return yield* orchestrateDesignMateReview(
     request,
     options.provider ?? heuristicDesignMateProvider,
+    options.signal,
   );
 }
 

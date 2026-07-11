@@ -89,11 +89,16 @@ function versionLabel(version: DocumentVersion): string {
 }
 
 function resetEditorContext(document: LogoDocument): void {
+  documentStore.cancelPreview();
   const editor = useEditorStore.getState();
   editor.setSelection([]);
   editor.setActiveGroupId(null);
   editor.setEditingPathId(null);
   editor.setTool("select");
+  editor.setDesignMateReview(null);
+  editor.setDesignMateCanvasFocus(null);
+  editor.setDesignMateStatus("idle");
+  editor.setDesignMateError(null);
   const activeArtboard = getActiveArtboard(document);
   if (editor.viewport.width > 0 && editor.viewport.height > 0) {
     editor.setCamera(

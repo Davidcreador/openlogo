@@ -309,6 +309,32 @@ describe("providers and orchestration", () => {
     ).rejects.toEqual(error);
   });
 
+  it("cancels an in-flight provider review through the supplied signal", async () => {
+    const document = createInitialDocument();
+    const provider = createFakeDesignMateProvider({
+      id: "cancellable-test-provider",
+      respond: () => Effect.never,
+    });
+    const controller = new AbortController();
+    const review = collectDesignMateReview(
+      document,
+      { selectedNodeIds: [] },
+      {
+        generation: 0,
+        revision: 0,
+        provider,
+        signal: controller.signal,
+      },
+    );
+
+    controller.abort();
+
+    await expect(review).rejects.toMatchObject({
+      code: "cancelled",
+      retryable: false,
+    });
+  });
+
   it("does not mutate the committed document", async () => {
     const document = createInitialDocument();
     const selectedNodeIds = [...document.artboards[0]!.nodeIds];

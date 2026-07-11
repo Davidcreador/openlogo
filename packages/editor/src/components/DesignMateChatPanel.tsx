@@ -13,6 +13,7 @@ import {
   Paperclip,
   RotateCcw,
   Send,
+  ShieldCheck,
   Square,
   Trash2,
 } from "lucide-react";
@@ -27,13 +28,13 @@ import {
   streamDesignMateChat,
   type DesignMateChatMessage,
   type DesignMateChatProvider,
+  type DesignMateConversationMemoryEvent,
   type DesignMateSelection,
   type DesignMateVisualAttachment,
   type PreparedDesignMateProposal,
 } from "@openlogo/design-mate";
 import {
   DESIGN_MATE_CHAT_ENDPOINT,
-  EMPTY_DESIGN_MATE_CHAT_TRANSCRIPT,
   createDesignMateChatId,
   createDesignMateChatProviderSetup,
   designMateChatHistoryFromTranscript,
@@ -45,6 +46,11 @@ import {
   reduceDesignMateChatTranscript,
   type DesignMateChatAnswerContext,
 } from "../lib/design-mate-chat";
+import {
+  clearDesignMateChatSession,
+  loadDesignMateChatSession,
+  saveDesignMateChatSession,
+} from "../lib/design-mate-session";
 import {
   createDesignMateRequestSignature,
   resolveEffectiveDesignMateScope,
@@ -87,6 +93,8 @@ export type DesignMateChatPanelProps = {
   readonly onRunningChange?: (running: boolean) => void;
   readonly onProposalsClear?: () => void;
   readonly onProposalsReady?: (batch: DesignMateChatProposalBatch) => void;
+  readonly onProposalOutcomeConsumed?: (eventId: string) => void;
+  readonly proposalOutcome?: DesignMateConversationMemoryEvent | null;
 };
 
 function isoNow(): string {
@@ -111,6 +119,8 @@ export function DesignMateChatPanel({
   onRunningChange,
   onProposalsClear,
   onProposalsReady,
+  onProposalOutcomeConsumed,
+  proposalOutcome = null,
 }: DesignMateChatPanelProps) {
   const document = useDocument();
   const documentGeneration = documentStore.documentGeneration;
@@ -121,10 +131,13 @@ export function DesignMateChatPanel({
   const [visualNote, setVisualNote] = useState<string | null>(null);
   const [transcript, dispatch] = useReducer(
     reduceDesignMateChatTranscript,
-    EMPTY_DESIGN_MATE_CHAT_TRANSCRIPT,
+    document.id,
+    loadDesignMateChatSession,
   );
   const transcriptRef = useRef(transcript);
   transcriptRef.current = transcript;
+  const onProposalsClearRef = useRef(onProposalsClear);
+  onProposalsClearRef.current = onProposalsClear;
   const conversationId = useRef(createDesignMateChatId("conversation"));
   const runSequence = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
@@ -135,20 +148,28 @@ export function DesignMateChatPanel({
     documentId: document.id,
     generation: documentGeneration,
   });
+  const persistenceDocumentIdRef = useRef(document.id);
+  const consumedProposalOutcomeIdRef = useRef<string | null>(null);
 
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   const keyObjectId = useEditorStore((state) => state.keyObjectId);
   const activeGroupId = useEditorStore((state) => state.activeGroupId);
   const requestedScope = useEditorStore((state) => state.designMateScope);
+  const remoteEnabled = useEditorStore(
+    (state) => state.designMateRemoteEnabled,
+  );
+  const setRemoteEnabled = useEditorStore(
+    (state) => state.setDesignMateRemoteEnabled,
+  );
 
   const providerSetup = useMemo(
     () =>
       createDesignMateChatProviderSetup(
-        DESIGN_MATE_CHAT_ENDPOINT,
+        remoteEnabled ? DESIGN_MATE_CHAT_ENDPOINT : null,
         PROVIDER_FACTORIES,
         { getAccessToken: getDesignMateAccessToken },
       ),
-    [],
+    [remoteEnabled],
   );
   const modeLabel = designMateChatModeLabel(providerSetup.mode);
   const effectiveScope = resolveEffectiveDesignMateScope(
@@ -179,6 +200,24 @@ export function DesignMateChatPanel({
   );
 
   useEffect(() => {
+    if (persistenceDocumentIdRef.current === document.id) {
+      saveDesignMateChatSession(document.id, transcript.entries);
+    }
+  }, [document.id, transcript.entries]);
+
+  useEffect(() => {
+    if (
+      !proposalOutcome ||
+      consumedProposalOutcomeIdRef.current === proposalOutcome.id
+    ) {
+      return;
+    }
+    consumedProposalOutcomeIdRef.current = proposalOutcome.id;
+    dispatch({ type: "proposal-outcome", event: proposalOutcome });
+    onProposalOutcomeConsumed?.(proposalOutcome.id);
+  }, [onProposalOutcomeConsumed, proposalOutcome]);
+
+  useEffect(() => {
     const changed =
       previousHead.current.documentId !== document.id ||
       previousHead.current.generation !== documentGeneration;
@@ -194,10 +233,15 @@ export function DesignMateChatPanel({
     controllerRef.current = null;
     activeRunRef.current = null;
     conversationId.current = createDesignMateChatId("conversation");
+    persistenceDocumentIdRef.current = document.id;
     stickTranscriptToBottomRef.current = true;
-    dispatch({ type: "clear" });
+    dispatch({
+      type: "restore",
+      entries: loadDesignMateChatSession(document.id).entries,
+    });
     setPrompt("");
     setVisualNote(null);
+    onProposalsClearRef.current?.();
   }, [document.id, documentGeneration]);
 
   useEffect(
@@ -270,6 +314,7 @@ export function DesignMateChatPanel({
         error: makeDesignMateChatCancelledError(active.provider.id),
       },
     });
+    onProposalsClear?.();
     setVisualNote("Response stopped. Partial text was kept.");
   }
 
@@ -283,6 +328,7 @@ export function DesignMateChatPanel({
     activeRunRef.current = null;
     conversationId.current = createDesignMateChatId("conversation");
     stickTranscriptToBottomRef.current = true;
+    clearDesignMateChatSession(document.id);
     dispatch({ type: "clear" });
     setVisualNote(null);
     onProposalsClear?.();
@@ -354,6 +400,7 @@ export function DesignMateChatPanel({
       turnId,
       provider: providerSetup.provider,
     };
+    onProposalsClear?.();
     dispatch({
       type: "start-turn",
       turnId,
@@ -449,6 +496,8 @@ export function DesignMateChatPanel({
           rejectedCount += 1;
         } else if (event.type === "completed") {
           completed = true;
+        } else if (event.type === "failed" || event.type === "cancelled") {
+          onProposalsClear?.();
         }
         dispatch({ type: "stream-event", turnId, event });
       }
@@ -464,6 +513,7 @@ export function DesignMateChatPanel({
       if (!isCurrentRun(runId, controller)) {
         return;
       }
+      onProposalsClear?.();
       dispatch({
         type: "stream-event",
         turnId,
@@ -519,11 +569,42 @@ export function DesignMateChatPanel({
         </span>
       </div>
 
+      {DESIGN_MATE_CHAT_ENDPOINT && (
+        <div className="mt-8 rounded-[7px] border border-panel-hairline bg-field px-8 py-7">
+          <div className="flex items-start gap-6">
+            <ShieldCheck
+              size={13}
+              className="mt-1 shrink-0 text-accent"
+              aria-hidden="true"
+            />
+            <div className="min-w-0 flex-1">
+              <strong className="block text-[10px] font-[650] text-ink">
+                {remoteEnabled ? "Remote AI is enabled" : "Remote AI is off"}
+              </strong>
+              <p className="m-0 mt-3 text-[9.5px] leading-[1.45] text-ink-dim">
+                {remoteEnabled
+                  ? "Messages, bounded design context, review findings, and up to three PNG previews can be sent to the configured service. The raw OpenLogo document is never uploaded."
+                  : "Local guidance stays on this device. Enable remote AI only if you agree to send messages, bounded design context, review findings, and up to three PNG previews to the configured service and its model provider."}
+              </p>
+              <button
+                type="button"
+                className={`${SECONDARY} mt-6`}
+                onClick={() => setRemoteEnabled(!remoteEnabled)}
+                disabled={running}
+              >
+                {remoteEnabled ? "Use local only" : "Enable remote AI"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div
         ref={transcriptLogRef}
         className="mt-8 grid max-h-280 min-h-96 gap-7 overflow-y-auto rounded-[7px] border border-panel-hairline bg-field p-7"
         role="log"
         tabIndex={0}
+        aria-live="polite"
         aria-relevant="additions"
         aria-label="Design Mate conversation"
         onScroll={(event) => {
@@ -683,6 +764,10 @@ export function DesignMateChatPanel({
         <p className="m-0 text-right text-[8.5px] tabular-nums text-ink-faint">
           {prompt.length}/{DESIGN_MATE_CHAT_LIMITS.userTextLength} · Enter to
           send, Shift+Enter for a new line
+        </p>
+        <p className="m-0 text-[8.5px] leading-[1.4] text-ink-faint">
+          This conversation is kept only for this document in the current
+          browser tab. Clear removes it.
         </p>
       </div>
     </section>

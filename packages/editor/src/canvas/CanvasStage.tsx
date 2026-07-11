@@ -608,6 +608,44 @@ function buildDraftShape(drag: Extract<DragState, { kind: "draw" }>): LogoNode |
   return null;
 }
 
+function DesignMateFocusOverlay() {
+  const focus = useEditorStore((state) => state.designMateCanvasFocus);
+  const camera = useEditorStore((state) => state.camera);
+  if (!focus) {
+    return null;
+  }
+  const first = worldToScreen(camera, {
+    x: focus.bounds.x,
+    y: focus.bounds.y,
+  });
+  const second = worldToScreen(camera, {
+    x: focus.bounds.x + focus.bounds.width,
+    y: focus.bounds.y + focus.bounds.height,
+  });
+  const left = Math.min(first.x, second.x);
+  const top = Math.min(first.y, second.y);
+  const width = Math.max(12, Math.abs(second.x - first.x));
+  const height = Math.max(12, Math.abs(second.y - first.y));
+  const placeLabelAbove = top >= 28;
+
+  return (
+    <div
+      className="pointer-events-none absolute z-10 rounded-[5px] border-2 border-dashed border-accent shadow-[0_0_0_3px_rgb(79_107_246/0.16),0_0_22px_rgb(79_107_246/0.28)]"
+      style={{ left, top, width, height }}
+      data-design-mate-finding={focus.findingId}
+      aria-hidden="true"
+    >
+      <span
+        className={`absolute left-0 max-w-240 truncate rounded-full bg-accent px-7 py-3 text-[9px] font-[650] text-white shadow-[0_2px_8px_rgb(28_25_33/0.2)] ${
+          placeLabelAbove ? "-top-24" : "top-2"
+        }`}
+      >
+        {focus.label}
+      </span>
+    </div>
+  );
+}
+
 export function CanvasStage() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -3236,6 +3274,7 @@ export function CanvasStage() {
         onDoubleClick={handleDoubleClick}
         aria-label="OpenLogo canvas"
       />
+      <DesignMateFocusOverlay />
       {!rendererFailure && <GradientAnnotator />}
       {rendererFailure && (
         <div

@@ -9,10 +9,12 @@ import {
   type ReactNode,
 } from "react";
 import {
+  ArrowRight,
   LocateFixed,
   RefreshCw,
   Save,
   Sparkles,
+  Square,
 } from "lucide-react";
 import {
   collectLeafNodeIds,
@@ -26,6 +28,7 @@ import {
   collectDesignMateReview,
   isDesignMateProposalStale,
   prepareDesignMateProposal,
+  type DesignMateConversationMemoryEvent,
   type PreparedDesignMateProposal,
 } from "@openlogo/design-mate";
 import { fitBounds } from "@openlogo/renderer";
@@ -43,6 +46,7 @@ import {
 } from "../lib/design-mate-review";
 import {
   DESIGN_MATE_CHAT_ENDPOINT,
+  createDesignMateChatId,
   designMateChatHeaderLabel,
   isDesignMateChatAnswerStale,
   type DesignMateChatAnswerContext,
@@ -215,15 +219,26 @@ function FindingCard({
   finding,
   onFocus,
   canFocus,
+  focused,
+  relatedProposal,
+  onViewProposal,
 }: {
   finding: ReviewFinding;
   onFocus: () => void;
   canFocus: boolean;
+  focused: boolean;
+  relatedProposal?: PreparedDesignMateProposal;
+  onViewProposal?: () => void;
 }) {
   return (
     <li
       data-severity={finding.severity}
-      className={`rounded-[8px] border-l-[3px] px-10 py-9 text-[11.5px] ${
+      aria-current={focused ? "true" : undefined}
+      className={`rounded-[8px] border-l-[3px] px-10 py-9 text-[11.5px] transition-[box-shadow,transform] ${
+        focused
+          ? "shadow-[0_0_0_2px_rgb(79_107_246/0.35)]"
+          : ""
+      } ${
         finding.severity === "warning"
           ? "border-[#f59e0b] bg-[#fdf6e9]"
           : finding.severity === "strong"
@@ -254,21 +269,35 @@ function FindingCard({
             .join(" · ")}
         </p>
       )}
-      <div className="mt-7 flex items-end justify-between gap-8">
+      <div className="mt-7 flex flex-wrap items-end justify-between gap-8">
         <em className="min-w-0 flex-1 text-[10.5px] leading-[1.4] text-ink-dim">
           {finding.action}
         </em>
-        {canFocus && (
-          <button
-            type="button"
-            className="inline-flex shrink-0 items-center gap-4 rounded-field border border-[rgb(79_107_246/0.28)] bg-card px-7 py-4 text-[10px] font-[650] text-accent transition-colors hover:bg-accent-soft"
-            onClick={onFocus}
-            aria-label={`Show ${finding.title} on canvas`}
-          >
-            <LocateFixed size={11} aria-hidden="true" />
-            Show
-          </button>
-        )}
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-5">
+          {relatedProposal && onViewProposal && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-4 rounded-field border border-field-border bg-card px-7 py-4 text-[10px] font-[650] text-ink transition-colors hover:border-accent hover:text-accent"
+              onClick={onViewProposal}
+              aria-label={`Review suggested change: ${relatedProposal.proposal.label}`}
+            >
+              Review fix
+              <ArrowRight size={11} aria-hidden="true" />
+            </button>
+          )}
+          {canFocus && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-4 rounded-field border border-[rgb(79_107_246/0.28)] bg-card px-7 py-4 text-[10px] font-[650] text-accent transition-colors hover:bg-accent-soft"
+              onClick={onFocus}
+              aria-label={`${focused ? "Hide" : "Show"} ${finding.title} on canvas`}
+              aria-pressed={focused}
+            >
+              <LocateFixed size={11} aria-hidden="true" />
+              {focused ? "Hide" : "Show"}
+            </button>
+          )}
+        </div>
       </div>
     </li>
   );
@@ -282,6 +311,7 @@ export function DesignMateSection() {
     generation: documentGeneration,
   });
   const latestRun = useRef(0);
+  const reviewControllerRef = useRef<AbortController | null>(null);
   const latestProposalAction = useRef(0);
   const applyingProposalRef = useRef<ApplyingProposal | null>(null);
   const [briefExpanded, setBriefExpanded] = useState(false);
@@ -304,16 +334,28 @@ export function DesignMateSection() {
   const [applyingProposal, setApplyingProposal] =
     useState<ApplyingProposal | null>(null);
   const [chatRunning, setChatRunning] = useState(false);
+  const [chatMemoryEvent, setChatMemoryEvent] =
+    useState<DesignMateConversationMemoryEvent | null>(null);
+  const [createdVariantId, setCreatedVariantId] = useState<string | null>(null);
 
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   const keyObjectId = useEditorStore((state) => state.keyObjectId);
   const activeGroupId = useEditorStore((state) => state.activeGroupId);
   const scope = useEditorStore((state) => state.designMateScope);
+  const remoteEnabled = useEditorStore(
+    (state) => state.designMateRemoteEnabled,
+  );
   const reviewSnapshot = useEditorStore((state) => state.designMateReview);
+  const canvasFocus = useEditorStore(
+    (state) => state.designMateCanvasFocus,
+  );
   const status = useEditorStore((state) => state.designMateStatus);
   const error = useEditorStore((state) => state.designMateError);
   const setScope = useEditorStore((state) => state.setDesignMateScope);
   const setReview = useEditorStore((state) => state.setDesignMateReview);
+  const setCanvasFocus = useEditorStore(
+    (state) => state.setDesignMateCanvasFocus,
+  );
   const setStatus = useEditorStore((state) => state.setDesignMateStatus);
   const setError = useEditorStore((state) => state.setDesignMateError);
   const setToast = useEditorStore((state) => state.setToast);
@@ -331,7 +373,10 @@ export function DesignMateSection() {
         generation: documentGeneration,
       };
       latestRun.current += 1;
+      reviewControllerRef.current?.abort();
+      reviewControllerRef.current = null;
       setReview(null);
+      setCanvasFocus(null);
       setStatus("idle");
       setError(null);
       latestProposalAction.current += 1;
@@ -343,15 +388,27 @@ export function DesignMateSection() {
       setChatProposalContext(null);
       setApplyingProposal(null);
       setChatRunning(false);
+      setChatMemoryEvent(null);
+      setCreatedVariantId(null);
     }
   }, [
     document.designBrief,
     document.id,
     documentGeneration,
     setError,
+    setCanvasFocus,
     setReview,
     setStatus,
   ]);
+
+  useEffect(
+    () => () => {
+      latestRun.current += 1;
+      reviewControllerRef.current?.abort();
+      reviewControllerRef.current = null;
+    },
+    [],
+  );
 
   const hasSelection =
     collectLeafNodeIds(document, selectedNodeIds).length > 0;
@@ -392,6 +449,12 @@ export function DesignMateSection() {
       currentRequest,
     );
 
+  useEffect(() => {
+    if (stale) {
+      setCanvasFocus(null);
+    }
+  }, [setCanvasFocus, stale]);
+
   function updateDraft(field: keyof DesignBriefDraft, value: string): void {
     setDraft((current) => ({ ...current, [field]: value }));
     setBriefDirty(true);
@@ -411,6 +474,7 @@ export function DesignMateSection() {
   }
 
   async function runReview(): Promise<void> {
+    reviewControllerRef.current?.abort();
     latestProposalAction.current += 1;
     applyingProposalRef.current = null;
     setPreparedProposals([]);
@@ -423,6 +487,9 @@ export function DesignMateSection() {
 
     const runId = latestRun.current + 1;
     latestRun.current = runId;
+    const controller = new AbortController();
+    reviewControllerRef.current = controller;
+    setCanvasFocus(null);
     const committedDocument = documentStore.committedDocument;
     const generation = documentStore.documentGeneration;
     const revision = documentStore.committedRevision;
@@ -446,6 +513,7 @@ export function DesignMateSection() {
           scope: effectiveScope,
           generation,
           revision,
+          signal: controller.signal,
         },
       );
       if (latestRun.current !== runId) {
@@ -505,7 +573,7 @@ export function DesignMateSection() {
       setApplyingProposal(null);
       setStatus("complete");
     } catch (cause) {
-      if (latestRun.current !== runId) {
+      if (latestRun.current !== runId || controller.signal.aborted) {
         return;
       }
       setPreparedProposals([]);
@@ -514,13 +582,51 @@ export function DesignMateSection() {
       setReview(null);
       setError(providerErrorMessage(cause));
       setStatus("error");
+    } finally {
+      if (
+        latestRun.current === runId &&
+        reviewControllerRef.current === controller
+      ) {
+        reviewControllerRef.current = null;
+      }
     }
+  }
+
+  function stopReview(): void {
+    if (status !== "reviewing") {
+      return;
+    }
+    latestRun.current += 1;
+    reviewControllerRef.current?.abort();
+    reviewControllerRef.current = null;
+    setStatus(reviewSnapshot ? "complete" : "idle");
+    setError(null);
   }
 
   function clearChatProposals(): void {
     setChatPreparedProposals([]);
     setChatProposalBaseDocument(null);
     setChatProposalContext(null);
+  }
+
+  function recordChatProposalOutcome(
+    prepared: PreparedDesignMateProposal,
+    status: "applied" | "dismissed",
+  ): void {
+    setChatMemoryEvent({
+      id: createDesignMateChatId("outcome"),
+      proposalId: prepared.proposal.id,
+      label: prepared.proposal.label,
+      status,
+      summary: prepared.impact.summaries.join(" · ").slice(0, 240),
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  function consumeChatProposalOutcome(eventId: string): void {
+    setChatMemoryEvent((current) =>
+      current?.id === eventId ? null : current,
+    );
   }
 
   function receiveChatProposals(batch: DesignMateChatProposalBatch): void {
@@ -653,6 +759,11 @@ export function DesignMateSection() {
           setPreparedProposals(removeApplied);
         } else {
           setChatPreparedProposals(removeApplied);
+          recordChatProposalOutcome(prepared, "applied");
+        }
+        const createdArtboardId = prepared.impact.createdArtboardIds[0];
+        if (createdArtboardId) {
+          setCreatedVariantId(createdArtboardId);
         }
         setToast(
           "Proposal applied as one undoable step. Press Ctrl/Cmd+Z to undo.",
@@ -693,6 +804,14 @@ export function DesignMateSection() {
     source: ProposalSource,
     proposalId: string,
   ): void {
+    const dismissed =
+      source === "review"
+        ? preparedProposals.find(
+            (item) => item.proposal.id === proposalId,
+          )
+        : chatPreparedProposals.find(
+            (item) => item.proposal.id === proposalId,
+          );
     const removeDismissed = (
       current: readonly PreparedDesignMateProposal[],
     ): readonly PreparedDesignMateProposal[] =>
@@ -701,15 +820,72 @@ export function DesignMateSection() {
       setPreparedProposals(removeDismissed);
     } else {
       setChatPreparedProposals(removeDismissed);
+      if (dismissed) {
+        recordChatProposalOutcome(dismissed, "dismissed");
+      }
     }
   }
 
+  function viewProposal(proposalId: string): void {
+    const card = Array.from(
+      window.document.querySelectorAll<HTMLElement>(
+        "[data-design-mate-proposal-id]",
+      ),
+    ).find(
+      (element) =>
+        element.dataset.designMateProposalId === proposalId,
+    );
+    card?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    card?.focus({ preventScroll: true });
+  }
+
+  function viewCreatedVariant(): void {
+    if (!createdVariantId) {
+      return;
+    }
+    const artboard = documentStore.committedDocument.artboards.find(
+      (item) => item.id === createdVariantId,
+    );
+    if (!artboard) {
+      setCreatedVariantId(null);
+      return;
+    }
+    documentStore.apply({
+      type: "set-active-artboard",
+      artboardId: artboard.id,
+    });
+    const state = useEditorStore.getState();
+    state.setSelection([]);
+    state.setDesignMateCanvasFocus(null);
+    if (state.viewport.width > 0 && state.viewport.height > 0) {
+      state.setCamera(
+        fitBounds(
+          {
+            x: artboard.x,
+            y: artboard.y,
+            width: artboard.width,
+            height: artboard.height,
+          },
+          state.viewport.width,
+          state.viewport.height,
+          48,
+        ),
+      );
+    }
+    setCreatedVariantId(null);
+  }
+
   function focusFinding(finding: ReviewFinding): void {
+    if (canvasFocus?.findingId === finding.id) {
+      setCanvasFocus(null);
+      return;
+    }
     const target = resolveDesignMateFocus(
       documentStore.committedDocument,
       finding,
     );
     if (!target) {
+      setCanvasFocus(null);
       return;
     }
 
@@ -734,6 +910,11 @@ export function DesignMateSection() {
         ),
       );
     }
+    state.setDesignMateCanvasFocus({
+      ...target,
+      findingId: finding.id,
+      label: finding.title,
+    });
   }
 
   const findings = reviewSnapshot?.review.findings ?? [];
@@ -756,7 +937,9 @@ export function DesignMateSection() {
             </p>
           </div>
           <span className="shrink-0 rounded-full border border-[rgb(79_107_246/0.14)] bg-card/80 px-6 py-2 text-[8.5px] font-[650] uppercase tracking-[0.06em] text-accent-deep">
-            {designMateChatHeaderLabel(DESIGN_MATE_CHAT_ENDPOINT)}
+            {designMateChatHeaderLabel(
+              remoteEnabled ? DESIGN_MATE_CHAT_ENDPOINT : null,
+            )}
           </span>
         </div>
       </div>
@@ -952,25 +1135,27 @@ export function DesignMateSection() {
             <button
               type="button"
               className={`${PRIMARY} mt-7 w-full`}
-              onClick={() => void runReview()}
-              disabled={status === "reviewing" || chatRunning}
+              onClick={() =>
+                status === "reviewing"
+                  ? stopReview()
+                  : void runReview()
+              }
+              disabled={chatRunning}
               title={
                 chatRunning
                   ? "Wait for the current Design Mate answer to finish"
-                  : undefined
+                  : status === "reviewing"
+                    ? "Stop the current review"
+                    : undefined
               }
             >
               {status === "reviewing" ? (
-                <RefreshCw
-                  size={13}
-                  className="animate-spin"
-                  aria-hidden="true"
-                />
+                <Square size={11} fill="currentColor" aria-hidden="true" />
               ) : (
                 <Sparkles size={13} aria-hidden="true" />
               )}
               {status === "reviewing"
-                ? "Taking a look…"
+                ? "Stop review"
                 : reviewSnapshot
                   ? "Look again"
                   : "Take a look"}
@@ -1021,19 +1206,37 @@ export function DesignMateSection() {
                 </p>
               ) : (
                 <ul className="m-0 grid list-none gap-8 p-0">
-                  {findings.map((finding) => (
-                    <FindingCard
-                      key={finding.id}
-                      finding={finding}
-                      canFocus={
-                        resolveDesignMateFocus(
-                          documentStore.committedDocument,
-                          finding,
-                        ) !== null
-                      }
-                      onFocus={() => focusFinding(finding)}
-                    />
-                  ))}
+                  {findings.map((finding) => {
+                    const relatedProposal = preparedProposals.find(
+                      (prepared) =>
+                        prepared.proposal.sourceFindingIds?.includes(
+                          finding.id,
+                        ),
+                    );
+                    return (
+                      <FindingCard
+                        key={finding.id}
+                        finding={finding}
+                        focused={canvasFocus?.findingId === finding.id}
+                        canFocus={
+                          resolveDesignMateFocus(
+                            documentStore.committedDocument,
+                            finding,
+                          ) !== null
+                        }
+                        onFocus={() => focusFinding(finding)}
+                        {...(relatedProposal
+                          ? {
+                              relatedProposal,
+                              onViewProposal: () =>
+                                viewProposal(
+                                  relatedProposal.proposal.id,
+                                ),
+                            }
+                          : {})}
+                      />
+                    );
+                  })}
                 </ul>
               )}
             </div>
@@ -1079,6 +1282,25 @@ export function DesignMateSection() {
               </DesignMateProposalErrorBoundary>
             )}
 
+          {createdVariantId && (
+            <div
+              className="flex items-center justify-between gap-8 rounded-[8px] border border-[#a9d4b7] bg-[#eef8f1] px-9 py-7 text-[10.5px] leading-[1.4] text-[#2f6b43]"
+              role="status"
+            >
+              <span>
+                The new logo variant is ready. Review and simplify it for its
+                intended size before export.
+              </span>
+              <button
+                type="button"
+                className="shrink-0 rounded-field border border-[#8fc39f] bg-card px-8 py-5 font-[650] text-[#2f6b43]"
+                onClick={viewCreatedVariant}
+              >
+                View variant
+              </button>
+            </div>
+          )}
+
           <DesignMateChatErrorBoundary
             resetKey={`${document.id}\u0000${documentGeneration}`}
           >
@@ -1098,6 +1320,8 @@ export function DesignMateSection() {
                 onRunningChange={setChatRunning}
                 onProposalsClear={clearChatProposals}
                 onProposalsReady={receiveChatProposals}
+                onProposalOutcomeConsumed={consumeChatProposalOutcome}
+                proposalOutcome={chatMemoryEvent}
               />
             </Suspense>
           </DesignMateChatErrorBoundary>

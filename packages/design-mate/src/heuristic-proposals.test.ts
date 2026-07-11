@@ -173,6 +173,67 @@ describe("buildHeuristicDesignMateProposals", () => {
     ).toBe(false);
   });
 
+  it("offers at most two deterministic contrast alternatives", () => {
+    const document = actionableDocument();
+    document.palettes = [
+      {
+        id: "palette-alternatives",
+        name: "Alternatives",
+        colors: ["#111111", "#222222", "#333333"],
+      },
+    ];
+    const proposals = buildHeuristicDesignMateProposals(
+      document,
+      analyzeLogoDocument(document).findings,
+      "active-artboard",
+    ).filter((item) => actionType(item) === "set-fill-color");
+
+    expect(proposals).toHaveLength(2);
+    expect(
+      proposals.map((item) =>
+        item.actions[0]?.type === "set-fill-color"
+          ? item.actions[0].color
+          : null,
+      ),
+    ).toEqual(["#111111", "#222222"]);
+  });
+
+  it("fits referenced overflowing artwork inside the export artboard", () => {
+    const document = actionableDocument();
+    const artboard = document.artboards[0]!;
+    const target = pathNode(document);
+    target.x = artboard.width + 20;
+    const finding = analyzeLogoDocument(document).findings.find(
+      (item) =>
+        item.suggestedActions.some(
+          (action) => action.id === "fit-artwork-to-artboard",
+        ) && item.nodeIds?.includes(target.id),
+    );
+    expect(finding).toBeDefined();
+    if (!finding) {
+      throw new Error("Expected an overflow finding.");
+    }
+    const raw = buildHeuristicDesignMateProposals(
+      document,
+      [finding],
+      "active-artboard",
+    )[0];
+    expect(raw?.actions.some((action) => action.type === "translate-nodes")).toBe(
+      true,
+    );
+    if (!raw) {
+      throw new Error("Expected an artboard-fit proposal.");
+    }
+    const preview = prepare(document, raw).previewDocument;
+    expect(
+      analyzeLogoDocument(preview).findings.some(
+        (item) =>
+          item.category === "production" &&
+          item.nodeIds?.includes(target.id),
+      ),
+    ).toBe(false);
+  });
+
   it("creates a brief-backed editable wordmark only when visible text is absent", () => {
     const document = createInitialDocument();
     document.designBrief = { brandName: "Northstar" };

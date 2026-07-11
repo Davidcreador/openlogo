@@ -3,7 +3,10 @@ import type { DesignReview, ReviewScope } from "@openlogo/core";
 import type { DocumentIdentity } from "@openlogo/design-mate";
 import { type Camera, createCamera } from "@openlogo/renderer";
 import type { DocumentSessionState } from "../lib/document-session";
-import type { DesignMateRequestSignature } from "../lib/design-mate-review";
+import type {
+  DesignMateFocusTarget,
+  DesignMateRequestSignature,
+} from "../lib/design-mate-review";
 import { loadPrefs, savePrefs } from "../lib/prefs";
 
 export type Tool =
@@ -30,6 +33,10 @@ export type DesignMateReviewSnapshot = {
 };
 
 export type DesignMateStatus = "idle" | "reviewing" | "complete" | "error";
+export type DesignMateCanvasFocus = DesignMateFocusTarget & {
+  readonly findingId: string;
+  readonly label: string;
+};
 
 type EditorState = {
   tool: Tool;
@@ -43,7 +50,9 @@ type EditorState = {
   keyObjectId: string | null;
   camera: Camera;
   designMateReview: DesignMateReviewSnapshot | null;
+  designMateCanvasFocus: DesignMateCanvasFocus | null;
   designMateScope: ReviewScope;
+  designMateRemoteEnabled: boolean;
   designMateStatus: DesignMateStatus;
   designMateError: string | null;
   rendererReady: boolean;
@@ -81,12 +90,16 @@ type EditorState = {
   setKeyObjectId: (id: string | null) => void;
   setCamera: (camera: Camera) => void;
   setDesignMateReview: (review: DesignMateReviewSnapshot | null) => void;
+  setDesignMateCanvasFocus: (focus: DesignMateCanvasFocus | null) => void;
   setDesignMateScope: (scope: ReviewScope) => void;
+  setDesignMateRemoteEnabled: (enabled: boolean) => void;
   setDesignMateStatus: (status: DesignMateStatus) => void;
   setDesignMateError: (error: string | null) => void;
   setRendererReady: (ready: boolean) => void;
   setDocumentSessionState: (state: DocumentSessionState) => void;
 };
+
+const initialPrefs = loadPrefs();
 
 export const useEditorStore = create<EditorState>((set) => ({
   tool: "select",
@@ -94,7 +107,9 @@ export const useEditorStore = create<EditorState>((set) => ({
   keyObjectId: null,
   camera: createCamera(),
   designMateReview: null,
-  designMateScope: "active-artboard",
+  designMateCanvasFocus: null,
+  designMateScope: initialPrefs.designMateScope,
+  designMateRemoteEnabled: initialPrefs.designMateRemoteEnabled,
   designMateStatus: "idle",
   designMateError: null,
   rendererReady: false,
@@ -105,7 +120,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   transformDialogOpen: false,
   exportDialogOpen: false,
   documentLibraryOpen: false,
-  pixelSnap: loadPrefs().pixelSnap,
+  pixelSnap: initialPrefs.pixelSnap,
   toast: null,
   setTool: (tool) => set({ tool }),
   setTransformDialogOpen: (transformDialogOpen) => set({ transformDialogOpen }),
@@ -134,7 +149,16 @@ export const useEditorStore = create<EditorState>((set) => ({
   setKeyObjectId: (keyObjectId) => set({ keyObjectId }),
   setCamera: (camera) => set({ camera }),
   setDesignMateReview: (designMateReview) => set({ designMateReview }),
-  setDesignMateScope: (designMateScope) => set({ designMateScope }),
+  setDesignMateCanvasFocus: (designMateCanvasFocus) =>
+    set({ designMateCanvasFocus }),
+  setDesignMateScope: (designMateScope) => {
+    savePrefs({ ...loadPrefs(), designMateScope });
+    set({ designMateScope });
+  },
+  setDesignMateRemoteEnabled: (designMateRemoteEnabled) => {
+    savePrefs({ ...loadPrefs(), designMateRemoteEnabled });
+    set({ designMateRemoteEnabled });
+  },
   setDesignMateStatus: (designMateStatus) => set({ designMateStatus }),
   setDesignMateError: (designMateError) => set({ designMateError }),
   setRendererReady: (rendererReady) => set({ rendererReady }),

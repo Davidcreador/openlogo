@@ -90,6 +90,14 @@ export type DesignMateChatTranscriptAction =
       readonly turnId: string;
       readonly event: DesignMateChatEvent;
     }
+  | {
+      readonly type: "restore";
+      readonly entries: readonly DesignMateChatTranscriptEntry[];
+    }
+  | {
+      readonly type: "proposal-outcome";
+      readonly event: DesignMateConversationMemoryEvent;
+    }
   | { readonly type: "clear" };
 
 export const EMPTY_DESIGN_MATE_CHAT_TRANSCRIPT: DesignMateChatTranscriptState =
@@ -492,6 +500,65 @@ export function reduceDesignMateChatTranscript(
 ): DesignMateChatTranscriptState {
   if (action.type === "clear") {
     return EMPTY_DESIGN_MATE_CHAT_TRANSCRIPT;
+  }
+  if (action.type === "restore") {
+    if (state.activeTurn !== null) {
+      return state;
+    }
+    return {
+      entries: action.entries.slice(-DESIGN_MATE_TRANSCRIPT_LIMIT),
+      activeTurn: null,
+    };
+  }
+  if (action.type === "proposal-outcome") {
+    if (
+      state.entries.some((entry) =>
+        entry.memory?.some((memory) => memory.id === action.event.id),
+      )
+    ) {
+      return state;
+    }
+    if (state.activeTurn !== null) {
+      return state;
+    }
+    let targetIndex = -1;
+    for (let index = state.entries.length - 1; index >= 0; index -= 1) {
+      const entry = state.entries[index]!;
+      if (
+        entry.role === "assistant" &&
+        entry.memory?.some(
+          (memory) => memory.proposalId === action.event.proposalId,
+        )
+      ) {
+        targetIndex = index;
+        break;
+      }
+    }
+    if (targetIndex < 0) {
+      for (let index = state.entries.length - 1; index >= 0; index -= 1) {
+        const entry = state.entries[index]!;
+        if (entry.role === "assistant" && entry.status === "complete") {
+          targetIndex = index;
+          break;
+        }
+      }
+      if (targetIndex < 0) {
+        return state;
+      }
+    }
+    return {
+      entries: state.entries.map((entry, index) =>
+        index === targetIndex
+          ? {
+              ...entry,
+              memory: [...(entry.memory ?? []), action.event].slice(
+                -DESIGN_MATE_CHAT_LIMITS.memoryEvents,
+              ),
+            }
+          : entry,
+      ),
+      activeTurn: null,
+    };
   }
   if (action.type === "start-turn") {
     if (

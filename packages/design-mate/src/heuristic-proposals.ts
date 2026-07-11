@@ -32,6 +32,7 @@ type SupportedFindingAction =
   | "adjust-optical-tracking"
   | "align-lockup-centers"
   | "simplify-small-details"
+  | "fit-artwork-to-artboard"
   | "increase-color-contrast"
   | "create-icon-variant"
   | "create-wordmark-variant"
@@ -48,6 +49,7 @@ const SUPPORTED_FINDING_ACTIONS: readonly SupportedFindingAction[] = [
   "adjust-optical-tracking",
   "align-lockup-centers",
   "simplify-small-details",
+  "fit-artwork-to-artboard",
   "increase-color-contrast",
   "create-icon-variant",
   "create-wordmark-variant",
@@ -168,6 +170,25 @@ function makeProposal(
     risk,
     sourceFindingIds: [finding.id],
     actions: [action],
+  };
+}
+
+function makeMultiActionProposal(
+  finding: ReviewFinding,
+  actionId: SupportedFindingAction,
+  target: string,
+  label: string,
+  rationale: string,
+  risk: DesignMateRisk,
+  actions: readonly DesignMateAction[],
+): DesignMateProposal {
+  return {
+    id: proposalId(actionId, finding.id, target),
+    label,
+    rationale,
+    risk,
+    sourceFindingIds: [finding.id],
+    actions: [...actions],
   };
 }
 
@@ -430,6 +451,129 @@ function buildAlignmentProposal(
   );
 }
 
+function buildFitArtworkProposal(
+  document: LogoDocument,
+  finding: ReviewFinding,
+  scope: ReviewScope,
+): DesignMateProposal | null {
+  const [artboard] = artboardsForFinding(document, finding, scope);
+  const nodeIds = [...new Set(finding.nodeIds ?? [])];
+  if (
+    finding.kind !== "objective" ||
+    finding.category !== "production" ||
+    !artboard ||
+    nodeIds.length === 0 ||
+    !nodeIds.every((nodeId) => {
+      const node = document.nodes[nodeId];
+      return (
+        node !== undefined &&
+        !node.locked &&
+        artboard.nodeIds.includes(nodeId)
+      );
+    })
+  ) {
+    return null;
+  }
+  const bounds = nodeIds.flatMap((nodeId) => {
+    const value = visualBounds(document, nodeId);
+    return value ? [value] : [];
+  });
+  if (bounds.length !== nodeIds.length) {
+    return null;
+  }
+  const left = Math.min(...bounds.map((item) => item.x));
+  const top = Math.min(...bounds.map((item) => item.y));
+  const right = Math.max(
+    ...bounds.map((item) => item.x + item.width),
+  );
+  const bottom = Math.max(
+    ...bounds.map((item) => item.y + item.height),
+  );
+  const width = right - left;
+  const height = bottom - top;
+  if (
+    ![left, top, right, bottom, width, height].every(Number.isFinite) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    return null;
+  }
+  const margin = Math.min(
+    24,
+    Math.max(4, Math.min(artboard.width, artboard.height) * 0.04),
+  );
+  const availableWidth = Math.max(1, artboard.width - margin * 2);
+  const availableHeight = Math.max(1, artboard.height - margin * 2);
+  const scale = Math.min(
+    1,
+    availableWidth / width,
+    availableHeight / height,
+  );
+  if (
+    scale < DESIGN_MATE_PROPOSAL_LIMITS.minimumScale ||
+    scale > DESIGN_MATE_PROPOSAL_LIMITS.maximumScale
+  ) {
+    return null;
+  }
+  const scaledWidth = width * scale;
+  const scaledHeight = height * scale;
+  const centerX = left + width / 2;
+  const centerY = top + height / 2;
+  const scaledLeft = centerX - scaledWidth / 2;
+  const scaledTop = centerY - scaledHeight / 2;
+  const scaledRight = scaledLeft + scaledWidth;
+  const scaledBottom = scaledTop + scaledHeight;
+  const dx =
+    scaledLeft < margin
+      ? margin - scaledLeft
+      : scaledRight > artboard.width - margin
+        ? artboard.width - margin - scaledRight
+        : 0;
+  const dy =
+    scaledTop < margin
+      ? margin - scaledTop
+      : scaledBottom > artboard.height - margin
+        ? artboard.height - margin - scaledBottom
+        : 0;
+  if (
+    Math.abs(dx) > DESIGN_MATE_PROPOSAL_LIMITS.maximumTranslation ||
+    Math.abs(dy) > DESIGN_MATE_PROPOSAL_LIMITS.maximumTranslation
+  ) {
+    return null;
+  }
+  const actions: DesignMateAction[] = [];
+  if (scale < 0.9999) {
+    const roundedScale = Number(scale.toFixed(4));
+    actions.push({
+      type: "scale-nodes",
+      nodeIds,
+      scaleX: roundedScale,
+      scaleY: roundedScale,
+    });
+  }
+  if (Math.abs(dx) >= 0.01 || Math.abs(dy) >= 0.01) {
+    actions.push({
+      type: "translate-nodes",
+      nodeIds,
+      dx: Number(dx.toFixed(2)),
+      dy: Number(dy.toFixed(2)),
+    });
+  }
+  if (actions.length === 0) {
+    return null;
+  }
+
+  return makeMultiActionProposal(
+    finding,
+    "fit-artwork-to-artboard",
+    `${artboard.id}:${nodeIds.join(",")}`,
+    "Fit overflowing artwork inside export bounds",
+    "Uniformly scales only when necessary, then moves the referenced top-level artwork inside a conservative artboard margin.",
+    "medium",
+    actions,
+  );
+}
+
 function contrastCandidates(document: LogoDocument): string[] {
   const seen = new Set<string>();
   const candidates: string[] = [];
@@ -450,21 +594,21 @@ function contrastCandidates(document: LogoDocument): string[] {
   return candidates;
 }
 
-function buildContrastProposal(
+function buildContrastProposals(
   document: LogoDocument,
   finding: ReviewFinding,
   scope: ReviewScope,
-): DesignMateProposal | null {
+): DesignMateProposal[] {
   if (
     finding.kind !== "objective" ||
     finding.category !== "color" ||
     finding.artboardId === undefined
   ) {
-    return null;
+    return [];
   }
   const [artboard] = artboardsForFinding(document, finding, scope);
   if (!artboard) {
-    return null;
+    return [];
   }
 
   const rendered = effectiveNodes(document, [artboard]);
@@ -479,7 +623,7 @@ function buildContrastProposal(
         node.fill.type === "solid",
     );
   if (candidates.length !== 1) {
-    return null;
+    return [];
   }
   const target = candidates[0]!;
   if (
@@ -487,7 +631,7 @@ function buildContrastProposal(
     !isValidDesignMateSolidColor(target.fill.color) ||
     !isValidDesignMateSolidColor(artboard.background)
   ) {
-    return null;
+    return [];
   }
   const currentColor = normalizeDesignMateSolidColor(target.fill.color);
   const background = normalizeDesignMateSolidColor(artboard.background);
@@ -495,32 +639,34 @@ function buildContrastProposal(
     logoColorContrastRatio(currentColor, background) >=
     LOGO_REVIEW_CONTRAST_THRESHOLD
   ) {
-    return null;
+    return [];
   }
 
-  const replacement = contrastCandidates(document).find(
-    (color) =>
-      color !== currentColor &&
-      logoColorContrastRatio(color, background) >=
-        LOGO_REVIEW_CONTRAST_THRESHOLD,
-  );
-  if (!replacement) {
-    return null;
-  }
-
-  return makeProposal(
-    finding,
-    "increase-color-contrast",
-    `${target.id}:${replacement}`,
-    "Increase color contrast",
-    `Uses a deterministic palette color or neutral that meets the ${LOGO_REVIEW_CONTRAST_THRESHOLD}:1 review threshold.`,
-    "medium",
-    {
-      type: "set-fill-color",
-      nodeId: target.id,
-      color: replacement,
-    },
-  );
+  return contrastCandidates(document)
+    .filter(
+      (color) =>
+        color !== currentColor &&
+        logoColorContrastRatio(color, background) >=
+          LOGO_REVIEW_CONTRAST_THRESHOLD,
+    )
+    .slice(0, 2)
+    .map((replacement, index) =>
+      makeProposal(
+        finding,
+        "increase-color-contrast",
+        `${target.id}:${replacement}`,
+        index === 0
+          ? "Increase color contrast"
+          : "Try an alternate contrast color",
+        `Uses a deterministic palette color or neutral that meets the ${LOGO_REVIEW_CONTRAST_THRESHOLD}:1 review threshold.`,
+        "medium",
+        {
+          type: "set-fill-color",
+          nodeId: target.id,
+          color: replacement,
+        },
+      ),
+    );
 }
 
 function buildVariantProposal(
@@ -580,6 +726,17 @@ export function buildHeuristicDesignMateProposals(
 ): DesignMateProposal[] {
   const proposals: DesignMateProposal[] = [];
   const seenMutations = new Set<string>();
+  const addProposal = (proposal: DesignMateProposal | null): void => {
+    if (!proposal) {
+      return;
+    }
+    const mutationKey = JSON.stringify(proposal.actions);
+    if (seenMutations.has(mutationKey)) {
+      return;
+    }
+    seenMutations.add(mutationKey);
+    proposals.push(proposal);
+  };
   const sortedFindings = [...findings].sort((left, right) =>
     compareStrings(left.id, right.id),
   );
@@ -590,6 +747,16 @@ export function buildHeuristicDesignMateProposals(
     }
     for (const actionId of SUPPORTED_FINDING_ACTIONS) {
       if (!hasSuggestedAction(finding, actionId)) {
+        continue;
+      }
+      if (actionId === "increase-color-contrast") {
+        for (const proposal of buildContrastProposals(
+          document,
+          finding,
+          scope,
+        )) {
+          addProposal(proposal);
+        }
         continue;
       }
 
@@ -604,23 +771,15 @@ export function buildHeuristicDesignMateProposals(
         proposal = buildAlignmentProposal(document, finding, scope);
       } else if (actionId === "simplify-small-details") {
         proposal = buildSmallDetailProposal(document, finding, scope);
-      } else if (actionId === "increase-color-contrast") {
-        proposal = buildContrastProposal(document, finding, scope);
+      } else if (actionId === "fit-artwork-to-artboard") {
+        proposal = buildFitArtworkProposal(document, finding, scope);
       } else {
         const purpose = variantPurposeForAction(actionId);
         proposal = purpose
           ? buildVariantProposal(document, finding, scope, purpose)
           : null;
       }
-      if (!proposal) {
-        continue;
-      }
-      const mutationKey = JSON.stringify(proposal.actions);
-      if (seenMutations.has(mutationKey)) {
-        continue;
-      }
-      seenMutations.add(mutationKey);
-      proposals.push(proposal);
+      addProposal(proposal);
     }
   }
 

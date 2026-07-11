@@ -1,19 +1,33 @@
 /**
  * Tiny persisted editor preferences (localStorage). Document data never
- * lands here — only cross-session UI choices like the pixel-snap toggle.
+ * lands here — only cross-session UI choices and explicit privacy consent.
  * Reads/writes swallow storage failures (private mode, quota) so prefs
  * degrade to in-memory defaults.
  */
+
+import type { ReviewScope } from "@openlogo/core";
 
 const PREFS_KEY = "openlogo:prefs";
 
 export type EditorPrefs = {
   pixelSnap: boolean;
+  designMateScope: ReviewScope;
+  designMateRemoteEnabled: boolean;
 };
 
 const DEFAULTS: EditorPrefs = {
   pixelSnap: false,
+  designMateScope: "active-artboard",
+  designMateRemoteEnabled: false,
 };
+
+function isReviewScope(value: unknown): value is ReviewScope {
+  return (
+    value === "selection" ||
+    value === "active-artboard" ||
+    value === "document"
+  );
+}
 
 export function loadPrefs(): EditorPrefs {
   try {
@@ -27,6 +41,13 @@ export function loadPrefs(): EditorPrefs {
         typeof parsed.pixelSnap === "boolean"
           ? parsed.pixelSnap
           : DEFAULTS.pixelSnap,
+      designMateScope: isReviewScope(parsed.designMateScope)
+        ? parsed.designMateScope
+        : DEFAULTS.designMateScope,
+      designMateRemoteEnabled:
+        typeof parsed.designMateRemoteEnabled === "boolean"
+          ? parsed.designMateRemoteEnabled
+          : DEFAULTS.designMateRemoteEnabled,
     };
   } catch {
     return { ...DEFAULTS };

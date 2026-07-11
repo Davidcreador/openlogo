@@ -298,6 +298,98 @@ describe("Design Mate transcript helpers", () => {
     ]);
   });
 
+  it("records applied and dismissed outcomes on the originating assistant turn", () => {
+    const prepared = {
+      id: "memory-prepared",
+      proposalId: "proposal-outcome",
+      label: "Refine spacing",
+      status: "prepared" as const,
+      summary: "Adjust the spacing.",
+      createdAt: CREATED_AT,
+    };
+    let state = reduceDesignMateChatTranscript(
+      EMPTY_DESIGN_MATE_CHAT_TRANSCRIPT,
+      {
+        type: "restore",
+        entries: [
+          {
+            ...message("assistant-outcome", "assistant", "Try this."),
+            status: "complete",
+            memory: [prepared],
+          },
+        ],
+      },
+    );
+    state = reduceDesignMateChatTranscript(state, {
+      type: "proposal-outcome",
+      event: {
+        ...prepared,
+        id: "memory-applied",
+        status: "applied",
+        createdAt: "2026-07-10T20:00:01.000Z",
+      },
+    });
+    state = reduceDesignMateChatTranscript(state, {
+      type: "proposal-outcome",
+      event: {
+        ...prepared,
+        id: "memory-dismissed",
+        status: "dismissed",
+        createdAt: "2026-07-10T20:00:02.000Z",
+      },
+    });
+
+    expect(
+      designMateConversationMemoryFromTranscript(state.entries).map(
+        (event) => event.status,
+      ),
+    ).toEqual(["prepared", "applied", "dismissed"]);
+  });
+
+  it("retains a bounded outcome when its prepared event is unavailable", () => {
+    const complete = appendCompleteTurn(
+      EMPTY_DESIGN_MATE_CHAT_TRANSCRIPT,
+      "fallback-outcome",
+    );
+    const event = {
+      id: "memory-fallback-applied",
+      proposalId: "proposal-fallback",
+      label: "Refine spacing",
+      status: "applied" as const,
+      summary: "Adjusted spacing.",
+      createdAt: "2026-07-10T20:00:01.000Z",
+    };
+    const recorded = reduceDesignMateChatTranscript(complete, {
+      type: "proposal-outcome",
+      event,
+    });
+
+    expect(recorded.entries.at(-1)?.memory).toEqual([event]);
+    expect(
+      reduceDesignMateChatTranscript(recorded, {
+        type: "proposal-outcome",
+        event,
+      }),
+    ).toBe(recorded);
+  });
+
+  it("does not attribute a proposal outcome while another turn is active", () => {
+    const active = startState();
+    expect(
+      reduceDesignMateChatTranscript(active, {
+        type: "proposal-outcome",
+        event: {
+          id: "memory-active-applied",
+          proposalId: "proposal-active",
+          label: "Refine spacing",
+          status: "applied",
+          summary: "Adjusted spacing.",
+          createdAt: "2026-07-10T20:00:01.000Z",
+        },
+      }),
+    ).toBe(active);
+  });
+
   it("bounds history in complete pairs and drops duplicate ids", () => {
     const messages = Array.from({ length: 30 }, (_, index) =>
       message(

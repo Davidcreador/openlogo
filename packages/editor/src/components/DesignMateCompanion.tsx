@@ -2,6 +2,7 @@ import {
   Component,
   lazy,
   Suspense,
+  useEffect,
   useRef,
   useState,
   type ErrorInfo,
@@ -18,6 +19,7 @@ const DesignMateSection = lazy(() =>
 
 const PANEL_ID = "design-mate-companion-panel";
 const PANEL_TITLE_ID = "design-mate-companion-title";
+const PANEL_DESCRIPTION_ID = "design-mate-companion-description";
 
 class DesignMateErrorBoundary extends Component<
   { children: ReactNode },
@@ -71,6 +73,8 @@ export function DesignMateCompanion() {
   const [open, setOpen] = useState(false);
   const [activated, setActivated] = useState(false);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const status = useEditorStore((state) => state.designMateStatus);
   const snapshot = useEditorStore((state) => state.designMateReview);
   const findingCount = snapshot?.review.findings.length ?? 0;
@@ -89,7 +93,12 @@ export function DesignMateCompanion() {
 
   function toggle(): void {
     setActivated(true);
-    setOpen((current) => !current);
+    if (open) {
+      close();
+      return;
+    }
+    setOpen(true);
+    requestAnimationFrame(() => closeButtonRef.current?.focus());
   }
 
   function close(): void {
@@ -97,10 +106,30 @@ export function DesignMateCompanion() {
     requestAnimationFrame(() => launcherRef.current?.focus());
   }
 
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const panel = panelRef.current;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (
+        event.key === "Escape" &&
+        panel?.contains(document.activeElement)
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        close();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open]);
+
   return (
     <div className="pointer-events-none absolute bottom-64 right-16 z-20 flex flex-col items-end">
       {activated && (
         <section
+          ref={panelRef}
           id={PANEL_ID}
           className={`design-mate-panel pointer-events-auto mb-10 h-[calc(100vh-176px)] max-h-[690px] min-h-420 w-[390px] flex-col overflow-hidden rounded-[18px] border border-[rgb(28_25_33/0.12)] bg-panel shadow-[0_2px_8px_rgb(28_25_33/0.12),0_24px_70px_rgb(28_25_33/0.22)] ${
             open ? "flex" : "hidden"
@@ -108,6 +137,7 @@ export function DesignMateCompanion() {
           role="dialog"
           aria-modal="false"
           aria-labelledby={PANEL_TITLE_ID}
+          aria-describedby={PANEL_DESCRIPTION_ID}
         >
           <header className="flex shrink-0 items-center gap-10 border-b border-[rgb(255_255_255/0.08)] bg-[linear-gradient(135deg,#252133,#17151b)] px-13 py-11 text-chrome-text">
             <MateMark thinking={thinking} />
@@ -118,7 +148,10 @@ export function DesignMateCompanion() {
               >
                 Design Mate
               </h2>
-              <p className="mb-0 mt-2 truncate text-[10px] text-chrome-dim">
+              <p
+                id={PANEL_DESCRIPTION_ID}
+                className="mb-0 mt-2 truncate text-[10px] text-chrome-dim"
+              >
                 Your honest creative sidekick
               </p>
             </div>
@@ -132,6 +165,7 @@ export function DesignMateCompanion() {
               {thinking ? "Thinking" : "Here"}
             </span>
             <button
+              ref={closeButtonRef}
               type="button"
               className="grid h-28 w-28 shrink-0 place-items-center rounded-m text-chrome-dim transition-colors duration-140 ease-studio hover:bg-chrome-raised hover:text-chrome-text"
               onClick={close}

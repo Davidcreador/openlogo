@@ -77,9 +77,11 @@ function ProposalCard({
 
   return (
     <article
-      className="rounded-[8px] border border-panel-hairline bg-card p-9 shadow-[0_1px_2px_rgb(28_25_33/0.04)]"
+      className="rounded-[8px] border border-panel-hairline bg-card p-9 shadow-[0_1px_2px_rgb(28_25_33/0.04)] outline-none focus:border-accent focus:shadow-ring"
       aria-labelledby={titleId}
       aria-busy={applying}
+      data-design-mate-proposal-id={proposal.id}
+      tabIndex={-1}
     >
       <div className="flex items-start justify-between gap-8">
         <h4

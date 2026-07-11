@@ -333,6 +333,16 @@ function ArtboardMenu() {
 
   function createVariant(purpose: LogoVariant) {
     const doc = documentStore.document;
+    const existing = doc.artboards.find(
+      (item) => item.purpose === purpose,
+    );
+    if (existing) {
+      activate(existing.id);
+      setToast(
+        `${existing.name} is already the ${purpose} variant. Use Duplicate if you want another exploration.`,
+      );
+      return;
+    }
     const command = buildAddVariantCommand(
       doc,
       doc.activeArtboardId,
@@ -398,6 +408,9 @@ function ArtboardMenu() {
                   ) : (
                     <span className="menu-label truncate">{item.name}</span>
                   )}
+                  <span className="rounded-full bg-chrome-raised px-5 py-1 text-[8px] font-semibold uppercase tracking-[0.05em] text-chrome-dim">
+                    {item.purpose}
+                  </span>
                   <small className="normal-case tabular-nums">
                     {item.width}×{item.height}
                   </small>
