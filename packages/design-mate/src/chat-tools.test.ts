@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   DESIGN_MATE_MUTATION_TOOLS,
+  DESIGN_MATE_CHAT_EXPORT_OPTIONS_TOOL_NAME,
+  DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL_NAME,
+  DESIGN_MATE_CHAT_MODEL_TOOLS,
   DESIGN_MATE_CHAT_PROPOSAL_TOOL,
   DESIGN_MATE_CHAT_PROPOSAL_TOOL_LIMITS,
   DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
+  executeDesignMateChatReadOnlyTool,
   snapshotDesignMateChatProposalToolArguments,
 } from "./index";
 
@@ -64,6 +68,78 @@ describe("Design Mate chat proposal tool", () => {
     expect(
       DESIGN_MATE_CHAT_PROPOSAL_TOOL.parameters.properties,
     ).not.toHaveProperty("risk");
+  });
+
+  it("publishes bounded read-only review and export tools", () => {
+    expect(DESIGN_MATE_CHAT_MODEL_TOOLS.map((tool) => tool.name)).toEqual([
+      DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL_NAME,
+      DESIGN_MATE_CHAT_EXPORT_OPTIONS_TOOL_NAME,
+      DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
+    ]);
+    expect(Object.isFrozen(DESIGN_MATE_CHAT_MODEL_TOOLS)).toBe(true);
+    expect(
+      DESIGN_MATE_CHAT_MODEL_TOOLS.every(
+        (tool) =>
+          tool.strict &&
+          tool.parameters.additionalProperties === false,
+      ),
+    ).toBe(true);
+
+    const review = {
+      summary: "Two findings",
+      findings: [
+        {
+          id: "warning-finding",
+          severity: "warning" as const,
+          category: "geometry" as const,
+          kind: "objective" as const,
+          title: "Alignment",
+          detail: "The centers differ.",
+          action: "Align the lockup.",
+          evidence: [{ label: "Delta", value: 8, unit: "px" }],
+          suggestedActions: [
+            { id: "align-lockup-centers", label: "Align the lockup." },
+          ],
+        },
+        {
+          id: "info-finding",
+          severity: "info" as const,
+          category: "variants" as const,
+          kind: "objective" as const,
+          title: "Variant",
+          detail: "An icon is missing.",
+          action: "Create an icon.",
+          evidence: [{ label: "Icon artboards", value: 0 }],
+          suggestedActions: [
+            { id: "create-icon-variant", label: "Create an icon." },
+          ],
+        },
+      ],
+    };
+    const filtered = executeDesignMateChatReadOnlyTool(
+      DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL_NAME,
+      { findingIds: null, severity: "warning" },
+      review,
+    );
+    expect(JSON.parse(filtered!)).toMatchObject({
+      summary: "Two findings",
+      findings: [{ id: "warning-finding" }],
+    });
+    const png = executeDesignMateChatReadOnlyTool(
+      DESIGN_MATE_CHAT_EXPORT_OPTIONS_TOOL_NAME,
+      { format: "png" },
+      review,
+    );
+    expect(JSON.parse(png!).formats).toEqual([
+      expect.objectContaining({ id: "png", transparency: true }),
+    ]);
+    expect(
+      executeDesignMateChatReadOnlyTool(
+        DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL_NAME,
+        { findingIds: ["missing", "missing"], severity: null },
+        review,
+      ),
+    ).toBeNull();
   });
 
   it("assigns the caller-owned id and removes nullable optional fields", () => {

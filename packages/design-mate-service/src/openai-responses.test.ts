@@ -1,5 +1,7 @@
 import {
   DESIGN_MATE_CHAT_LIMITS,
+  DESIGN_MATE_CHAT_EXPORT_OPTIONS_TOOL_NAME,
+  DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL_NAME,
   DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
   type DesignMateChatPrompt,
   type DesignMateChatProviderChunk,
@@ -40,6 +42,10 @@ function prompt(): DesignMateChatPrompt {
         height: 32,
       }),
     ]),
+    review: Object.freeze({
+      summary: "Review summary",
+      findings: Object.freeze([]),
+    }),
   });
 }
 
@@ -186,13 +192,16 @@ describe("OpenAI Responses model transport", () => {
       tool_choice: "auto",
       parallel_tool_calls: false,
     });
-    expect(body.tools).toEqual([
-      expect.objectContaining({
-        type: "function",
-        name: DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
-        strict: true,
-      }),
+    expect(body.tools.map((tool) => tool.name)).toEqual([
+      DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL_NAME,
+      DESIGN_MATE_CHAT_EXPORT_OPTIONS_TOOL_NAME,
+      DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
     ]);
+    expect(
+      body.tools.every(
+        (tool) => tool.type === "function" && tool.strict === true,
+      ),
+    ).toBe(true);
     expect(capturedInit?.redirect).toBe("error");
     expect(body.input.map((message) => message.role)).toEqual([
       "user",
@@ -383,6 +392,120 @@ describe("OpenAI Responses model transport", () => {
         delta: "Keep the optical spacing subtle.",
       },
     ]);
+  });
+
+  it("executes a bounded read-only review tool before continuing the answer", async () => {
+    const argumentsJson = JSON.stringify({
+      findingIds: null,
+      severity: null,
+    });
+    const firstStep = [
+      frame("response.output_text.delta", { delta: "Checking the review. " }),
+      frame("response.output_item.added", {
+        output_index: 0,
+        item: {
+          id: "review-call-item",
+          call_id: "review-call",
+          type: "function_call",
+          name: DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL_NAME,
+          arguments: "",
+        },
+      }),
+      frame("response.function_call_arguments.done", {
+        item_id: "review-call-item",
+        output_index: 0,
+        name: DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL_NAME,
+        arguments: argumentsJson,
+      }),
+      frame("response.output_item.done", {
+        output_index: 0,
+        item: {
+          id: "review-call-item",
+          call_id: "review-call",
+          type: "function_call",
+          name: DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL_NAME,
+          arguments: argumentsJson,
+        },
+      }),
+      frame("response.completed", { response: { status: "completed" } }),
+    ].join("");
+    const secondStep = [
+      frame("response.output_text.delta", { delta: "The structure is clean." }),
+      frame("response.completed", { response: { status: "completed" } }),
+    ].join("");
+    const requestBodies: Record<string, unknown>[] = [];
+    const fetchMock = vi.fn(
+      async (_input: string | URL | Request, init?: RequestInit) => {
+        requestBodies.push(
+          JSON.parse(String(init?.body)) as Record<string, unknown>,
+        );
+        return sseResponse(
+          requestBodies.length === 1 ? firstStep : secondStep,
+        );
+      },
+    ) as unknown as typeof fetch;
+
+    await expect(collect(transport(fetchMock))).resolves.toBe(
+      "Checking the review. The structure is clean.",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const secondInput = requestBodies[1]?.input as readonly Record<
+      string,
+      unknown
+    >[];
+    expect(secondInput.slice(-2)).toEqual([
+      {
+        type: "function_call",
+        call_id: "review-call",
+        name: DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL_NAME,
+        arguments: argumentsJson,
+      },
+      expect.objectContaining({
+        type: "function_call_output",
+        call_id: "review-call",
+        output: expect.stringContaining('"summary":"Review summary"'),
+      }),
+    ]);
+  });
+
+  it("turns a rejected proposal-only call into safe user guidance", async () => {
+    const argumentsJson = JSON.stringify({
+      ...proposalArguments(),
+      actions: [],
+    });
+    const payload = [
+      frame("response.output_item.added", {
+        output_index: 0,
+        item: {
+          id: "rejected-only",
+          type: "function_call",
+          name: DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
+          arguments: "",
+        },
+      }),
+      frame("response.function_call_arguments.done", {
+        item_id: "rejected-only",
+        output_index: 0,
+        arguments: argumentsJson,
+      }),
+      frame("response.output_item.done", {
+        output_index: 0,
+        item: {
+          id: "rejected-only",
+          type: "function_call",
+          name: DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
+          arguments: argumentsJson,
+        },
+      }),
+      frame("response.completed", { response: { status: "completed" } }),
+    ].join("");
+    const candidate = transport(
+      vi.fn(async () => sseResponse(payload)) as unknown as typeof fetch,
+    );
+
+    await expect(collect(candidate)).resolves.toContain(
+      "could not prepare that suggestion safely",
+    );
   });
 
   it("fails closed on unknown, malformed, mismatched, and incomplete function calls", async () => {

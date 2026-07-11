@@ -12,6 +12,7 @@ import {
   createDesignMateChatId,
   createDesignMateChatProviderSetup,
   designMateChatHistoryFromTranscript,
+  designMateConversationMemoryFromTranscript,
   designMateChatModeLabel,
   isDesignMateTranscriptNearBottom,
   isDesignMateChatAnswerStale,
@@ -213,6 +214,61 @@ describe("Design Mate chat provider setup", () => {
 });
 
 describe("Design Mate transcript helpers", () => {
+  it("keeps a bounded proposal outcome ledger for follow-up turns", () => {
+    let state = startState();
+    state = reduceDesignMateChatTranscript(state, {
+      type: "stream-event",
+      turnId: "turn-1",
+      event: {
+        type: "message-start",
+        messageId: "assistant-turn-1",
+        role: "assistant",
+        createdAt: CREATED_AT,
+      },
+    });
+    state = reduceDesignMateChatTranscript(state, {
+      type: "stream-event",
+      turnId: "turn-1",
+      event: {
+        type: "proposal-rejected",
+        messageId: "assistant-turn-1",
+        index: 0,
+        proposalId: "proposal-1",
+        error: {
+          _tag: "DesignMateProposalError",
+          code: "precondition-failed",
+          message: "The target changed.",
+        },
+      },
+    });
+    const answer = message(
+      "assistant-turn-1",
+      "assistant",
+      "That suggestion is no longer safe.",
+    );
+    state = reduceDesignMateChatTranscript(state, {
+      type: "stream-event",
+      turnId: "turn-1",
+      event: { type: "message-end", message: answer },
+    });
+    state = reduceDesignMateChatTranscript(state, {
+      type: "stream-event",
+      turnId: "turn-1",
+      event: { type: "completed", message: answer },
+    });
+
+    expect(designMateConversationMemoryFromTranscript(state.entries)).toEqual([
+      {
+        id: "turn-1:rejected:0",
+        proposalId: "proposal-1",
+        label: "Rejected suggestion",
+        status: "rejected",
+        summary: "The target changed.",
+        createdAt: CREATED_AT,
+      },
+    ]);
+  });
+
   it("bounds history in complete pairs and drops duplicate ids", () => {
     const messages = Array.from({ length: 30 }, (_, index) =>
       message(

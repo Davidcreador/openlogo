@@ -37,6 +37,7 @@ import {
   createDesignMateChatId,
   createDesignMateChatProviderSetup,
   designMateChatHistoryFromTranscript,
+  designMateConversationMemoryFromTranscript,
   designMateChatModeLabel,
   isDesignMateTranscriptNearBottom,
   isDesignMateChatAnswerStale,
@@ -339,6 +340,9 @@ export function DesignMateChatPanel({
       transcriptRef.current.entries,
       { identity, request },
     );
+    const memory = designMateConversationMemoryFromTranscript(
+      transcriptRef.current.entries,
+    );
     const controller = new AbortController();
     const runId = runSequence.current + 1;
     runSequence.current = runId;
@@ -415,6 +419,7 @@ export function DesignMateChatPanel({
           turnId,
           assistantMessageId: assistantMessage.id,
           history,
+          memory,
           userMessage,
           attachments,
         },
@@ -432,6 +437,12 @@ export function DesignMateChatPanel({
         }
         if (event.type === "proposal-prepared") {
           preparedProposals.push(event.prepared);
+          onProposalsReady?.({
+            baseDocument: committedDocument,
+            answerContext: { identity, request },
+            proposals: [...preparedProposals],
+            rejectedCount,
+          });
         } else if (event.type === "proposal-rejected") {
           rejectedCount += 1;
         } else if (event.type === "completed") {

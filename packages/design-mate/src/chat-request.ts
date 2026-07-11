@@ -1,4 +1,8 @@
-import type { LogoDocument, ReviewScope } from "@openlogo/core";
+import {
+  analyzeLogoDocument,
+  type LogoDocument,
+  type ReviewScope,
+} from "@openlogo/core";
 import {
   type DesignMateChatTurnInput,
   type DesignMateChatTurnRequest,
@@ -18,6 +22,7 @@ import {
   deepFreeze,
   structuredCloneAndDeepFreeze,
 } from "./snapshot";
+import { snapshotValidDesignReview } from "./validation";
 
 export type PrepareDesignMateChatOptions = BuildDocumentIdentityOptions & {
   readonly scope?: ReviewScope;
@@ -69,6 +74,15 @@ export function prepareDesignMateChatRequest(
   const context = buildDesignContext(document, normalizedSelection, {
     scope: requestedScope,
   });
+  const review = snapshotValidDesignReview(
+    analyzeLogoDocument(document, {
+      scope: context.scope,
+      selectionIds: normalizedSelection.selectedNodeIds,
+    }),
+  );
+  if (!review) {
+    throw new TypeError("The Design Mate chat review is invalid.");
+  }
   const identity = buildDocumentIdentity(document, options);
   const wireCandidate: DesignMateChatWireRequest = {
     conversationId: input.conversationId,
@@ -76,11 +90,13 @@ export function prepareDesignMateChatRequest(
     assistantMessageId: input.assistantMessageId,
     identity,
     context,
+    review,
     selection: normalizedSelection,
     scope: context.scope,
     history: input.history,
     userMessage: input.userMessage,
     attachments: input.attachments ?? [],
+    memory: input.memory ?? [],
   };
   const wire = snapshotValidDesignMateChatWireRequest(wireCandidate);
   if (!wire) {
@@ -95,11 +111,13 @@ export function prepareDesignMateChatRequest(
     assistantMessageId: wire.assistantMessageId,
     identity: wire.identity,
     context: wire.context,
+    review: wire.review,
     selection: wire.selection,
     scope: wire.scope,
     history: wire.history,
     userMessage: wire.userMessage,
     attachments: wire.attachments,
+    memory: wire.memory,
   });
 }
 
@@ -116,11 +134,13 @@ export function toDesignMateChatWireRequest(
     assistantMessageId: request.assistantMessageId,
     identity: request.identity,
     context: request.context,
+    review: request.review,
     selection: request.selection,
     scope: request.scope,
     history: request.history,
     userMessage: request.userMessage,
     attachments: request.attachments,
+    memory: request.memory,
   };
   const snapshot = snapshotValidDesignMateChatWireRequest(candidate);
   if (!snapshot) {

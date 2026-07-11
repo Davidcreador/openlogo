@@ -37,11 +37,17 @@ export const DESIGN_MATE_CHAT_SYSTEM_PROMPT = [
   "Use geometry actions only on visible selected nodes from one artboard. Move values are artboard-local deltas; scale and rotation operate around the current selection centre.",
   "Create a wordmark only when the context includes an explicit design-brief brand name and the target artboard has no visible text; copy that brand name exactly.",
   "Use only font family names supplied by the user or context, and never invent a stroke or key object that is absent from the supplied context; the compiler will reject unsupported targets.",
+  "Use inspect_design_review only to filter the supplied deterministic review, and explain_export_options only for supported delivery guidance. These read-only tools never inspect hidden document data or mutate anything.",
+  "Use the supplied proposal-memory ledger to refine earlier suggestions and acknowledge applied or dismissed proposals without claiming new changes.",
   "A tool call creates a preview candidate only. The user must explicitly approve it before anything can change.",
 ].join("\n");
 
 const CONTEXT_START = "BEGIN_UNTRUSTED_DESIGN_CONTEXT";
 const CONTEXT_END = "END_UNTRUSTED_DESIGN_CONTEXT";
+const REVIEW_START = "BEGIN_UNTRUSTED_DESIGN_REVIEW";
+const REVIEW_END = "END_UNTRUSTED_DESIGN_REVIEW";
+const MEMORY_START = "BEGIN_UNTRUSTED_PROPOSAL_MEMORY";
+const MEMORY_END = "END_UNTRUSTED_PROPOSAL_MEMORY";
 
 /**
  * Build a deterministic provider-neutral multimodal prompt. Only the bounded
@@ -52,6 +58,8 @@ export function assembleDesignMateChatWirePrompt(
   wire: DesignMateChatWireRequest,
 ): DesignMateChatPrompt {
   const contextJson = canonicalJson(wire.context);
+  const reviewJson = canonicalJson(wire.review);
+  const memoryJson = canonicalJson(wire.memory);
   const contextMessage: DesignMateChatPromptContextMessage = {
     role: "user",
     text: [
@@ -59,6 +67,12 @@ export function assembleDesignMateChatWirePrompt(
       `Review scope: ${wire.scope}.`,
       `Canonical bounded DesignContext JSON: ${contextJson}`,
       CONTEXT_END,
+      REVIEW_START,
+      `Canonical bounded DesignReview JSON: ${reviewJson}`,
+      REVIEW_END,
+      MEMORY_START,
+      `Canonical bounded proposal-memory JSON: ${memoryJson}`,
+      MEMORY_END,
     ].join("\n"),
   };
   const messages: DesignMateChatPromptMessage[] = [
@@ -91,6 +105,7 @@ export function assembleDesignMateChatWirePrompt(
     contextMessage,
     messages,
     images,
+    review: wire.review,
   });
 }
 

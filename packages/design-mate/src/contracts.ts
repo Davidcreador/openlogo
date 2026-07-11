@@ -525,6 +525,8 @@ export const DESIGN_MATE_CHAT_LIMITS = Object.freeze({
   fingerprintLength: 128,
   timestampLength: 32,
   historyMessages: 24,
+  memoryEvents: 32,
+  memorySummaryLength: 500,
   userTextLength: 4_000,
   assistantTextLength: 16_000,
   deltaTextLength: 4_000,
@@ -540,6 +542,10 @@ export const DESIGN_MATE_CHAT_LIMITS = Object.freeze({
   selectionIds: 512,
   contextStringLength: 4_000,
   contextSerializedBytes: 128 * 1_024,
+  reviewSerializedBytes: 256 * 1_024,
+  readOnlyToolOutputBytes: 48 * 1_024,
+  readOnlyToolCalls: 2,
+  modelSteps: 3,
   wireSerializedBytes: 5 * 1_024 * 1_024,
   sseFrameBytes: 64 * 1_024,
   sseFrames: 2_048,
@@ -553,6 +559,21 @@ export type DesignMateChatMessage = {
   readonly id: string;
   readonly role: DesignMateChatRole;
   readonly text: string;
+  readonly createdAt: string;
+};
+
+export type DesignMateConversationMemoryStatus =
+  | "prepared"
+  | "applied"
+  | "dismissed"
+  | "rejected";
+
+export type DesignMateConversationMemoryEvent = {
+  readonly id: string;
+  readonly proposalId: string;
+  readonly label: string;
+  readonly status: DesignMateConversationMemoryStatus;
+  readonly summary: string;
   readonly createdAt: string;
 };
 
@@ -581,6 +602,7 @@ export type DesignMateChatTurnInput = {
   readonly history: readonly DesignMateChatMessage[];
   readonly userMessage: DesignMateChatMessage;
   readonly attachments?: readonly DesignMateVisualAttachment[];
+  readonly memory?: readonly DesignMateConversationMemoryEvent[];
 };
 
 /** Shorter alias for callers that model one chat submission as an input. */
@@ -594,11 +616,13 @@ export type DesignMateChatTurnRequest = {
   readonly assistantMessageId: string;
   readonly identity: DocumentIdentity;
   readonly context: DesignContext;
+  readonly review: DesignReview;
   readonly selection: DesignMateSelection;
   readonly scope: ReviewScope;
   readonly history: readonly DesignMateChatMessage[];
   readonly userMessage: DesignMateChatMessage;
   readonly attachments: readonly DesignMateVisualAttachment[];
+  readonly memory: readonly DesignMateConversationMemoryEvent[];
 };
 
 /**
@@ -612,11 +636,13 @@ export type DesignMateChatWireRequest = {
   readonly assistantMessageId: string;
   readonly identity: DocumentIdentity;
   readonly context: DesignContext;
+  readonly review: DesignReview;
   readonly selection: DesignMateSelection;
   readonly scope: ReviewScope;
   readonly history: readonly DesignMateChatMessage[];
   readonly userMessage: DesignMateChatMessage;
   readonly attachments: readonly DesignMateVisualAttachment[];
+  readonly memory: readonly DesignMateConversationMemoryEvent[];
   readonly document?: never;
 };
 
@@ -672,6 +698,7 @@ export type DesignMateChatPrompt = {
   readonly contextMessage: DesignMateChatPromptContextMessage;
   readonly messages: readonly DesignMateChatPromptMessage[];
   readonly images: readonly DesignMateChatPromptImage[];
+  readonly review: DesignReview;
 };
 
 export type DesignMateChatStartedEvent = {

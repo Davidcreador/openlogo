@@ -3,6 +3,7 @@ import {
   type DesignMateChatEvent,
   type DesignMateChatMessage,
   type DesignMateChatProvider,
+  type DesignMateConversationMemoryEvent,
   type DesignMateProviderError,
   type DocumentIdentity,
 } from "@openlogo/design-mate";
@@ -34,6 +35,7 @@ export type DesignMateChatTranscriptEntry = DesignMateChatMessage & {
   readonly providerLabel?: string;
   readonly errorLabel?: string;
   readonly answerContext?: DesignMateChatAnswerContext;
+  readonly memory?: readonly DesignMateConversationMemoryEvent[];
 };
 
 type ActiveDesignMateChatTurn = {
@@ -407,6 +409,23 @@ export function designMateChatHistoryFromTranscript(
   );
 }
 
+export function designMateConversationMemoryFromTranscript(
+  entries: readonly DesignMateChatTranscriptEntry[],
+): readonly DesignMateConversationMemoryEvent[] {
+  const seen = new Set<string>();
+  const events: DesignMateConversationMemoryEvent[] = [];
+  for (const entry of entries) {
+    for (const event of entry.memory ?? []) {
+      if (seen.has(event.id)) {
+        continue;
+      }
+      seen.add(event.id);
+      events.push(event);
+    }
+  }
+  return events.slice(-DESIGN_MATE_CHAT_LIMITS.memoryEvents);
+}
+
 function updateAssistantEntry(
   state: DesignMateChatTranscriptState,
   update: (
@@ -512,6 +531,50 @@ export function reduceDesignMateChatTranscript(
       },
     };
   }
+  if (
+    event.type === "proposal-prepared" ||
+    event.type === "proposal-rejected"
+  ) {
+    if (
+      !active.messageStarted ||
+      active.messageEnded ||
+      event.messageId !== active.assistantMessageId
+    ) {
+      return state;
+    }
+    const memoryEvent: Omit<DesignMateConversationMemoryEvent, "createdAt"> =
+      event.type === "proposal-prepared"
+        ? {
+            id: `${active.turnId}:proposal:${event.index}`,
+            proposalId: event.prepared.proposal.id,
+            label: event.prepared.proposal.label,
+            status: "prepared",
+            summary: event.prepared.impact.summaries.join(" · ").slice(
+              0,
+              DESIGN_MATE_CHAT_LIMITS.memorySummaryLength,
+            ),
+          }
+        : {
+            id: `${active.turnId}:rejected:${event.index}`,
+            proposalId: event.proposalId,
+            label: "Rejected suggestion",
+            status: "rejected",
+            summary: event.error.message.slice(
+              0,
+              DESIGN_MATE_CHAT_LIMITS.memorySummaryLength,
+            ),
+          };
+    return {
+      entries: updateAssistantEntry(state, (entry) => ({
+        ...entry,
+        memory: [
+          ...(entry.memory ?? []),
+          { ...memoryEvent, createdAt: entry.createdAt },
+        ].slice(-DESIGN_MATE_CHAT_LIMITS.memoryEvents),
+      })),
+      activeTurn: active,
+    };
+  }
   if (event.type === "message-end") {
     if (
       !active.messageStarted ||
@@ -533,6 +596,7 @@ export function reduceDesignMateChatTranscript(
         ...(entry.answerContext
           ? { answerContext: entry.answerContext }
           : {}),
+        ...(entry.memory ? { memory: entry.memory } : {}),
       })),
       activeTurn: { ...active, messageEnded: true },
     };

@@ -1,3 +1,4 @@
+import type { DesignReview, ReviewFinding } from "@openlogo/core";
 import {
   DESIGN_MATE_CHAT_LIMITS,
   type DesignMateProposal,
@@ -8,9 +9,17 @@ import {
   snapshotValidDesignMateProposal,
 } from "./proposal-validation";
 import { deepFreeze } from "./snapshot";
+import {
+  DESIGN_REVIEW_LIMITS,
+  isValidDesignReview,
+} from "./validation";
 
 export const DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME =
   "submit_design_mate_proposal";
+export const DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL_NAME =
+  "inspect_design_review";
+export const DESIGN_MATE_CHAT_EXPORT_OPTIONS_TOOL_NAME =
+  "explain_export_options";
 
 export const DESIGN_MATE_CHAT_PROPOSAL_TOOL_LIMITS = Object.freeze({
   actions: 4,
@@ -338,6 +347,51 @@ const actionSchemas = [
   },
 ] as const;
 
+export const DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL = deepFreeze({
+  type: "function",
+  name: DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL_NAME,
+  description:
+    "Filter the deterministic DesignReview snapshot supplied for this turn. This is read-only and never re-analyzes or mutates the document.",
+  strict: true,
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      findingIds: {
+        type: ["array", "null"],
+        items: referenceId,
+        description: `Unique finding ids to return, or null for all findings. Runtime validation caps this at ${DESIGN_REVIEW_LIMITS.findings}.`,
+      },
+      severity: {
+        type: ["string", "null"],
+        enum: ["info", "warning", "strong", null],
+        description: "A severity filter, or null for all severities.",
+      },
+    },
+    required: ["findingIds", "severity"],
+  },
+});
+
+export const DESIGN_MATE_CHAT_EXPORT_OPTIONS_TOOL = deepFreeze({
+  type: "function",
+  name: DESIGN_MATE_CHAT_EXPORT_OPTIONS_TOOL_NAME,
+  description:
+    "Read OpenLogo's supported delivery formats and settings. This provides guidance only and never starts an export or changes the document.",
+  strict: true,
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      format: {
+        type: ["string", "null"],
+        enum: ["svg", "png", "jpeg", "webp", "ico", null],
+        description: "One supported format to inspect, or null for all.",
+      },
+    },
+    required: ["format"],
+  },
+});
+
 /**
  * Strict Responses API function tool. It exposes only the closed proposal
  * action surface; provider-side commands and document mutation are impossible.
@@ -381,6 +435,16 @@ export const DESIGN_MATE_CHAT_PROPOSAL_TOOL = deepFreeze({
     ],
   },
 });
+
+export const DESIGN_MATE_CHAT_READ_ONLY_TOOLS = deepFreeze([
+  DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL,
+  DESIGN_MATE_CHAT_EXPORT_OPTIONS_TOOL,
+] as const);
+
+export const DESIGN_MATE_CHAT_MODEL_TOOLS = deepFreeze([
+  ...DESIGN_MATE_CHAT_READ_ONLY_TOOLS,
+  DESIGN_MATE_CHAT_PROPOSAL_TOOL,
+] as const);
 
 /**
  * Convert untrusted function arguments into the normal proposal contract.
@@ -458,4 +522,156 @@ export function snapshotDesignMateChatProposalToolArguments(
   } catch {
     return null;
   }
+}
+
+const REVIEW_SEVERITIES = new Set(["info", "warning", "strong"]);
+const EXPORT_FORMATS = new Set(["svg", "png", "jpeg", "webp", "ico"]);
+
+export const DESIGN_MATE_EXPORT_OPTIONS_CATALOG = deepFreeze({
+  formats: [
+    {
+      id: "svg",
+      kind: "editable-vector",
+      transparency: true,
+      guidance:
+        "Best master delivery format for scalable vectors and professional handoff.",
+    },
+    {
+      id: "png",
+      kind: "lossless-raster",
+      transparency: true,
+      guidance:
+        "Best general raster delivery format for logos, UI, and transparent backgrounds.",
+      limits: { maximumDimension: 16_384, maximumPixels: 32 * 1_024 * 1_024 },
+    },
+    {
+      id: "jpeg",
+      kind: "lossy-raster",
+      transparency: false,
+      guidance:
+        "Use only when a small photographic-style asset is required; OpenLogo requires an explicit opaque background.",
+      limits: { maximumDimension: 16_384, maximumPixels: 32 * 1_024 * 1_024 },
+    },
+    {
+      id: "webp",
+      kind: "compressed-raster",
+      transparency: true,
+      guidance:
+        "Useful for compact web delivery when the receiving platform supports WebP.",
+      limits: { maximumDimension: 16_384, maximumPixels: 32 * 1_024 * 1_024 },
+    },
+    {
+      id: "ico",
+      kind: "multi-size-icon",
+      transparency: true,
+      guidance:
+        "Use the icon variant for favicon delivery and verify clarity at 16, 32, and 48 pixels.",
+    },
+  ],
+  scopes: ["active-artboard", "all-artboards", "selection"],
+  notes: [
+    "Keep an editable SVG master alongside raster deliverables.",
+    "Use a logo-system variant suited to the destination rather than scaling one lockup everywhere.",
+    "Preview icon artwork at 16px before favicon delivery.",
+  ],
+});
+
+function boundedToolOutput(value: unknown): string | null {
+  try {
+    const serialized = JSON.stringify(value);
+    return utf8ByteLength(serialized) <=
+      DESIGN_MATE_CHAT_LIMITS.readOnlyToolOutputBytes
+      ? serialized
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function inspectReviewToolOutput(
+  review: DesignReview,
+  value: unknown,
+): string | null {
+  if (
+    !isValidDesignReview(review) ||
+    !isPlainRecord(value) ||
+    !hasExactKeys(value, ["findingIds", "severity"]) ||
+    (value.findingIds !== null && !Array.isArray(value.findingIds)) ||
+    (value.severity !== null &&
+      (typeof value.severity !== "string" ||
+        !REVIEW_SEVERITIES.has(value.severity)))
+  ) {
+    return null;
+  }
+  let findingIds: Set<string> | null = null;
+  if (Array.isArray(value.findingIds)) {
+    if (
+      value.findingIds.length > DESIGN_REVIEW_LIMITS.findings ||
+      value.findingIds.some(
+        (id) =>
+          typeof id !== "string" ||
+          id.trim().length === 0 ||
+          id.length > DESIGN_REVIEW_LIMITS.findingIdLength,
+      )
+    ) {
+      return null;
+    }
+    findingIds = new Set(value.findingIds as string[]);
+    if (findingIds.size !== value.findingIds.length) {
+      return null;
+    }
+  }
+  const severity =
+    value.severity === null
+      ? null
+      : (value.severity as ReviewFinding["severity"]);
+  const findings = review.findings.filter(
+    (finding) =>
+      (findingIds === null || findingIds.has(finding.id)) &&
+      (severity === null || finding.severity === severity),
+  );
+  return boundedToolOutput({
+    summary: review.summary,
+    findings,
+  });
+}
+
+function exportOptionsToolOutput(value: unknown): string | null {
+  if (
+    !isPlainRecord(value) ||
+    !hasExactKeys(value, ["format"]) ||
+    (value.format !== null &&
+      (typeof value.format !== "string" || !EXPORT_FORMATS.has(value.format)))
+  ) {
+    return null;
+  }
+  const format = value.format;
+  return boundedToolOutput({
+    formats:
+      format === null
+        ? DESIGN_MATE_EXPORT_OPTIONS_CATALOG.formats
+        : DESIGN_MATE_EXPORT_OPTIONS_CATALOG.formats.filter(
+            (candidate) => candidate.id === format,
+          ),
+    scopes: DESIGN_MATE_EXPORT_OPTIONS_CATALOG.scopes,
+    notes: DESIGN_MATE_EXPORT_OPTIONS_CATALOG.notes,
+  });
+}
+
+/**
+ * Execute one model-requested read-only helper against already validated,
+ * bounded prompt data. Null means the call must fail closed.
+ */
+export function executeDesignMateChatReadOnlyTool(
+  toolName: string,
+  value: unknown,
+  review: DesignReview,
+): string | null {
+  if (toolName === DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL_NAME) {
+    return inspectReviewToolOutput(review, value);
+  }
+  if (toolName === DESIGN_MATE_CHAT_EXPORT_OPTIONS_TOOL_NAME) {
+    return exportOptionsToolOutput(value);
+  }
+  return null;
 }

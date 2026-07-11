@@ -1,4 +1,3 @@
-import { analyzeLogoDocument } from "@openlogo/core";
 import type { DesignReview, ReviewFinding } from "@openlogo/core";
 import {
   DESIGN_MATE_CHAT_LIMITS,
@@ -147,15 +146,7 @@ export function createHeuristicDesignMateChatProvider(): DesignMateChatProvider 
     id,
     stream: async function* (request, signal) {
       throwIfAborted(id, signal);
-      let review: DesignReview;
-      try {
-        review = analyzeLogoDocument(request.document, {
-          scope: request.scope,
-          selectionIds: request.selection.selectedNodeIds,
-        });
-      } catch (cause) {
-        throw normalizeDesignMateChatProviderError(id, cause, signal);
-      }
+      const review: DesignReview = request.review;
 
       for (const delta of splitResponse(heuristicResponse(request, review))) {
         throwIfAborted(id, signal);

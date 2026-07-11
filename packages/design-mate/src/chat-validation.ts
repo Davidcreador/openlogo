@@ -5,6 +5,7 @@ import {
   type DesignMateChatMessage,
   type DesignMateChatProviderChunk,
   type DesignMateChatWireRequest,
+  type DesignMateConversationMemoryEvent,
   type DesignMateSelection,
   type DesignMateVisualAttachment,
 } from "./contracts";
@@ -12,10 +13,17 @@ import { DESIGN_CONTEXT_LIMITS } from "./context";
 import type { DocumentIdentity } from "./identity";
 import { isValidDesignMateProposal } from "./proposal-validation";
 import { deepFreeze } from "./snapshot";
+import { isValidDesignReview } from "./validation";
 
 type UnknownRecord = Record<string, unknown>;
 
 const CHAT_ROLES = new Set(["user", "assistant"]);
+const MEMORY_STATUSES = new Set([
+  "prepared",
+  "applied",
+  "dismissed",
+  "rejected",
+]);
 const ATTACHMENT_KINDS = new Set([
   "selection",
   "active-artboard",
@@ -197,6 +205,33 @@ function isChatMessage(value: unknown): value is DesignMateChatMessage {
       ? DESIGN_MATE_CHAT_LIMITS.userTextLength
       : DESIGN_MATE_CHAT_LIMITS.assistantTextLength;
   return isBoundedString(value.text, textLimit, true);
+}
+
+function isConversationMemoryEvent(
+  value: unknown,
+): value is DesignMateConversationMemoryEvent {
+  return (
+    isPlainRecord(value) &&
+    hasExactKeys(value, [
+      "id",
+      "proposalId",
+      "label",
+      "status",
+      "summary",
+      "createdAt",
+    ]) &&
+    isChatId(value.id) &&
+    isReferenceId(value.proposalId) &&
+    isBoundedString(value.label, DESIGN_MATE_CHAT_LIMITS.memorySummaryLength) &&
+    typeof value.status === "string" &&
+    MEMORY_STATUSES.has(value.status) &&
+    isBoundedString(
+      value.summary,
+      DESIGN_MATE_CHAT_LIMITS.memorySummaryLength,
+      true,
+    ) &&
+    isIsoTimestamp(value.createdAt)
+  );
 }
 
 function decodedBase64Length(value: string): number | null {
@@ -958,11 +993,13 @@ function validateDesignMateChatWireRequest(
       "assistantMessageId",
       "identity",
       "context",
+      "review",
       "selection",
       "scope",
       "history",
       "userMessage",
       "attachments",
+      "memory",
     ]) ||
     !isChatId(value.conversationId) ||
     !isChatId(value.turnId) ||
@@ -1000,6 +1037,35 @@ function validateDesignMateChatWireRequest(
     return false;
   }
   messageIds.add(value.userMessage.id);
+
+  const memoryIds = new Set<string>();
+  if (
+    !isDenseBoundedArray(
+      value.memory,
+      DESIGN_MATE_CHAT_LIMITS.memoryEvents,
+      (event) => {
+        if (
+          !isConversationMemoryEvent(event) ||
+          memoryIds.has(event.id)
+        ) {
+          return false;
+        }
+        memoryIds.add(event.id);
+        return true;
+      },
+    ) ||
+    !isValidDesignReview(value.review)
+  ) {
+    return false;
+  }
+  const serializedReview = JSON.stringify(value.review);
+  if (
+    serializedReview === undefined ||
+    utf8ByteLength(serializedReview) >
+      DESIGN_MATE_CHAT_LIMITS.reviewSerializedBytes
+  ) {
+    return false;
+  }
 
   const attachmentIds = new Set<string>();
   if (

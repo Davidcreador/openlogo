@@ -85,6 +85,16 @@ function makeFixture() {
         createdAt: "2026-07-10T20:00:01.000Z",
       },
     ],
+    memory: [
+      {
+        id: "memory-1",
+        proposalId: "proposal-1",
+        label: "Tighten tracking",
+        status: "applied",
+        summary: "Set tracking to -1px.",
+        createdAt: "2026-07-10T20:00:01.500Z",
+      },
+    ],
     userMessage: {
       id: "message-user-2",
       role: "user",
@@ -109,6 +119,8 @@ describe("chat request preparation", () => {
 
     expect(request.document).not.toBe(document);
     expect(request.history).not.toBe(input.history);
+    expect(request.memory).not.toBe(input.memory);
+    expect(request.review.findings.length).toBeGreaterThan(0);
     expect(request.attachments).not.toBe(input.attachments);
     expect(request.attachments[0]).not.toBe(attachment);
     expectDeepFrozen(request);
@@ -120,6 +132,7 @@ describe("chat request preparation", () => {
 
     expect(request.document.name).toBe(originalName);
     expect(request.history[0]!.text).toBe("Review the current direction.");
+    expect(request.memory[0]!.status).toBe("applied");
     expect(request.attachments[0]!.label).toBe("Active artboard");
   });
 
@@ -212,6 +225,12 @@ describe("Design Mate chat provider chunk validation", () => {
 describe("untrusted chat wire validation", () => {
   it("requires exact top-level, message, and attachment keys", () => {
     const wire = toDesignMateChatWireRequest(makeFixture().request);
+    const withoutReview: Record<string, unknown> = { ...wire };
+    const withoutMemory: Record<string, unknown> = { ...wire };
+    delete withoutReview.review;
+    delete withoutMemory.memory;
+    expect(isValidDesignMateChatWireRequest(withoutReview)).toBe(false);
+    expect(isValidDesignMateChatWireRequest(withoutMemory)).toBe(false);
     expect(
       isValidDesignMateChatWireRequest({ ...wire, document: {} }),
     ).toBe(false);
@@ -228,6 +247,12 @@ describe("untrusted chat wire validation", () => {
       isValidDesignMateChatWireRequest({
         ...wire,
         attachments: [{ ...wire.attachments[0]!, extra: true }],
+      }),
+    ).toBe(false);
+    expect(
+      isValidDesignMateChatWireRequest({
+        ...wire,
+        memory: [{ ...wire.memory[0]!, status: "invented" }],
       }),
     ).toBe(false);
   });

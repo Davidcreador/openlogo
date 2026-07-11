@@ -146,6 +146,13 @@ describe("chat prompt assembly", () => {
     expect(first.contextMessage.text).toContain(
       "END_UNTRUSTED_DESIGN_CONTEXT",
     );
+    expect(first.contextMessage.text).toContain(
+      "BEGIN_UNTRUSTED_DESIGN_REVIEW",
+    );
+    expect(first.contextMessage.text).toContain(
+      "BEGIN_UNTRUSTED_PROPOSAL_MEMORY",
+    );
+    expect(first.review).toEqual(request.review);
     expect(first.messages.map((message) => message.role)).toEqual([
       "user",
       "assistant",
@@ -246,8 +253,8 @@ describe("chat providers and orchestration", () => {
       "context",
       "message-start",
       "text-delta",
-      "text-delta",
       "proposal-prepared",
+      "text-delta",
       "message-end",
       "completed",
     ]);
@@ -402,11 +409,9 @@ describe("chat providers and orchestration", () => {
     });
     expect(
       duplicateResult.events.some(
-        (event) =>
-          event.type === "proposal-prepared" ||
-          event.type === "proposal-rejected",
+        (event) => event.type === "proposal-prepared",
       ),
-    ).toBe(false);
+    ).toBe(true);
 
     const excessiveResult = await drain(
       orchestrateDesignMateChat(
@@ -427,12 +432,10 @@ describe("chat providers and orchestration", () => {
       error: { code: "invalid-chat-response" },
     });
     expect(
-      excessiveResult.events.some(
-        (event) =>
-          event.type === "proposal-prepared" ||
-          event.type === "proposal-rejected",
+      excessiveResult.events.filter(
+        (event) => event.type === "proposal-prepared",
       ),
-    ).toBe(false);
+    ).toHaveLength(DESIGN_MATE_CHAT_LIMITS.proposalCandidates);
   });
 
   it("fails closed on oversized output and invalid provider chunks", async () => {

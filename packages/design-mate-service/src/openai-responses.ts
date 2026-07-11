@@ -2,8 +2,13 @@ import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import {
   DESIGN_MATE_CHAT_LIMITS,
+  DESIGN_MATE_CHAT_EXPORT_OPTIONS_TOOL_NAME,
+  DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL_NAME,
+  DESIGN_MATE_CHAT_MODEL_TOOLS,
   DESIGN_MATE_CHAT_PROPOSAL_TOOL,
   DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
+  executeDesignMateChatReadOnlyTool,
+  isValidDesignReview,
   isDesignMateProviderError,
   makeDesignMateProviderError,
   snapshotDesignMateChatProposalToolArguments,
@@ -27,6 +32,10 @@ export const OPENAI_RESPONSES_STREAM_LIMITS = Object.freeze({
   proposalArgumentBytes: DESIGN_MATE_CHAT_LIMITS.proposalSerializedBytes,
 } as const);
 export const OPENAI_RESPONSES_DEFAULT_MAX_OUTPUT_TOKENS = 1_200;
+export const OPENAI_RESPONSES_LOOP_LIMITS = Object.freeze({
+  modelSteps: DESIGN_MATE_CHAT_LIMITS.modelSteps,
+  readOnlyToolCalls: DESIGN_MATE_CHAT_LIMITS.readOnlyToolCalls,
+} as const);
 
 export type OpenAIResponsesImageDetail = "low" | "auto";
 
@@ -436,7 +445,8 @@ function buildOpenAIInput(
     prompt.contextMessage.text.length === 0 ||
     !Array.isArray(prompt.messages) ||
     prompt.messages.length === 0 ||
-    !Array.isArray(prompt.images)
+    !Array.isArray(prompt.images) ||
+    !isValidDesignReview(prompt.review)
   ) {
     throw new TypeError("The Design Mate model prompt is invalid.");
   }
@@ -543,6 +553,7 @@ function parseEvent(frame: SseFrame): {
 
 type OpenAIFunctionCallState = {
   readonly name: string;
+  readonly callId: string;
   readonly outputIndex: number;
   arguments: string;
   done: boolean;
@@ -573,6 +584,15 @@ function boundedFunctionArguments(value: unknown): value is string {
   );
 }
 
+const READ_ONLY_TOOL_NAMES = new Set([
+  DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL_NAME,
+  DESIGN_MATE_CHAT_EXPORT_OPTIONS_TOOL_NAME,
+]);
+
+function isReadOnlyToolName(value: string): boolean {
+  return READ_ONLY_TOOL_NAMES.has(value);
+}
+
 export function createOpenAIResponsesTransport(
   options: OpenAIResponsesTransportOptions,
 ): DesignMateModelTransport {
@@ -601,19 +621,9 @@ export function createOpenAIResponsesTransport(
     id,
     stream: async function* (prompt, signal) {
       throwIfTransportAborted(id, signal);
-      let requestBody: string;
+      let input: readonly Record<string, unknown>[];
       try {
-        requestBody = JSON.stringify({
-          model: options.model,
-          instructions: prompt.system,
-          input: buildOpenAIInput(prompt, imageDetail),
-          max_output_tokens: maxOutputTokens,
-          tools: [DESIGN_MATE_CHAT_PROPOSAL_TOOL],
-          tool_choice: "auto",
-          parallel_tool_calls: false,
-          stream: true,
-          store: false,
-        });
+        input = buildOpenAIInput(prompt, imageDetail);
       } catch {
         throw providerError(
           id,
@@ -623,237 +633,371 @@ export function createOpenAIResponsesTransport(
         );
       }
 
-      let response: Response;
-      try {
-        response = await fetchImplementation(endpoint, {
-          method: "POST",
-          redirect: "error",
-          headers: {
-            accept: "text/event-stream",
-            authorization: `Bearer ${options.apiKey}`,
-            "content-type": "application/json",
-          },
-          body: requestBody,
-          ...(signal === undefined ? {} : { signal }),
-        });
-      } catch (cause) {
-        if (signal?.aborted || isAbortLike(cause)) {
-          throw cancelledTransportError(id);
-        }
-        throw unavailable(id);
-      }
-      throwIfTransportAborted(id, signal);
+      let totalDeltaCount = 0;
+      let totalProposalCount = 0;
+      let readOnlyToolCount = 0;
 
-      if (!response.ok) {
-        void response.body?.cancel().catch(() => undefined);
-        throw httpError(id, response.status);
-      }
-      const contentType = response.headers.get("content-type");
-      if (
-        contentType === null ||
-        contentType.split(";", 1)[0]?.trim().toLowerCase() !==
-          "text/event-stream"
+      for (
+        let step = 0;
+        step < OPENAI_RESPONSES_LOOP_LIMITS.modelSteps;
+        step += 1
       ) {
-        void response.body?.cancel().catch(() => undefined);
-        throw invalidResponse(id);
-      }
-      if (!response.body) {
-        throw invalidResponse(id);
-      }
+        throwIfTransportAborted(id, signal);
+        const allowReadOnlyTools =
+          readOnlyToolCount <
+            OPENAI_RESPONSES_LOOP_LIMITS.readOnlyToolCalls &&
+          step < OPENAI_RESPONSES_LOOP_LIMITS.modelSteps - 1;
+        const tools = allowReadOnlyTools
+          ? DESIGN_MATE_CHAT_MODEL_TOOLS
+          : ([DESIGN_MATE_CHAT_PROPOSAL_TOOL] as const);
+        const allowedToolNames = new Set(tools.map((tool) => tool.name));
+        let requestBody: string;
+        try {
+          requestBody = JSON.stringify({
+            model: options.model,
+            instructions: prompt.system,
+            input,
+            max_output_tokens: maxOutputTokens,
+            tools,
+            tool_choice: "auto",
+            parallel_tool_calls: false,
+            stream: true,
+            store: false,
+          });
+        } catch {
+          throw providerError(
+            id,
+            "invalid-request",
+            "The Design Mate model prompt is invalid.",
+            false,
+          );
+        }
 
-      let completed = false;
-      let deltaCount = 0;
-      let proposalCount = 0;
-      const functionCalls = new Map<string, OpenAIFunctionCallState>();
-      try {
-        for await (const frame of decodeResponseFrames(
-          response.body,
-          signal,
-          id,
-        )) {
-          throwIfTransportAborted(id, signal);
-          const event = parseEvent(frame);
-          if (completed) {
-            throw new OpenAIStreamProtocolError();
+        let response: Response;
+        try {
+          response = await fetchImplementation(endpoint, {
+            method: "POST",
+            redirect: "error",
+            headers: {
+              accept: "text/event-stream",
+              authorization: `Bearer ${options.apiKey}`,
+              "content-type": "application/json",
+            },
+            body: requestBody,
+            ...(signal === undefined ? {} : { signal }),
+          });
+        } catch (cause) {
+          if (signal?.aborted || isAbortLike(cause)) {
+            throw cancelledTransportError(id);
           }
-          if (event.type === "response.output_text.delta") {
-            deltaCount += 1;
-            if (deltaCount > OPENAI_RESPONSES_STREAM_LIMITS.deltas) {
+          throw unavailable(id);
+        }
+        throwIfTransportAborted(id, signal);
+
+        if (!response.ok) {
+          void response.body?.cancel().catch(() => undefined);
+          throw httpError(id, response.status);
+        }
+        const contentType = response.headers.get("content-type");
+        if (
+          contentType === null ||
+          contentType.split(";", 1)[0]?.trim().toLowerCase() !==
+            "text/event-stream"
+        ) {
+          void response.body?.cancel().catch(() => undefined);
+          throw invalidResponse(id);
+        }
+        if (!response.body) {
+          throw invalidResponse(id);
+        }
+
+        let completed = false;
+        let stepDeltaCount = 0;
+        let stepProposalCount = 0;
+        let rejectedProposalCall = false;
+        let pendingReadOnlyCall:
+          | {
+              readonly callId: string;
+              readonly name: string;
+              readonly arguments: string;
+            }
+          | undefined;
+        const functionCalls = new Map<string, OpenAIFunctionCallState>();
+        try {
+          for await (const frame of decodeResponseFrames(
+            response.body,
+            signal,
+            id,
+          )) {
+            throwIfTransportAborted(id, signal);
+            const event = parseEvent(frame);
+            if (completed) {
               throw new OpenAIStreamProtocolError();
             }
-            const chunk = snapshotValidDesignMateChatProviderChunk({
-              type: "text-delta",
-              delta: event.value.delta,
-            });
-            if (!chunk) {
-              throw new OpenAIStreamProtocolError();
-            }
-            yield chunk satisfies DesignMateChatProviderChunk;
-          } else if (event.type === "response.output_item.added") {
-            const item = event.value.item;
-            if (isPlainRecord(item) && item.type === "function_call") {
+            if (event.type === "response.output_text.delta") {
+              stepDeltaCount += 1;
+              totalDeltaCount += 1;
               if (
-                !isFunctionCallId(item.id) ||
-                item.name !== DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME ||
-                !boundedFunctionArguments(item.arguments) ||
-                !isNonNegativeInteger(event.value.output_index) ||
-                functionCalls.has(item.id)
+                totalDeltaCount >
+                OPENAI_RESPONSES_STREAM_LIMITS.deltas
               ) {
                 throw new OpenAIStreamProtocolError();
               }
-              functionCalls.set(item.id, {
-                name: item.name,
-                outputIndex: event.value.output_index,
-                arguments: item.arguments,
-                done: false,
-                outputDone: false,
+              const chunk = snapshotValidDesignMateChatProviderChunk({
+                type: "text-delta",
+                delta: event.value.delta,
               });
-            }
-          } else if (
-            event.type === "response.function_call_arguments.delta"
-          ) {
-            const itemId = event.value.item_id;
-            const state = isFunctionCallId(itemId)
-              ? functionCalls.get(itemId)
-              : undefined;
-            if (
-              !state ||
-              state.done ||
-              !isNonNegativeInteger(event.value.output_index) ||
-              event.value.output_index !== state.outputIndex ||
-              typeof event.value.delta !== "string" ||
-              event.value.delta.length === 0
+              if (!chunk) {
+                throw new OpenAIStreamProtocolError();
+              }
+              yield chunk satisfies DesignMateChatProviderChunk;
+            } else if (event.type === "response.output_item.added") {
+              const item = event.value.item;
+              if (isPlainRecord(item) && item.type === "function_call") {
+                const callId = isFunctionCallId(item.call_id)
+                  ? item.call_id
+                  : item.id;
+                if (
+                  !isFunctionCallId(item.id) ||
+                  !isFunctionCallId(callId) ||
+                  typeof item.name !== "string" ||
+                  !allowedToolNames.has(item.name) ||
+                  !boundedFunctionArguments(item.arguments) ||
+                  !isNonNegativeInteger(event.value.output_index) ||
+                  functionCalls.has(item.id)
+                ) {
+                  throw new OpenAIStreamProtocolError();
+                }
+                functionCalls.set(item.id, {
+                  name: item.name,
+                  callId,
+                  outputIndex: event.value.output_index,
+                  arguments: item.arguments,
+                  done: false,
+                  outputDone: false,
+                });
+              }
+            } else if (
+              event.type === "response.function_call_arguments.delta"
             ) {
-              throw new OpenAIStreamProtocolError();
-            }
-            const nextArguments = `${state.arguments}${event.value.delta}`;
-            if (!boundedFunctionArguments(nextArguments)) {
-              throw new OpenAIStreamProtocolError();
-            }
-            state.arguments = nextArguments;
-          } else if (
-            event.type === "response.function_call_arguments.done"
-          ) {
-            const doneItem = isPlainRecord(event.value.item)
-              ? event.value.item
-              : undefined;
-            const itemId = isFunctionCallId(event.value.item_id)
-              ? event.value.item_id
-              : doneItem && isFunctionCallId(doneItem.id)
-                ? doneItem.id
-                : undefined;
-            const state = isFunctionCallId(itemId)
-              ? functionCalls.get(itemId)
-              : undefined;
-            const doneName =
-              typeof event.value.name === "string"
-                ? event.value.name
-                : doneItem && typeof doneItem.name === "string"
-                  ? doneItem.name
-                  : undefined;
-            const doneArguments =
-              typeof event.value.arguments === "string"
-                ? event.value.arguments
-                : doneItem && typeof doneItem.arguments === "string"
-                  ? doneItem.arguments
-                  : undefined;
-            if (
-              !state ||
-              state.done ||
-              (doneName !== undefined && doneName !== state.name) ||
-              !isNonNegativeInteger(event.value.output_index) ||
-              event.value.output_index !== state.outputIndex ||
-              !boundedFunctionArguments(doneArguments) ||
-              (state.arguments.length > 0 &&
-                state.arguments !== doneArguments) ||
-              proposalCount >= DESIGN_MATE_CHAT_LIMITS.proposalCandidates
-            ) {
-              throw new OpenAIStreamProtocolError();
-            }
-            let parsedArguments: unknown;
-            try {
-              parsedArguments = JSON.parse(doneArguments);
-            } catch {
-              throw new OpenAIStreamProtocolError();
-            }
-            const proposal = snapshotDesignMateChatProposalToolArguments(
-              parsedArguments,
-              `chat-proposal-${randomUUID()}`,
-            );
-            if (!proposal) {
-              // Strict schemas intentionally omit unsupported JSON-Schema
-              // bounds. A structurally valid but semantically rejected tool
-              // call must not discard otherwise useful streamed guidance.
-              state.arguments = doneArguments;
-              state.done = true;
-              continue;
-            }
-            const chunk = snapshotValidDesignMateChatProviderChunk({
-              type: "proposal-candidate",
-              proposal,
-            });
-            if (!chunk) {
-              throw new OpenAIStreamProtocolError();
-            }
-            state.arguments = doneArguments;
-            state.done = true;
-            proposalCount += 1;
-            yield chunk satisfies DesignMateChatProviderChunk;
-          } else if (event.type === "response.output_item.done") {
-            const item = event.value.item;
-            if (isPlainRecord(item) && item.type === "function_call") {
-              const state = isFunctionCallId(item.id)
-                ? functionCalls.get(item.id)
+              const itemId = event.value.item_id;
+              const state = isFunctionCallId(itemId)
+                ? functionCalls.get(itemId)
                 : undefined;
               if (
                 !state ||
-                !state.done ||
-                state.outputDone ||
-                (typeof item.name === "string" &&
-                  item.name !== state.name) ||
+                state.done ||
                 !isNonNegativeInteger(event.value.output_index) ||
-                event.value.output_index !== state.outputIndex
+                event.value.output_index !== state.outputIndex ||
+                typeof event.value.delta !== "string" ||
+                event.value.delta.length === 0
               ) {
                 throw new OpenAIStreamProtocolError();
               }
-              state.outputDone = true;
-            }
-          } else if (event.type === "response.completed") {
-            if (
-              !isPlainRecord(event.value.response) ||
-              event.value.response.status !== "completed" ||
-              [...functionCalls.values()].some(
-                (state) => !state.done || !state.outputDone,
-              )
+              const nextArguments = `${state.arguments}${event.value.delta}`;
+              if (!boundedFunctionArguments(nextArguments)) {
+                throw new OpenAIStreamProtocolError();
+              }
+              state.arguments = nextArguments;
+            } else if (
+              event.type === "response.function_call_arguments.done"
             ) {
-              throw new OpenAIStreamProtocolError();
+              const doneItem = isPlainRecord(event.value.item)
+                ? event.value.item
+                : undefined;
+              const itemId = isFunctionCallId(event.value.item_id)
+                ? event.value.item_id
+                : doneItem && isFunctionCallId(doneItem.id)
+                  ? doneItem.id
+                  : undefined;
+              const state = isFunctionCallId(itemId)
+                ? functionCalls.get(itemId)
+                : undefined;
+              const doneName =
+                typeof event.value.name === "string"
+                  ? event.value.name
+                  : doneItem && typeof doneItem.name === "string"
+                    ? doneItem.name
+                    : undefined;
+              const doneArguments =
+                typeof event.value.arguments === "string"
+                  ? event.value.arguments
+                  : doneItem && typeof doneItem.arguments === "string"
+                    ? doneItem.arguments
+                    : undefined;
+              if (
+                !state ||
+                state.done ||
+                (doneName !== undefined && doneName !== state.name) ||
+                !isNonNegativeInteger(event.value.output_index) ||
+                event.value.output_index !== state.outputIndex ||
+                !boundedFunctionArguments(doneArguments) ||
+                (state.arguments.length > 0 &&
+                  state.arguments !== doneArguments)
+              ) {
+                throw new OpenAIStreamProtocolError();
+              }
+              let parsedArguments: unknown;
+              try {
+                parsedArguments = JSON.parse(doneArguments);
+              } catch {
+                throw new OpenAIStreamProtocolError();
+              }
+              state.arguments = doneArguments;
+              state.done = true;
+
+              if (state.name === DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME) {
+                if (
+                  totalProposalCount >=
+                  DESIGN_MATE_CHAT_LIMITS.proposalCandidates
+                ) {
+                  throw new OpenAIStreamProtocolError();
+                }
+                const proposal =
+                  snapshotDesignMateChatProposalToolArguments(
+                    parsedArguments,
+                    `chat-proposal-${randomUUID()}`,
+                  );
+                if (!proposal) {
+                  rejectedProposalCall = true;
+                  continue;
+                }
+                const chunk = snapshotValidDesignMateChatProviderChunk({
+                  type: "proposal-candidate",
+                  proposal,
+                });
+                if (!chunk) {
+                  throw new OpenAIStreamProtocolError();
+                }
+                stepProposalCount += 1;
+                totalProposalCount += 1;
+                yield chunk satisfies DesignMateChatProviderChunk;
+              } else if (isReadOnlyToolName(state.name)) {
+                if (pendingReadOnlyCall) {
+                  throw new OpenAIStreamProtocolError();
+                }
+                pendingReadOnlyCall = {
+                  callId: state.callId,
+                  name: state.name,
+                  arguments: doneArguments,
+                };
+              } else {
+                throw new OpenAIStreamProtocolError();
+              }
+            } else if (event.type === "response.output_item.done") {
+              const item = event.value.item;
+              if (isPlainRecord(item) && item.type === "function_call") {
+                const state = isFunctionCallId(item.id)
+                  ? functionCalls.get(item.id)
+                  : undefined;
+                if (
+                  !state ||
+                  !state.done ||
+                  state.outputDone ||
+                  (typeof item.name === "string" &&
+                    item.name !== state.name) ||
+                  !isNonNegativeInteger(event.value.output_index) ||
+                  event.value.output_index !== state.outputIndex
+                ) {
+                  throw new OpenAIStreamProtocolError();
+                }
+                state.outputDone = true;
+              }
+            } else if (event.type === "response.completed") {
+              if (
+                !isPlainRecord(event.value.response) ||
+                event.value.response.status !== "completed" ||
+                [...functionCalls.values()].some(
+                  (state) => !state.done || !state.outputDone,
+                )
+              ) {
+                throw new OpenAIStreamProtocolError();
+              }
+              completed = true;
+            } else if (
+              event.type === "response.failed" ||
+              event.type === "response.incomplete" ||
+              event.type === "response.cancelled" ||
+              event.type === "error"
+            ) {
+              throw failedResponse(id);
             }
-            completed = true;
-          } else if (
-            event.type === "response.failed" ||
-            event.type === "response.incomplete" ||
-            event.type === "response.cancelled" ||
-            event.type === "error"
-          ) {
-            throw failedResponse(id);
+            // Other bounded Responses lifecycle events carry no text delta.
           }
-          // Other bounded Responses lifecycle events carry no text delta.
+        } catch (cause) {
+          if (signal?.aborted || isAbortLike(cause)) {
+            throw cancelledTransportError(id);
+          }
+          if (isDesignMateProviderError(cause)) {
+            throw cause;
+          }
+          if (cause instanceof OpenAIStreamReadError) {
+            throw unavailable(id);
+          }
+          throw invalidResponse(id);
         }
-      } catch (cause) {
-        if (signal?.aborted || isAbortLike(cause)) {
-          throw cancelledTransportError(id);
+        if (!completed) {
+          throw invalidResponse(id);
         }
-        if (isDesignMateProviderError(cause)) {
-          throw cause;
+        if (pendingReadOnlyCall) {
+          if (
+            stepProposalCount > 0 ||
+            readOnlyToolCount >=
+              OPENAI_RESPONSES_LOOP_LIMITS.readOnlyToolCalls ||
+            step >= OPENAI_RESPONSES_LOOP_LIMITS.modelSteps - 1
+          ) {
+            throw invalidResponse(id);
+          }
+          let parsedArguments: unknown;
+          try {
+            parsedArguments = JSON.parse(pendingReadOnlyCall.arguments);
+          } catch {
+            throw invalidResponse(id);
+          }
+          const output = executeDesignMateChatReadOnlyTool(
+            pendingReadOnlyCall.name,
+            parsedArguments,
+            prompt.review,
+          );
+          if (!output) {
+            throw invalidResponse(id);
+          }
+          readOnlyToolCount += 1;
+          input = [
+            ...input,
+            {
+              type: "function_call",
+              call_id: pendingReadOnlyCall.callId,
+              name: pendingReadOnlyCall.name,
+              arguments: pendingReadOnlyCall.arguments,
+            },
+            {
+              type: "function_call_output",
+              call_id: pendingReadOnlyCall.callId,
+              output,
+            },
+          ];
+          continue;
         }
-        if (cause instanceof OpenAIStreamReadError) {
-          throw unavailable(id);
+        if (stepDeltaCount === 0 && stepProposalCount === 0) {
+          if (!rejectedProposalCall) {
+            throw invalidResponse(id);
+          }
+          const chunk = snapshotValidDesignMateChatProviderChunk({
+            type: "text-delta",
+            delta:
+              "I could not prepare that suggestion safely. No canvas changes were made.",
+          });
+          if (!chunk) {
+            throw invalidResponse(id);
+          }
+          totalDeltaCount += 1;
+          yield chunk satisfies DesignMateChatProviderChunk;
         }
-        throw invalidResponse(id);
+        return;
       }
-      if (!completed || (deltaCount === 0 && proposalCount === 0)) {
-        throw invalidResponse(id);
-      }
+
+      throw invalidResponse(id);
     },
   };
 }
