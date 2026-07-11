@@ -91,6 +91,7 @@ describe("buildHeuristicDesignMateProposals", () => {
       "create-logo-variant",
       "create-logo-variant",
       "set-fill-color",
+      "set-fill-color",
       "set-text-content",
     ]);
     expect(first.every(isValidDesignMateProposal)).toBe(true);
