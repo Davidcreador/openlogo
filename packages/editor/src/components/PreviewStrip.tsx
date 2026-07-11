@@ -138,7 +138,10 @@ export function PreviewStrip() {
             </div>
           </div>
           <div
-            className="flex items-end gap-10"
+            className={`flex items-end justify-center gap-16 rounded-[10px] border border-panel-hairline px-16 pb-8 pt-14 shadow-[inset_0_1px_2px_rgb(28_25_33/0.05)] ${
+              surface === "transparent" ? "preview-transparency" : ""
+            }`}
+            style={{ backgroundColor: surfaceColor }}
             role="group"
             aria-label={`Logo production previews on ${surface} background`}
           >
@@ -149,23 +152,29 @@ export function PreviewStrip() {
               );
               return (
                 <figure
-                  className="preview-card m-0 grid justify-items-center gap-5"
+                  className="preview-card m-0 grid justify-items-center gap-6"
                   key={size}
                 >
                   <div
-                    className={`production-preview overflow-hidden rounded-[6px] border border-panel-hairline shadow-[0_1px_2px_rgb(28_25_33/0.07)] ${
-                      surface === "transparent" ? "preview-transparency" : ""
-                    }`}
-                    style={{
-                      width: size,
-                      height,
-                      backgroundColor: surfaceColor,
-                    }}
+                    className="production-preview grid items-center overflow-hidden"
+                    style={{ width: size, height }}
                     dangerouslySetInnerHTML={{ __html: svg }}
                   />
-                  <figcaption className="text-[9.5px] font-medium tabular-nums text-ink-dim">
+                  <figcaption
+                    className={`text-[9.5px] font-medium tabular-nums ${
+                      surface === "dark" ? "text-white/55" : "text-ink-dim"
+                    }`}
+                  >
                     {size}
-                    <span className="ml-1 text-[8px] text-ink-dim/70">px</span>
+                    <span
+                      className={`ml-1 text-[8px] ${
+                        surface === "dark"
+                          ? "text-white/35"
+                          : "text-ink-dim/70"
+                      }`}
+                    >
+                      px
+                    </span>
                   </figcaption>
                 </figure>
               );

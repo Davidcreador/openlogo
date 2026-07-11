@@ -39,7 +39,7 @@ const SHAPE_TOOL_IDS = new Set(SHAPE_TOOLS.map((item) => item.id));
 const LONG_PRESS_MS = 350;
 
 const TOOL_BUTTON =
-  "toolbar-button grid h-34 w-34 place-items-center rounded-[9px] transition-[background-color,color,box-shadow] duration-140 ease-studio";
+  "toolbar-button grid h-36 w-36 place-items-center rounded-[9px] transition-[background-color,color,box-shadow] duration-140 ease-studio";
 const TOOL_BUTTON_ACTIVE =
   "bg-linear-to-b from-[#5d77f7] to-accent text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.24),0_2px_8px_rgb(79_107_246/0.45)]";
 const TOOL_BUTTON_IDLE =
@@ -290,8 +290,11 @@ export function Toolbar() {
         shortcut: "V",
         icon: MousePointer2,
       })}
+      <span className="my-3 h-px w-20 bg-chrome-border" aria-hidden="true" />
       <ShapeToolSlot />
-      {AFTER_SHAPES.map(renderButton)}
+      {AFTER_SHAPES.slice(0, 4).map(renderButton)}
+      <span className="my-3 h-px w-20 bg-chrome-border" aria-hidden="true" />
+      {AFTER_SHAPES.slice(4).map(renderButton)}
     </nav>
   );
 }

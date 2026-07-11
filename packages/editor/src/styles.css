@@ -126,7 +126,8 @@
 
   button,
   input,
-  select {
+  select,
+  textarea {
     font: inherit;
   }
 
@@ -229,6 +230,37 @@
   .design-mate-panel {
     transform-origin: bottom right;
     animation: design-mate-in 180ms var(--ease-studio);
+  }
+
+  /* ---------- Dialog enter motion ---------- */
+
+  @keyframes overlay-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes dialog-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .overlay-in {
+    animation: overlay-in 160ms var(--ease-studio);
+  }
+
+  .dialog-in {
+    animation: dialog-in 200ms var(--ease-studio);
+    transform-origin: center 40%;
   }
 
   .menu-heading {
@@ -404,6 +436,19 @@
   }
 
   /* ---------- Inspector controls ---------- */
+
+  /* Native <select> restyled to match the field language: flat chrome,
+     custom chevron. The dropdown list itself stays native. */
+  .ui-select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23817d89' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    background-size: 12px 12px;
+    padding-right: 26px;
+    cursor: pointer;
+  }
 
   .inspector-section {
     transition:

@@ -824,59 +824,70 @@ export function TopBar() {
         </div>
       </div>
 
-      <div className="flex items-center gap-8">
+      <div className="flex items-center gap-10">
         <DocumentSessionStatus />
-        <button
-          type="button"
-          className={ICON_BUTTON}
-          onClick={() => {
-            cancelActiveCanvasSessions();
-            documentStore.undo();
-            setSelection([]);
-          }}
-          disabled={!documentStore.canUndo}
-          title="Undo (⌘Z)"
-          aria-label="Undo"
+        <div
+          className="flex items-center gap-2 rounded-[10px] border border-chrome-hairline bg-[rgb(255_255_255/0.035)] p-3"
+          role="group"
+          aria-label="History and editing"
         >
-          <Undo2 size={16} />
-        </button>
-        <button
-          type="button"
-          className={ICON_BUTTON}
-          onClick={() => {
-            cancelActiveCanvasSessions();
-            documentStore.redo();
-            setSelection([]);
-          }}
-          disabled={!documentStore.canRedo}
-          title="Redo (⇧⌘Z)"
-          aria-label="Redo"
+          <button
+            type="button"
+            className={ICON_BUTTON}
+            onClick={() => {
+              cancelActiveCanvasSessions();
+              documentStore.undo();
+              setSelection([]);
+            }}
+            disabled={!documentStore.canUndo}
+            title="Undo (⌘Z)"
+            aria-label="Undo"
+          >
+            <Undo2 size={16} />
+          </button>
+          <button
+            type="button"
+            className={ICON_BUTTON}
+            onClick={() => {
+              cancelActiveCanvasSessions();
+              documentStore.redo();
+              setSelection([]);
+            }}
+            disabled={!documentStore.canRedo}
+            title="Redo (⇧⌘Z)"
+            aria-label="Redo"
+          >
+            <Redo2 size={16} />
+          </button>
+          <span className="mx-2 h-18 w-px bg-chrome-border" aria-hidden="true" />
+          <button
+            type="button"
+            className={ICON_BUTTON}
+            onClick={deleteSelection}
+            disabled={selectedNodeIds.length === 0}
+            title="Delete selection"
+            aria-label="Delete selection"
+          >
+            <Trash2 size={16} />
+          </button>
+          <button
+            type="button"
+            className={`${ICON_BUTTON}${
+              pixelSnap ? " bg-chrome-raised !text-accent" : ""
+            }`}
+            onClick={() => setPixelSnap(!pixelSnap)}
+            title="Pixel snap: round committed positions and sizes to whole pixels"
+            aria-label="Pixel snap"
+            aria-pressed={pixelSnap}
+          >
+            <Magnet size={16} />
+          </button>
+        </div>
+        <div
+          className="flex items-center gap-2 rounded-[10px] border border-chrome-hairline bg-[rgb(255_255_255/0.035)] p-3"
+          role="group"
+          aria-label="File"
         >
-          <Redo2 size={16} />
-        </button>
-        <button
-          type="button"
-          className={ICON_BUTTON}
-          onClick={deleteSelection}
-          disabled={selectedNodeIds.length === 0}
-          title="Delete selection"
-          aria-label="Delete selection"
-        >
-          <Trash2 size={16} />
-        </button>
-        <button
-          type="button"
-          className={`${ICON_BUTTON}${
-            pixelSnap ? " bg-chrome-raised !text-accent" : ""
-          }`}
-          onClick={() => setPixelSnap(!pixelSnap)}
-          title="Pixel snap: round committed positions and sizes to whole pixels"
-          aria-label="Pixel snap"
-          aria-pressed={pixelSnap}
-        >
-          <Magnet size={16} />
-        </button>
-        <div className="mx-4 h-20 w-px bg-chrome-border" />
         <button
           type="button"
           className={ICON_BUTTON}
@@ -919,6 +930,7 @@ export function TopBar() {
           style={{ display: "none" }}
           onChange={(event) => void handleImportFile(event)}
         />
+        </div>
         <ExportMenu />
       </div>
     </header>

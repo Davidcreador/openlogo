@@ -337,7 +337,7 @@ export function DocumentLibraryDialog() {
   return (
     <div
       ref={dialogRef}
-      className="fixed inset-0 z-50 grid place-items-center bg-[rgb(16_14_20/0.68)] p-20 backdrop-blur-[2px]"
+      className="overlay-in fixed inset-0 z-50 grid place-items-center bg-[rgb(16_14_20/0.68)] p-20 backdrop-blur-[2px]"
       role="dialog"
       aria-modal="true"
       aria-labelledby={DOCUMENT_LIBRARY_TITLE_ID}
@@ -350,7 +350,7 @@ export function DocumentLibraryDialog() {
       }}
     >
       <section
-        className="flex max-h-[min(720px,calc(100vh-40px))] w-[min(880px,calc(100vw-40px))] flex-col overflow-hidden rounded-panel border border-panel-hairline bg-panel shadow-[0_28px_90px_rgb(0_0_0/0.52)]"
+        className="dialog-in flex max-h-[min(720px,calc(100vh-40px))] w-[min(880px,calc(100vw-40px))] flex-col overflow-hidden rounded-panel border border-panel-hairline bg-panel shadow-[0_28px_90px_rgb(0_0_0/0.52)]"
         aria-busy={busy}
       >
         <header className="flex items-center justify-between border-b border-panel-hairline px-18 py-14">

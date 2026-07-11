@@ -79,7 +79,7 @@ export function ColorInfoChip({ color }: { color: string }) {
           ref={panelRef}
           id={popoverId}
           data-testid="color-info-popover"
-          className="fixed z-50 w-228 rounded-card border border-panel-hairline bg-card p-10 text-[11.5px] shadow-[0_10px_30px_rgb(28_25_33/0.18)]"
+          className="dialog-in fixed z-50 w-228 rounded-card border border-panel-hairline bg-card p-10 text-[11.5px] shadow-[0_10px_30px_rgb(28_25_33/0.18)]"
           style={{ top: pos.top, left: pos.left }}
           role="dialog"
           aria-modal="false"

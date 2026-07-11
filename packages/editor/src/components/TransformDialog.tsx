@@ -113,7 +113,7 @@ export function TransformDialog() {
   return (
     <div
       ref={dialogRef}
-      className="fixed inset-0 z-40 grid place-items-center bg-[rgb(28_25_33/0.28)]"
+      className="overlay-in fixed inset-0 z-40 grid place-items-center bg-[rgb(28_25_33/0.28)]"
       onPointerDown={(event) => {
         if (event.target === event.currentTarget) {
           setOpen(false);
@@ -124,7 +124,7 @@ export function TransformDialog() {
       aria-labelledby={TRANSFORM_DIALOG_TITLE_ID}
       tabIndex={-1}
     >
-      <div className="w-[300px] rounded-panel border border-panel-hairline bg-panel p-16 shadow-panel">
+      <div className="dialog-in w-[300px] rounded-panel border border-panel-hairline bg-panel p-16 shadow-panel">
         <h2 id={TRANSFORM_DIALOG_TITLE_ID} className="sr-only">
           Rotate or reflect
         </h2>
@@ -170,7 +170,7 @@ export function TransformDialog() {
             <label className="flex items-center justify-between gap-8 text-[12px] text-ink-dim">
               Axis
               <select
-                className="h-28 rounded-field border border-field-border bg-field px-6 text-[12px] text-ink outline-none transition-[border-color,box-shadow] duration-140 ease-studio focus:border-accent focus:bg-card focus:shadow-ring"
+                className="ui-select h-28 rounded-field border border-field-border bg-field px-6 text-[12px] text-ink outline-none transition-[border-color,box-shadow] duration-140 ease-studio focus:border-accent focus:bg-card focus:shadow-ring"
                 value={axis}
                 onChange={(event) => setAxis(event.target.value as Axis)}
                 aria-label="Reflect axis"

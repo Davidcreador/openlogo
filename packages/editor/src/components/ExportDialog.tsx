@@ -2,7 +2,11 @@ import { useRef, useState } from "react";
 import { Effect } from "effect";
 import { getActiveArtboard } from "@openlogo/core";
 import { exportPack } from "../lib/export-pack";
-import { MAX_RASTER_DIMENSION } from "../lib/export";
+import {
+  MAX_RASTER_DIMENSION,
+  documentToSvg,
+  nodesToSvg,
+} from "../lib/export";
 import {
   DEFAULT_JPEG_QUALITY,
   DEFAULT_RASTER_BACKGROUND,
@@ -204,12 +208,44 @@ export function ExportDialog() {
       .finally(() => setBusy(false));
   }
 
-  const activeName = getActiveArtboard(documentStore.document).name;
+  const activeArtboard = getActiveArtboard(documentStore.document);
+  const activeName = activeArtboard.name;
+
+  // Live preview: what the export will actually contain. Raster formats
+  // composite onto the chosen background (or a checkerboard when
+  // transparent), so the surface below mirrors the real output.
+  const selectionPreview = effectiveScope === "selection";
+  const previewTransparent =
+    format === "ico" ||
+    ((format === "png" || format === "webp") && transparent);
+  const previewSvg = selectionPreview
+    ? nodesToSvg(documentStore.document, selectedNodeIds)
+    : documentToSvg(documentStore.document, activeArtboard, {
+        transparentBackground: format !== "svg",
+      });
+  const previewSurfaceStyle =
+    !selectionPreview && rasterFormat && !previewTransparent
+      ? { background: backgroundColor }
+      : undefined;
+  const outputScale =
+    rasterFormat && rasterScale !== "custom" ? rasterScale : null;
+  const outputSize = !rasterFormat
+    ? `${activeArtboard.width} × ${activeArtboard.height}`
+    : rasterScale === "custom"
+      ? customWidthValid
+        ? `${customWidthNumber} × ${Math.round(
+            (activeArtboard.height / activeArtboard.width) *
+              customWidthNumber,
+          )} px`
+        : "—"
+      : `${activeArtboard.width * (outputScale ?? 1)} × ${
+          activeArtboard.height * (outputScale ?? 1)
+        } px`;
 
   return (
     <div
       ref={dialogRef}
-      className="fixed inset-0 z-40 grid place-items-center bg-[rgb(28_25_33/0.28)]"
+      className="overlay-in fixed inset-0 z-40 grid place-items-center bg-[rgb(28_25_33/0.28)]"
       onPointerDown={(event) => {
         if (event.target === event.currentTarget) {
           setOpen(false);
@@ -221,7 +257,7 @@ export function ExportDialog() {
       tabIndex={-1}
     >
       <div
-        className="w-[340px] rounded-panel border border-panel-hairline bg-panel p-16 shadow-panel"
+        className="dialog-in w-[min(640px,calc(100vw-40px))] rounded-panel border border-panel-hairline bg-panel p-16 shadow-panel"
         aria-busy={busy}
       >
         <h2
@@ -234,6 +270,43 @@ export function ExportDialog() {
           {busy ? "Export in progress." : ""}
         </span>
 
+        <div className="mb-14 flex gap-16">
+        <div className="flex w-[248px] flex-none flex-col gap-8">
+          <div
+            className={`grid aspect-[4/3] place-items-center overflow-hidden rounded-card border border-panel-hairline p-10 ${
+              previewSurfaceStyle ? "" : "preview-transparency"
+            }`}
+            style={previewSurfaceStyle}
+            aria-hidden="true"
+          >
+            {previewSvg ? (
+              <div
+                className="grid h-full w-full place-items-center [&>svg]:h-full [&>svg]:w-full"
+                dangerouslySetInnerHTML={{ __html: previewSvg }}
+              />
+            ) : (
+              <span className="text-[11px] text-ink-dim">No preview</span>
+            )}
+          </div>
+          <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-10 gap-y-4 text-[11px] text-ink-dim">
+            <dt className="font-[600]">Output</dt>
+            <dd className="m-0 truncate text-right tabular-nums text-ink">
+              {selectionPreview ? "Selection bounds" : outputSize}
+            </dd>
+            <dt className="font-[600]">Files</dt>
+            <dd className="m-0 truncate text-right text-ink">
+              {effectiveScope === "selection"
+                ? "1 · selection"
+                : `${fileCount} · ${
+                    effectiveScope === "all"
+                      ? "board names"
+                      : `“${activeName}”`
+                  }`}
+            </dd>
+          </dl>
+        </div>
+
+        <div className="min-w-0 flex-1">
         <div
           className="mb-10 flex gap-2 rounded-m border border-field-border bg-field p-2"
           role="group"
@@ -480,15 +553,10 @@ export function ExportDialog() {
           </p>
         )}
 
-        <p className="mb-12 mt-0 text-[11px] text-ink-dim">
-          {effectiveScope === "selection"
-            ? "1 file · selection"
-            : `${fileCount} file${fileCount === 1 ? "" : "s"} · named after ${
-                effectiveScope === "all" ? "board names" : `“${activeName}”`
-              }`}
-        </p>
+        </div>
+        </div>
 
-        <div className="flex items-center justify-between gap-8">
+        <div className="flex items-center justify-between gap-8 border-t border-panel-hairline pt-12">
           <button
             type="button"
             className={BUTTON}

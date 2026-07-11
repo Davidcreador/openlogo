@@ -120,7 +120,7 @@ const SECTION =
 const SECTION_HEAD = "section-head mb-12 flex min-h-22 items-center justify-between gap-8";
 const SECTION_H2 =
   "m-0 text-[11px] font-[680] uppercase tracking-[0.075em] text-ink-dim";
-const SECTION_META = "section-meta truncate text-[11px] tabular-nums text-ink-dim";
+const SECTION_META = "section-meta min-w-0 flex-none max-w-[55%] truncate text-[11px] tabular-nums text-ink-dim";
 const MUTED = "m-0 text-[12px] leading-[1.5] text-ink-dim";
 const FIELD_GRID = "grid grid-cols-2 gap-7";
 const FIELD_ROW = "flex gap-6";
@@ -138,7 +138,7 @@ const STROKE_TOGGLE_BASE =
 const STROKE_TOGGLE = `${STROKE_TOGGLE_BASE} border-field-border text-ink-dim hover:border-accent hover:text-accent`;
 const STROKE_TOGGLE_ACTIVE = `${STROKE_TOGGLE_BASE} border-accent text-accent`;
 const SELECT =
-  "h-32 rounded-field border border-field-border bg-field px-8 text-[12px] text-ink outline-none transition-[border-color,box-shadow] duration-140 ease-studio focus:border-accent focus:bg-card focus:shadow-ring";
+  "ui-select h-32 rounded-field border border-field-border bg-field px-8 text-[12px] text-ink outline-none transition-[border-color,box-shadow] duration-140 ease-studio focus:border-accent focus:bg-card focus:shadow-ring";
 const TEXT_INPUT =
   "h-32 rounded-field border border-field-border bg-field px-8 text-[12.5px] text-ink outline-none transition-[border-color,box-shadow] duration-140 ease-studio focus:border-accent focus:bg-card focus:shadow-ring";
 const OUTLINE_BUTTON =
@@ -178,7 +178,7 @@ function PanelSection({
           >
             <ChevronRight size={12} strokeWidth={2} />
           </span>
-          <h2 className={SECTION_H2}>{title}</h2>
+          <h2 className={`${SECTION_H2} truncate`}>{title}</h2>
         </button>
         {action ?? (meta ? <span className={SECTION_META}>{meta}</span> : null)}
       </header>
@@ -267,18 +267,30 @@ function NumberField({
         {label}
       </span>
       <input
-        type="number"
-        step={step}
+        type="text"
+        inputMode="decimal"
+        autoComplete="off"
+        spellCheck={false}
         value={draft}
         aria-label={ariaLabel ?? label}
         onChange={(event) => setDraft(event.target.value)}
-        onBlur={() => commitNumber(Number(draft))}
+        onBlur={() => commitNumber(Number(draft.replace(",", ".")))}
         onKeyDown={(event) => {
           if (event.key === "Enter") {
             (event.target as HTMLInputElement).blur();
           } else if (event.key === "Escape") {
             setDraft(String(Math.round(value * 100) / 100));
             (event.target as HTMLInputElement).blur();
+          } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+            event.preventDefault();
+            const current = Number(draft.replace(",", "."));
+            const base = Number.isFinite(current) ? current : value;
+            const delta =
+              (event.key === "ArrowUp" ? 1 : -1) *
+              (event.shiftKey ? step * 10 : step);
+            const next = Math.round((base + delta) * 100) / 100;
+            setDraft(String(next));
+            commitNumber(next);
           }
         }}
       />
@@ -509,7 +521,7 @@ function AlignPanel({ nodeIds }: { nodeIds: readonly string[] }) {
   const canSpace = nodeIds.length >= 2;
 
   function distributeSpacing(axis: "horizontal" | "vertical") {
-    const spacing = Number(spacingDraft);
+    const spacing = Number(spacingDraft.replace(",", "."));
     if (Number.isFinite(spacing)) {
       distributeNodesSpacing(nodeIds, axis, spacing, keyId);
     }
@@ -525,7 +537,7 @@ function AlignPanel({ nodeIds }: { nodeIds: readonly string[] }) {
   ] as const;
 
   const button =
-    "grid h-24 place-items-center rounded-[5px] text-ink-dim transition-[background-color,color,box-shadow] duration-120 ease-studio hover:enabled:bg-card hover:enabled:text-ink hover:enabled:shadow-[0_1px_2px_rgb(28_25_33/0.1)] disabled:cursor-default disabled:opacity-35";
+    "grid h-24 place-items-center rounded-[5px] text-ink-dim transition-[background-color,color,box-shadow] duration-120 ease-studio hover:enabled:bg-card hover:enabled:text-ink hover:enabled:shadow-[0_1px_2px_rgb(28_25_33/0.1)] disabled:cursor-default disabled:opacity-25";
 
   return (
     <>
@@ -600,7 +612,8 @@ function AlignPanel({ nodeIds }: { nodeIds: readonly string[] }) {
       aria-label="Distribute spacing"
     >
       <input
-        type="number"
+        type="text"
+        inputMode="decimal"
         className="h-24 w-52 min-w-0 rounded-[5px] border border-field-border bg-card px-6 text-[11.5px] tabular-nums text-ink outline-none focus:border-accent"
         value={spacingDraft}
         onChange={(event) => setSpacingDraft(event.target.value)}
@@ -1097,7 +1110,7 @@ function DesignSection({
       </PanelSection>
 
       {node.type === "text" && (
-        <PanelSection title="Typography" meta={node.fontFamily}>
+        <PanelSection title="Typography" meta={node.fontFamily.split(",")[0]?.trim()}>
         <div className="grid gap-10">
           <label className="grid gap-4 text-[11px] text-ink-dim">
             <span>Text</span>
@@ -1498,7 +1511,7 @@ function EffectsSection({ node }: { node: LogoNode }) {
       title="Effects"
       action={
         <select
-          className="h-26 rounded-field border border-field-border bg-card px-7 text-[11px] text-ink-dim"
+          className="ui-select h-26 rounded-field border border-field-border bg-card px-7 text-[11px] text-ink-dim"
           value=""
           aria-label="Add effect"
           onChange={(event) => {
