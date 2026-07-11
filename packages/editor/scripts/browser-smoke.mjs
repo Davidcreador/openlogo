@@ -13,6 +13,15 @@ function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+async function removeProfile(path) {
+  await rm(path, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 100,
+  });
+}
+
 function runProbe(command) {
   return new Promise((resolve) => {
     const child = spawn(command, ["--version"], {
@@ -325,7 +334,7 @@ const server = await preview({
 const serverAddress = server.httpServer.address();
 if (!serverAddress || typeof serverAddress === "string") {
   await server.close();
-  await rm(profile, { recursive: true, force: true });
+  await removeProfile(profile);
   throw new Error("The editor preview did not expose a smoke-test port.");
 }
 const appPort = serverAddress.port;
@@ -392,5 +401,5 @@ try {
   socket?.close();
   await stopBrowser(browser, browserExited);
   await server.close();
-  await rm(profile, { recursive: true, force: true });
+  await removeProfile(profile);
 }
