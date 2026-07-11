@@ -61,7 +61,7 @@ async function browserExecutable() {
 }
 
 async function waitForDebugger(profile, child) {
-  const deadline = Date.now() + 15_000;
+  const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error("The browser exited before its debugger was ready.");
@@ -76,7 +76,7 @@ async function waitForDebugger(profile, child) {
         throw new Error("Chrome reported an invalid debugger port.");
       }
       const response = await fetch(`http://127.0.0.1:${port}/json/list`, {
-        signal: AbortSignal.timeout(500),
+        signal: AbortSignal.timeout(2_000),
       });
       if (response.ok) {
         const targets = await response.json();
