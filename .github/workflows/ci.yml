@@ -44,6 +44,13 @@ jobs:
 
       - name: Build production app
         run: pnpm build
+        env:
+          VITE_DESIGN_MATE_SERVICE_URL: /design-mate
+
+      - name: Smoke-test editor and Design Mate
+        run: pnpm smoke:editor
+        env:
+          EXPECT_DESIGN_MATE_REMOTE_CONFIGURED: "true"
 
       - name: Smoke-test Design Mate service
         run: pnpm --filter @openlogo/design-mate-service smoke

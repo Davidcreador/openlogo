@@ -13,6 +13,7 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "test:design-mate": "pnpm --filter @openlogo/design-mate --filter @openlogo/design-mate-service test",
+    "smoke:editor": "pnpm --filter @openlogo/editor smoke:browser",
     "smoke:design-mate-service": "pnpm --filter @openlogo/design-mate-service build && pnpm --filter @openlogo/design-mate-service smoke",
     "poc": "pnpm --filter openlogo-poc dev"
   },

@@ -14,7 +14,11 @@ packages/
   renderer/  CanvasKit scene renderer: camera (pan/zoom), drawing,
              hit-testing, font registry (Skia Paragraph text shaping).
   editor/    React app: canvas stage, tools, panels, IndexedDB autosave,
-             SVG/PNG/JPEG/WebP/ICO export, design-mate review.
+             SVG/PNG/JPEG/WebP/ICO export, Design Mate UI.
+  design-mate/
+             Headless review, context, chat, proposal, and provider runtime.
+  design-mate-service/
+             Authenticated Node.js SSE gateway for remote model providers.
 poc/         Original SVG-DOM prototype, kept as reference.
 ```
 
@@ -97,19 +101,31 @@ decisions live in [docs/adr](docs/adr).
   conflict copies instead of silent last-write-wins
 - Keyboard-focusable editor chrome, trapped/restored modal focus, reduced-motion
   support, persistent dismissible status messages, and labelled controls
-- Local "design mate" review pass for logo craft checks
+- Design Mate: deterministic logo critique, canvas-linked findings, safe
+  before/after proposals, bounded multimodal chat, and explicit approval before
+  one-step undoable edits
+- Local guidance works without a backend; optional remote AI requires explicit
+  user consent and an independently deployed authenticated gateway
 
 ## Development
 
 ```bash
 pnpm install
 pnpm dev          # editor at http://localhost:5174
+pnpm dev:design-mate # optional remote gateway at http://127.0.0.1:8787
 pnpm test         # core, renderer, and editor unit tests
 pnpm typecheck    # all packages
 pnpm build        # production build
+pnpm smoke:editor # production browser startup + Design Mate smoke
+pnpm smoke:design-mate-service # gateway build + health smoke
 pnpm bench        # repeatable 500/10,000-leaf model benchmarks
 pnpm poc          # run the original SVG prototype
 ```
+
+The gateway needs provider and authentication settings before it starts. See
+[Design Mate setup, privacy, and deployment](docs/DESIGN_MATE.md); the
+[service README](packages/design-mate-service/README.md) is the operator quick
+reference.
 
 ## Roadmap
 

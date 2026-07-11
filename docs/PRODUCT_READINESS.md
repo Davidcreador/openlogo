@@ -1,6 +1,6 @@
 # OpenLogo product readiness
 
-Last reviewed: 2026-07-09
+Last reviewed: 2026-07-10
 
 ## Verdict
 
@@ -112,17 +112,25 @@ Primary references:
   export, and transform dialogs load on demand.
 - Core, renderer, and editor packages all have active tests (367 total at this
   milestone), and the full workspace passes typecheck and production build.
+- Design Mate now has deterministic critique, bounded local/remote chat,
+  validated one-step proposals, explicit remote-data consent, session-scoped
+  conversation persistence, and an authenticated streaming gateway.
+- CI launches the production editor in headless Chrome/Chromium at desktop and
+  390 px, verifies CanvasKit/document readiness, loads Design Mate, and checks
+  Escape/focus restoration and the default-off remote consent control.
 - Fixed 500- and 10,000-leaf model fixtures are benchmarkable, and browser User
   Timing separates document, renderer, and whole-editor readiness. Four warm
   browser reloads measured a 224 ms median to whole-editor ready (219-257 ms
   range) on the review machine.
 
-Still required to close Gate 0 completely: automated browser smoke tests in CI,
-a semantic/keyboard manipulation layer for CanvasKit objects and anchors,
-repeatable frame-time/memory fixtures, and measured cold startup on a fixed
-runner. Manual browser smoke in this review covered migration, reload, named
-version restore, compound and clipping make/release, archive/restore, modal
-focus restoration, raster-format validation, and oversized export rejection.
+Still required to close Gate 0 completely: automated browser journeys for
+restore, edit, undo, import, and export (startup and Design Mate loading are now
+covered in CI), a semantic/keyboard manipulation layer for CanvasKit objects
+and anchors, repeatable frame-time/memory fixtures, and measured cold startup
+on a fixed runner. Manual browser smoke in this review covered migration,
+reload, named version restore, compound and clipping make/release,
+archive/restore, modal focus restoration, raster-format validation, and
+oversized export rejection.
 
 ## Delivery plan
 

@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "vite build && node scripts/check-bundle-budget.mjs",
     "preview": "vite preview",
+    "smoke:browser": "node scripts/browser-smoke.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
