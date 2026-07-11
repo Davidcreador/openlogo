@@ -42,10 +42,10 @@ function prompt(): DesignMateChatPrompt {
         height: 32,
       }),
     ]),
-    review: Object.freeze({
+    review: {
       summary: "Review summary",
-      findings: Object.freeze([]),
-    }),
+      findings: [],
+    },
   });
 }
 
