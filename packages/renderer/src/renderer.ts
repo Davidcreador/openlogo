@@ -86,7 +86,7 @@ export type Scene = {
   } | null;
 };
 
-const SELECTION_COLOR = "#4f6bf6";
+const SELECTION_COLOR = "#7c5cff";
 const GUIDE_COLOR = "#ec4899";
 const RULER_GUIDE_COLOR = "#06b6d4";
 
@@ -552,8 +552,8 @@ export class SceneRenderer {
 
     // Drop shadow + background.
     const shadow = new ck.Paint();
-    shadow.setColor(ck.parseColorString("#1c1921"));
-    shadow.setAlphaf(0.1);
+    shadow.setColor(ck.parseColorString("#000000"));
+    shadow.setAlphaf(0.45);
     shadow.setMaskFilter(
       ck.MaskFilter.MakeBlur(ck.BlurStyle.Normal, 14 / camera.zoom, true),
     );
@@ -633,7 +633,7 @@ export class SceneRenderer {
         maxLines: 1,
         ellipsis: "…",
         textStyle: {
-          color: ck.parseColorString(isActive ? SELECTION_COLOR : "#5d5966"),
+          color: ck.parseColorString(isActive ? SELECTION_COLOR : "#8a8598"),
           fontFamilies: [family],
           fontSize,
           fontStyle: { weight: { value: 550 } },

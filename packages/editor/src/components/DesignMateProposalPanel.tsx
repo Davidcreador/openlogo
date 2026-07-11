@@ -27,22 +27,22 @@ const RISK_BADGES: Record<
 > = {
   low: {
     label: "Low risk",
-    className: "border-[#a9d4b7] bg-[#eef8f1] text-[#2f6b43]",
+    className: "text-[#7fd6a0]",
   },
   medium: {
     label: "Medium risk",
-    className: "border-[#e7c883] bg-[#fff8e8] text-[#73551f]",
+    className: "text-[#e4c07a]",
   },
   high: {
     label: "High risk",
-    className: "border-[rgb(194_70_62/0.28)] bg-[#fdf1f0] text-danger",
+    className: "text-danger",
   },
 };
 
 const SECONDARY =
   "inline-flex items-center justify-center rounded-field border border-field-border bg-card px-8 py-5 text-[10.5px] font-[600] text-ink transition-[border-color,color] duration-140 ease-studio hover:enabled:border-accent hover:enabled:text-accent disabled:cursor-not-allowed disabled:opacity-45";
 const PRIMARY =
-  "inline-flex items-center justify-center rounded-field bg-accent px-9 py-5 text-[10.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.2),0_1px_3px_rgb(79_107_246/0.3)] transition-[filter] duration-140 ease-studio hover:enabled:brightness-[1.08] disabled:cursor-not-allowed disabled:opacity-45";
+  "inline-flex items-center justify-center rounded-field bg-accent px-9 py-5 text-[10.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.2),0_1px_3px_rgb(124_92_255/0.3)] transition-[filter] duration-140 ease-studio hover:enabled:brightness-[1.08] disabled:cursor-not-allowed disabled:opacity-45";
 
 function ProposalCard({
   baseDocument,
@@ -77,7 +77,7 @@ function ProposalCard({
 
   return (
     <article
-      className="rounded-[8px] border border-panel-hairline bg-card p-9 shadow-[0_1px_2px_rgb(28_25_33/0.04)] outline-none focus:border-accent focus:shadow-ring"
+      className="rounded-[10px] border border-panel-hairline bg-card p-9 outline-none focus:border-accent focus:shadow-ring"
       aria-labelledby={titleId}
       aria-busy={applying}
       data-design-mate-proposal-id={proposal.id}
@@ -86,25 +86,25 @@ function ProposalCard({
       <div className="flex items-start justify-between gap-8">
         <h4
           id={titleId}
-          className="m-0 min-w-0 text-[11.5px] font-[650] leading-[1.35] text-ink"
+          className="m-0 min-w-0 text-[11px] font-[650] leading-[1.35] text-ink"
         >
           {proposal.label}
         </h4>
         <span
-          className={`shrink-0 rounded-full border px-6 py-2 text-[8.5px] font-[650] uppercase tracking-[0.06em] ${risk.className}`}
+          className={`shrink-0 text-[8.5px] font-[650] uppercase tracking-[0.06em] ${risk.className}`}
         >
           {risk.label}
         </span>
       </div>
 
-      <p className="mx-0 mb-0 mt-5 text-[10.5px] leading-[1.45] text-ink-dim">
+      <p className="mx-0 mb-0 mt-5 text-[10.5px] leading-[1.5] text-ink-dim">
         {proposal.rationale ??
           defaultRationale}
       </p>
 
       {impact.summaries.length > 0 && (
         <ul
-          className="mx-0 mb-0 mt-7 grid gap-3 pl-16 text-[10px] leading-[1.4] text-[#55515c]"
+          className="mx-0 mb-0 mt-7 grid gap-3 pl-16 text-[10px] leading-[1.4] text-ink-dim"
           aria-label={`Impact of ${proposal.label}`}
         >
           {impact.summaries.map((summary, index) => (
@@ -138,12 +138,9 @@ function ProposalCard({
         </div>
       )}
 
-      <div className="mt-7 rounded-[6px] bg-field px-7 py-5 text-[9.5px] leading-[1.45] text-ink-dim">
-        <strong className="font-[650] text-ink">
-          Preview only — no canvas changes yet.
-        </strong>{" "}
-        Applies as one undoable step.
-      </div>
+      <p className="mx-0 mb-0 mt-7 text-[9px] leading-[1.45] text-ink-faint">
+        Preview only — applies as one undoable step.
+      </p>
 
       <div className="mt-8 flex items-center justify-end gap-6">
         <button
@@ -195,26 +192,23 @@ export function DesignMateProposalPanel({
 
   return (
     <section
-      className="rounded-[9px] border border-[rgb(79_107_246/0.22)] bg-accent-soft p-8"
       aria-labelledby={headingId}
       aria-busy={busy}
     >
-      <div className="flex items-start justify-between gap-8">
-        <div>
-          <h3
-            id={headingId}
-            className="m-0 text-[10.5px] font-[650] uppercase tracking-[0.07em] text-ink"
-          >
-            {heading}
-          </h3>
-          <p className="m-0 mt-2 text-[9.5px] leading-[1.4] text-ink-dim">
-            {description}
-          </p>
-        </div>
-        <span className="shrink-0 rounded-full bg-card px-6 py-2 text-[8.5px] tabular-nums text-ink-dim">
+      <div className="flex items-baseline justify-between gap-8">
+        <h3
+          id={headingId}
+          className="m-0 text-[9.5px] font-[680] uppercase tracking-[0.08em] text-ink-dim"
+        >
+          {heading}
+        </h3>
+        <span className="shrink-0 text-[9px] tabular-nums text-ink-faint">
           {proposals.length}
         </span>
       </div>
+      <p className="mx-0 mb-0 mt-4 text-[9.5px] leading-[1.4] text-ink-faint">
+        {description}
+      </p>
 
       <div
         className="sr-only"
@@ -232,7 +226,7 @@ export function DesignMateProposalPanel({
       </div>
 
       {stale && (
-        <p className="mx-0 mb-0 mt-7 rounded-[6px] border border-[#e7c883] bg-[#fff8e8] px-7 py-5 text-[9.5px] leading-[1.4] text-[#73551f]">
+        <p className="mx-0 mb-0 mt-7 rounded-[6px] bg-[rgb(232_195_126/0.08)] px-7 py-5 text-[9.5px] leading-[1.4] text-[#e4c07a]">
           {staleMessage}
         </p>
       )}

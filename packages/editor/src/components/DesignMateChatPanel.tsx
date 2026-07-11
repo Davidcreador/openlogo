@@ -6,17 +6,10 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import type { LogoDocument } from "@openlogo/core";
-import {
-  MessageCircle,
-  Paperclip,
-  RotateCcw,
-  Send,
-  ShieldCheck,
-  Square,
-  Trash2,
-} from "lucide-react";
+import { Send, ShieldCheck, Sparkles, Square, X } from "lucide-react";
 import {
   DESIGN_MATE_CHAT_LIMITS,
   buildDocumentIdentity,
@@ -70,10 +63,8 @@ const PROVIDER_FACTORIES = {
   createFallback: createFallbackDesignMateChatProvider,
 };
 
-const SECONDARY =
-  "inline-flex items-center justify-center gap-4 rounded-field border border-field-border bg-card px-8 py-5 text-[10.5px] font-[600] text-ink transition-[border-color,color] duration-140 ease-studio hover:enabled:border-accent hover:enabled:text-accent disabled:cursor-not-allowed disabled:opacity-40";
-const PRIMARY =
-  "inline-flex items-center justify-center gap-5 rounded-field bg-accent px-9 py-6 text-[10.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.2),0_1px_3px_rgb(79_107_246/0.3)] transition-[filter] duration-140 ease-studio hover:enabled:brightness-[1.08] disabled:cursor-not-allowed disabled:opacity-45";
+const META_ACTION =
+  "font-[650] text-ink-dim transition-colors duration-140 ease-studio hover:enabled:text-accent disabled:cursor-not-allowed disabled:opacity-40";
 
 type ActiveRun = {
   readonly runId: number;
@@ -90,6 +81,7 @@ export type DesignMateChatProposalBatch = {
 
 export type DesignMateChatPanelProps = {
   readonly disabled?: boolean;
+  readonly controls?: ReactNode;
   readonly onRunningChange?: (running: boolean) => void;
   readonly onProposalsClear?: () => void;
   readonly onProposalsReady?: (batch: DesignMateChatProposalBatch) => void;
@@ -116,6 +108,7 @@ function visualCaptureNote(
 
 export function DesignMateChatPanel({
   disabled = false,
+  controls,
   onRunningChange,
   onProposalsClear,
   onProposalsReady,
@@ -129,6 +122,7 @@ export function DesignMateChatPanel({
   const statusId = useId();
   const [prompt, setPrompt] = useState("");
   const [visualNote, setVisualNote] = useState<string | null>(null);
+  const [chipsDismissed, setChipsDismissed] = useState(false);
   const [transcript, dispatch] = useReducer(
     reduceDesignMateChatTranscript,
     document.id,
@@ -545,63 +539,20 @@ export function DesignMateChatPanel({
     }
   }
 
+  const characterLimit = DESIGN_MATE_CHAT_LIMITS.userTextLength;
+  const nearLimit = prompt.length >= Math.floor(characterLimit * 0.85);
+  const showChips =
+    transcript.entries.length === 0 && !chipsDismissed;
+
   return (
     <section
-      className="rounded-[9px] border border-[rgb(79_107_246/0.22)] bg-card p-9"
-      aria-labelledby={headingId}
+      className="flex min-h-0 flex-1 flex-col"
+      aria-label="Chat with Design Mate"
       aria-busy={running}
     >
-      <div className="flex items-start justify-between gap-8">
-        <div>
-          <h3
-            id={headingId}
-            className="m-0 flex items-center gap-5 text-[10.5px] font-[650] uppercase tracking-[0.07em] text-ink"
-          >
-            <MessageCircle size={12} className="text-accent" aria-hidden="true" />
-            Chat with Design Mate
-          </h3>
-          <p className="m-0 mt-2 text-[9.5px] leading-[1.4] text-ink-dim">
-            I’ll explain my thinking. Nothing changes unless you say so.
-          </p>
-        </div>
-        <span className="shrink-0 rounded-full bg-accent-soft px-6 py-2 text-[8px] font-[650] uppercase tracking-[0.05em] text-accent">
-          {modeLabel}
-        </span>
-      </div>
-
-      {DESIGN_MATE_CHAT_ENDPOINT && (
-        <div className="mt-8 rounded-[7px] border border-panel-hairline bg-field px-8 py-7">
-          <div className="flex items-start gap-6">
-            <ShieldCheck
-              size={13}
-              className="mt-1 shrink-0 text-accent"
-              aria-hidden="true"
-            />
-            <div className="min-w-0 flex-1">
-              <strong className="block text-[10px] font-[650] text-ink">
-                {remoteEnabled ? "Remote AI is enabled" : "Remote AI is off"}
-              </strong>
-              <p className="m-0 mt-3 text-[9.5px] leading-[1.45] text-ink-dim">
-                {remoteEnabled
-                  ? "Messages, bounded design context, review findings, and up to three PNG previews can be sent to the configured service. The raw OpenLogo document is never uploaded."
-                  : "Local guidance stays on this device. Enable remote AI only if you agree to send messages, bounded design context, review findings, and up to three PNG previews to the configured service and its model provider."}
-              </p>
-              <button
-                type="button"
-                className={`${SECONDARY} mt-6`}
-                onClick={() => setRemoteEnabled(!remoteEnabled)}
-                disabled={running}
-              >
-                {remoteEnabled ? "Use local only" : "Enable remote AI"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div
         ref={transcriptLogRef}
-        className="mt-8 grid max-h-280 min-h-96 gap-7 overflow-y-auto rounded-[7px] border border-panel-hairline bg-field p-7"
+        className="min-h-0 flex-1 overflow-y-auto px-13 py-11"
         role="log"
         tabIndex={0}
         aria-live="polite"
@@ -613,162 +564,203 @@ export function DesignMateChatPanel({
         }}
       >
         {transcript.entries.length === 0 ? (
-          <div className="grid content-start gap-5">
-            <p className="m-0 text-[10px] leading-[1.45] text-ink-dim">
-              What are you wrestling with? Pick a prompt or ask me directly.
+          <div className="flex h-full flex-col items-center justify-center gap-4 px-16 text-center">
+            <Sparkles
+              size={16}
+              className="text-ink-faint"
+              aria-hidden="true"
+            />
+            <p className="m-0 mt-3 text-[11px] font-[600] text-ink-dim">
+              Ask me anything about this logo
             </p>
+            <p className="m-0 text-[10px] leading-[1.5] text-ink-faint">
+              Hierarchy, character, scale, or the brief — nothing changes
+              unless you say so.
+            </p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-7">
+            {transcript.entries.map((entry) => (
+              <article
+                key={entry.id}
+                className={`max-w-[88%] px-9 py-7 text-ink ${
+                  entry.role === "user"
+                    ? "ml-auto rounded-[12px] rounded-br-[4px] bg-[rgb(124_92_255/0.2)]"
+                    : "mr-auto rounded-[12px] rounded-bl-[4px] border border-panel-hairline bg-card"
+                }`}
+              >
+                <p className="m-0 whitespace-pre-wrap break-words text-[11px] leading-[1.55]">
+                  {entry.text ? (
+                    entry.text
+                  ) : entry.status === "streaming" ? (
+                    <span className="inline-flex items-center gap-3 py-2">
+                      {[0, 1, 2].map((dot) => (
+                        <span
+                          key={dot}
+                          className="h-4 w-4 animate-pulse rounded-full bg-ink-dim"
+                          style={{ animationDelay: `${dot * 160}ms` }}
+                          aria-hidden="true"
+                        />
+                      ))}
+                      <span className="sr-only">
+                        Design Mate is thinking
+                      </span>
+                    </span>
+                  ) : (
+                    "No response was produced."
+                  )}
+                </p>
+                {entry.role === "assistant" &&
+                  (entry.status === "failed" ||
+                    entry.status === "cancelled") && (
+                    <span
+                      className={`mt-4 block text-[9px] ${
+                        entry.status === "failed"
+                          ? "text-danger"
+                          : "text-ink-dim"
+                      }`}
+                    >
+                      {entry.errorLabel}
+                    </span>
+                  )}
+              </article>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="shrink-0 border-t border-panel-hairline px-13 pb-10 pt-9">
+        {DESIGN_MATE_CHAT_ENDPOINT && (
+          <div className="mb-8 flex items-start gap-6 rounded-[8px] bg-field px-9 py-7">
+            <ShieldCheck
+              size={12}
+              className="mt-1 shrink-0 text-accent"
+              aria-hidden="true"
+            />
+            <p className="m-0 min-w-0 flex-1 text-[9px] leading-[1.5] text-ink-dim">
+              {remoteEnabled
+                ? "Remote AI is on — messages, bounded design context, review findings, and up to three PNG previews go to the configured service. The raw OpenLogo document is never uploaded. "
+                : "Local guidance stays on this device. Remote AI sends messages, bounded design context, review findings, and up to three PNG previews to the configured service and its model provider. "}
+              <button
+                type="button"
+                className="font-[650] text-accent disabled:opacity-40"
+                onClick={() => setRemoteEnabled(!remoteEnabled)}
+                disabled={running}
+              >
+                {remoteEnabled ? "Use local only" : "Enable remote AI"}
+              </button>
+            </p>
+          </div>
+        )}
+
+        {stale && (
+          <p
+            role="status"
+            className="mx-0 mb-7 mt-0 text-[9px] leading-[1.4] text-[#e4c07a]"
+          >
+            The canvas or request scope changed after this answer. Ask again
+            for current guidance.
+          </p>
+        )}
+
+        {showChips && (
+          <div className="mb-8 flex flex-wrap items-center gap-5">
             {STARTER_PROMPTS.map((starter) => (
               <button
                 key={starter}
                 type="button"
-                className="rounded-[6px] border border-panel-hairline bg-card px-7 py-5 text-left text-[10px] leading-[1.35] text-ink transition-colors hover:border-accent hover:text-accent"
+                className="rounded-full border border-panel-hairline bg-card px-9 py-4 text-[9.5px] leading-[1.35] text-ink-dim transition-colors duration-140 ease-studio hover:enabled:border-accent hover:enabled:text-accent disabled:opacity-40"
                 onClick={() => void sendPrompt(starter)}
                 disabled={running || disabled}
               >
                 {starter}
               </button>
             ))}
-          </div>
-        ) : (
-          transcript.entries.map((entry) => (
-            <article
-              key={entry.id}
-              className={`max-w-[92%] rounded-[8px] px-8 py-6 ${
-                entry.role === "user"
-                  ? "ml-auto bg-accent text-white"
-                  : "mr-auto border border-panel-hairline bg-card text-ink"
-              }`}
-            >
-              <span
-                className={`block text-[8px] font-[650] uppercase tracking-[0.07em] ${
-                  entry.role === "user"
-                    ? "text-[rgb(255_255_255/0.72)]"
-                    : "text-ink-faint"
-                }`}
-              >
-                {entry.role === "user"
-                  ? "You"
-                  : entry.providerLabel ?? "Design Mate"}
-              </span>
-              <p className="m-0 mt-3 whitespace-pre-wrap break-words text-[10.5px] leading-[1.5]">
-                {entry.text ||
-                  (entry.status === "streaming"
-                    ? "Thinking…"
-                    : "No response was produced.")}
-              </p>
-              {entry.role === "assistant" && entry.status !== "complete" && (
-                <span
-                  className={`mt-4 block text-[9px] ${
-                    entry.status === "failed"
-                      ? "text-danger"
-                      : entry.status === "cancelled"
-                        ? "text-ink-dim"
-                        : "text-accent"
-                  }`}
-                >
-                  {entry.status === "streaming"
-                    ? "Responding…"
-                    : entry.errorLabel}
-                </span>
-              )}
-            </article>
-          ))
-        )}
-      </div>
-
-      {stale && (
-        <p
-          role="status"
-          className="mx-0 mb-0 mt-7 rounded-[6px] border border-[#e7c883] bg-[#fff8e8] px-7 py-5 text-[9.5px] leading-[1.4] text-[#73551f]"
-        >
-          The canvas or request scope changed after this answer. Ask again for
-          current guidance.
-        </p>
-      )}
-
-      {visualNote && (
-        <p
-          id={statusId}
-          role="status"
-          className="mx-0 mb-0 mt-6 flex items-start gap-4 text-[9px] leading-[1.4] text-ink-dim"
-        >
-          <Paperclip size={10} className="mt-1 shrink-0" aria-hidden="true" />
-          {visualNote}
-        </p>
-      )}
-
-      <div className="mt-8 grid gap-6">
-        <label className="sr-only" htmlFor={`${headingId}-composer`}>
-          Message Design Mate
-        </label>
-        <textarea
-          id={`${headingId}-composer`}
-          className="min-h-64 w-full resize-y rounded-field border border-field-border bg-field px-8 py-7 text-[11px] leading-[1.45] text-ink outline-none transition-[border-color,box-shadow,background-color] duration-140 ease-studio placeholder:text-ink-faint focus:border-accent focus:bg-card focus:shadow-ring"
-          value={prompt}
-          maxLength={DESIGN_MATE_CHAT_LIMITS.userTextLength}
-          onChange={(event) => setPrompt(event.currentTarget.value)}
-          onKeyDown={onComposerKeyDown}
-          placeholder="Ask me about hierarchy, character, scale, or the brief…"
-          aria-describedby={visualNote ? statusId : undefined}
-          disabled={running || disabled}
-        />
-        <div className="flex flex-wrap items-center justify-between gap-5">
-          <div className="flex items-center gap-5">
             <button
               type="button"
-              className={SECONDARY}
-              onClick={clear}
-              disabled={
-                disabled ||
-                (transcript.entries.length === 0 && !running)
-              }
+              className="grid h-16 w-16 place-items-center rounded-full text-ink-faint transition-colors duration-140 ease-studio hover:text-ink"
+              onClick={() => setChipsDismissed(true)}
+              aria-label="Dismiss suggested prompts"
             >
-              <Trash2 size={11} aria-hidden="true" />
-              Clear
+              <X size={10} aria-hidden="true" />
             </button>
+          </div>
+        )}
+
+        {controls && <div className="mb-8">{controls}</div>}
+
+        <div className="relative">
+          <label className="sr-only" htmlFor={`${headingId}-composer`}>
+            Message Design Mate
+          </label>
+          <textarea
+            id={`${headingId}-composer`}
+            className="min-h-44 w-full resize-none rounded-[10px] border border-field-border bg-field py-8 pl-9 pr-40 text-[11px] leading-[1.45] text-ink outline-none transition-[border-color,box-shadow,background-color] duration-140 ease-studio placeholder:text-ink-faint focus:border-accent focus:bg-card focus:shadow-ring"
+            value={prompt}
+            maxLength={characterLimit}
+            onChange={(event) => setPrompt(event.currentTarget.value)}
+            onKeyDown={onComposerKeyDown}
+            placeholder="Ask about hierarchy, character, scale…"
+            title="Enter to send · Shift+Enter for a new line"
+            aria-describedby={statusId}
+            disabled={running || disabled}
+          />
+          <button
+            type="button"
+            className={`absolute bottom-8 right-7 grid h-26 w-26 place-items-center rounded-[8px] transition-[background-color,filter,opacity] duration-140 ease-studio ${
+              running
+                ? "bg-chrome-raised text-ink hover:bg-chrome-active"
+                : "bg-accent text-white hover:enabled:brightness-[1.08] disabled:cursor-not-allowed disabled:opacity-35"
+            }`}
+            onClick={running ? stop : () => void sendPrompt()}
+            disabled={!running && (disabled || prompt.trim().length === 0)}
+            aria-label={running ? "Stop response" : "Send message"}
+          >
+            {running ? (
+              <Square size={10} fill="currentColor" aria-hidden="true" />
+            ) : (
+              <Send size={12} aria-hidden="true" />
+            )}
+          </button>
+        </div>
+
+        <div className="mt-6 flex items-center justify-between gap-8 text-[8.5px] text-ink-faint">
+          <span
+            id={statusId}
+            role="status"
+            className="min-w-0 truncate"
+            title={visualNote ?? undefined}
+          >
+            {visualNote ?? `${modeLabel} · Conversation stays in this tab`}
+          </span>
+          <span className="flex shrink-0 items-center gap-8">
             {retryPrompt && (
               <button
                 type="button"
-                className={SECONDARY}
+                className={META_ACTION}
                 onClick={() => void sendPrompt(retryPrompt)}
                 disabled={running || disabled}
               >
-                <RotateCcw size={11} aria-hidden="true" />
                 Retry
               </button>
             )}
-          </div>
-          <div className="flex items-center gap-5">
-            <button
-              type="button"
-              className={SECONDARY}
-              onClick={stop}
-              disabled={!running}
-            >
-              <Square size={10} fill="currentColor" aria-hidden="true" />
-              Stop
-            </button>
-            <button
-              type="button"
-              className={PRIMARY}
-              onClick={() => void sendPrompt()}
-              disabled={
-                running || disabled || prompt.trim().length === 0
-              }
-            >
-              <Send size={11} aria-hidden="true" />
-              Send
-            </button>
-          </div>
+            {transcript.entries.length > 0 && (
+              <button
+                type="button"
+                className={META_ACTION}
+                onClick={clear}
+                disabled={disabled}
+              >
+                Clear
+              </button>
+            )}
+            {nearLimit && (
+              <span className="tabular-nums">
+                {prompt.length}/{characterLimit}
+              </span>
+            )}
+          </span>
         </div>
-        <p className="m-0 text-right text-[8.5px] tabular-nums text-ink-faint">
-          {prompt.length}/{DESIGN_MATE_CHAT_LIMITS.userTextLength} · Enter to
-          send, Shift+Enter for a new line
-        </p>
-        <p className="m-0 text-[8.5px] leading-[1.4] text-ink-faint">
-          This conversation is kept only for this document in the current
-          browser tab. Clear removes it.
-        </p>
       </div>
     </section>
   );

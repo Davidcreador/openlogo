@@ -490,7 +490,7 @@ function ArtboardMenu() {
               <button
                 key={preset.label}
                 type="button"
-                className="flex flex-col items-start gap-1 rounded-[7px] border border-chrome-border bg-chrome-raised px-8 py-6 transition-colors duration-120 ease-studio hover:border-[#8ea0fa]"
+                className="flex flex-col items-start gap-1 rounded-[7px] border border-chrome-border bg-chrome-raised px-8 py-6 transition-colors duration-120 ease-studio hover:border-[#a78fff]"
                 onClick={() => addArtboard(preset.width, preset.height)}
                 aria-label={`Add ${preset.label} artboard ${preset.width}×${preset.height}`}
               >
@@ -527,7 +527,7 @@ function ArtboardMenu() {
             />
             <button
               type="button"
-              className="ml-auto inline-flex h-24 items-center gap-4 rounded-[6px] bg-linear-to-b from-[#5d77f7] to-accent px-9 text-[11.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.24)] hover:brightness-[1.08]"
+              className="ml-auto inline-flex h-24 items-center gap-4 rounded-[6px] bg-linear-to-b from-[#9578ff] to-accent px-9 text-[11.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.24)] hover:brightness-[1.08]"
               onClick={() => {
                 if (customSizeValid) {
                   addArtboard(normalizedCustomWidth, normalizedCustomHeight);
@@ -580,7 +580,7 @@ function ExportMenu() {
       <button
         type="button"
         data-export-dialog-trigger
-        className="export-button flex items-center gap-7 rounded-[9px] bg-linear-to-b from-[#5d77f7] to-accent px-13 py-7 text-[12.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.22),0_1px_3px_rgb(8_6_12/0.45)] transition-[filter] duration-140 ease-studio hover:brightness-[1.09]"
+        className="export-button flex items-center gap-7 rounded-[9px] bg-linear-to-b from-[#9578ff] to-accent px-13 py-7 text-[12.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.22),0_1px_3px_rgb(8_6_12/0.45)] transition-[filter,box-shadow] duration-140 ease-studio hover:brightness-[1.09] hover:shadow-[inset_0_1px_0_rgb(255_255_255/0.22),0_2px_10px_rgb(124_92_255/0.45),0_8px_30px_rgb(124_92_255/0.25)]"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
       >

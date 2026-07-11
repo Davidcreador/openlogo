@@ -8,7 +8,7 @@ import {
   type ErrorInfo,
   type ReactNode,
 } from "react";
-import { ChevronUp, Sparkles, X } from "lucide-react";
+import { Sparkles, X } from "lucide-react";
 import { useEditorStore } from "../state/editor-store";
 
 const DesignMateSection = lazy(() =>
@@ -19,7 +19,6 @@ const DesignMateSection = lazy(() =>
 
 const PANEL_ID = "design-mate-companion-panel";
 const PANEL_TITLE_ID = "design-mate-companion-title";
-const PANEL_DESCRIPTION_ID = "design-mate-companion-description";
 
 class DesignMateErrorBoundary extends Component<
   { children: ReactNode },
@@ -39,7 +38,7 @@ class DesignMateErrorBoundary extends Component<
     if (this.state.failed) {
       return (
         <div
-          className="rounded-[10px] border border-[rgb(194_70_62/0.2)] bg-[#fdf1f0] p-12 text-[11px] leading-[1.5] text-danger"
+          className="m-12 rounded-[10px] bg-[rgb(240_86_77/0.1)] p-12 text-[11px] leading-[1.5] text-danger"
           role="status"
         >
           I hit a snag while getting ready. Your canvas is safe. Reload the
@@ -49,24 +48,6 @@ class DesignMateErrorBoundary extends Component<
     }
     return this.props.children;
   }
-}
-
-function MateMark({ thinking = false }: { thinking?: boolean }) {
-  return (
-    <span
-      className={`relative grid h-36 w-36 shrink-0 place-items-center rounded-[12px] bg-[linear-gradient(145deg,#8b9cff_0%,var(--color-accent)_54%,#7447d8_100%)] text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.35),0_4px_14px_rgb(79_107_246/0.35)] ${
-        thinking ? "animate-pulse" : ""
-      }`}
-      aria-hidden="true"
-    >
-      <span className="text-[14px] font-[800] tracking-[-0.06em]">M</span>
-      <Sparkles
-        size={10}
-        className="absolute -right-2 -top-2 rounded-full bg-white p-1 text-accent shadow-[0_1px_5px_rgb(28_25_33/0.18)]"
-        strokeWidth={2.4}
-      />
-    </span>
-  );
 }
 
 export function DesignMateCompanion() {
@@ -131,43 +112,29 @@ export function DesignMateCompanion() {
         <section
           ref={panelRef}
           id={PANEL_ID}
-          className={`design-mate-panel pointer-events-auto mb-10 h-[calc(100vh-176px)] max-h-[690px] min-h-420 w-[390px] flex-col overflow-hidden rounded-[18px] border border-[rgb(28_25_33/0.12)] bg-panel shadow-[0_2px_8px_rgb(28_25_33/0.12),0_24px_70px_rgb(28_25_33/0.22)] ${
+          className={`design-mate-panel pointer-events-auto mb-10 h-[calc(100vh-176px)] max-h-[690px] min-h-420 w-[390px] flex-col overflow-hidden rounded-[14px] border border-panel-border bg-panel shadow-panel ${
             open ? "flex" : "hidden"
           }`}
           role="dialog"
           aria-modal="false"
           aria-labelledby={PANEL_TITLE_ID}
-          aria-describedby={PANEL_DESCRIPTION_ID}
         >
-          <header className="flex shrink-0 items-center gap-10 border-b border-[rgb(255_255_255/0.08)] bg-[linear-gradient(135deg,#252133,#17151b)] px-13 py-11 text-chrome-text">
-            <MateMark thinking={thinking} />
-            <div className="min-w-0 flex-1">
-              <h2
-                id={PANEL_TITLE_ID}
-                className="m-0 text-[13px] font-[700] tracking-[-0.01em]"
-              >
-                Design Mate
-              </h2>
-              <p
-                id={PANEL_DESCRIPTION_ID}
-                className="mb-0 mt-2 truncate text-[10px] text-chrome-dim"
-              >
-                Your honest creative sidekick
-              </p>
-            </div>
-            <span className="flex items-center gap-4 text-[8.5px] font-[650] uppercase tracking-[0.06em] text-chrome-dim">
-              <span
-                className={`h-6 w-6 rounded-full ${
-                  thinking ? "animate-pulse bg-amber-400" : "bg-emerald-400"
-                }`}
-                aria-hidden="true"
-              />
-              {thinking ? "Thinking" : "Here"}
-            </span>
+          <header className="flex shrink-0 items-center gap-7 border-b border-panel-hairline px-13 py-10">
+            <Sparkles
+              size={14}
+              className={`shrink-0 text-accent ${thinking ? "animate-pulse" : ""}`}
+              aria-hidden="true"
+            />
+            <h2
+              id={PANEL_TITLE_ID}
+              className="m-0 min-w-0 flex-1 truncate text-[12px] font-[650] tracking-[-0.01em] text-ink"
+            >
+              Design Mate
+            </h2>
             <button
               ref={closeButtonRef}
               type="button"
-              className="grid h-28 w-28 shrink-0 place-items-center rounded-m text-chrome-dim transition-colors duration-140 ease-studio hover:bg-chrome-raised hover:text-chrome-text"
+              className="grid h-26 w-26 shrink-0 place-items-center rounded-m text-ink-dim transition-colors duration-140 ease-studio hover:bg-chrome-raised hover:text-ink"
               onClick={close}
               aria-label="Close Design Mate"
             >
@@ -175,12 +142,12 @@ export function DesignMateCompanion() {
             </button>
           </header>
 
-          <div className="inspector-card min-h-0 flex-1 overflow-y-auto bg-panel p-12">
+          <div className="flex min-h-0 flex-1 flex-col">
             <DesignMateErrorBoundary>
               <Suspense
                 fallback={
                   <div
-                    className="grid min-h-120 place-items-center rounded-[10px] border border-panel-hairline bg-card text-[11px] text-ink-dim"
+                    className="grid flex-1 place-items-center text-[11px] text-ink-dim"
                     role="status"
                     aria-live="polite"
                   >
@@ -199,42 +166,30 @@ export function DesignMateCompanion() {
         ref={launcherRef}
         type="button"
         data-design-mate-trigger
-        className={`pointer-events-auto group flex min-w-216 items-center gap-9 rounded-[16px] border px-7 py-7 text-left shadow-[0_2px_7px_rgb(28_25_33/0.16),0_12px_32px_rgb(28_25_33/0.15)] transition-[transform,background-color,border-color,box-shadow] duration-180 ease-studio hover:-translate-y-1 hover:shadow-[0_3px_9px_rgb(28_25_33/0.18),0_16px_40px_rgb(28_25_33/0.2)] ${
+        className={`pointer-events-auto flex items-center gap-6 rounded-full border px-11 py-7 shadow-float transition-[transform,background-color,border-color,color] duration-180 ease-studio hover:-translate-y-1 ${
           open
-            ? "border-[rgb(142_160_250/0.32)] bg-[#201d28] text-chrome-text"
-            : "border-[rgb(28_25_33/0.1)] bg-card text-ink"
+            ? "border-[rgb(124_92_255/0.4)] bg-card text-ink"
+            : "border-panel-border bg-card text-ink hover:border-[rgb(124_92_255/0.4)]"
         }`}
         onClick={toggle}
         aria-expanded={open}
         aria-controls={activated ? PANEL_ID : undefined}
         aria-label={`${open ? "Close" : "Open"} Design Mate. ${statusLine}`}
       >
-        <MateMark thinking={thinking} />
-        <span className="min-w-0 flex-1">
-          <strong className="block text-[11.5px] font-[700]">Design Mate</strong>
-          <span
-            className={`mt-1 block truncate text-[9.5px] ${
-              open ? "text-chrome-dim" : "text-ink-dim"
-            }`}
-          >
-            {statusLine}
-          </span>
-        </span>
+        <Sparkles
+          size={13}
+          className={`shrink-0 text-accent ${thinking ? "animate-pulse" : ""}`}
+          aria-hidden="true"
+        />
+        <span className="text-[11px] font-[650]">Design Mate</span>
         {snapshot && findingCount > 0 && (
           <span
-            className="grid h-20 min-w-20 place-items-center rounded-full bg-accent px-5 text-[9px] font-[700] tabular-nums text-white"
+            className="grid h-16 min-w-16 place-items-center rounded-full bg-accent px-4 text-[8.5px] font-[700] tabular-nums text-white"
             aria-hidden="true"
           >
             {findingCount}
           </span>
         )}
-        <ChevronUp
-          size={14}
-          className={`shrink-0 transition-transform duration-180 ease-studio ${
-            open ? "rotate-180 text-[#aebaff]" : "text-ink-dim"
-          }`}
-          aria-hidden="true"
-        />
       </button>
     </div>
   );

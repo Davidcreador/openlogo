@@ -630,13 +630,13 @@ function DesignMateFocusOverlay() {
 
   return (
     <div
-      className="pointer-events-none absolute z-10 rounded-[5px] border-2 border-dashed border-accent shadow-[0_0_0_3px_rgb(79_107_246/0.16),0_0_22px_rgb(79_107_246/0.28)]"
+      className="pointer-events-none absolute z-10 rounded-[5px] border-2 border-dashed border-accent shadow-[0_0_0_3px_rgb(124_92_255/0.16),0_0_22px_rgb(124_92_255/0.28)]"
       style={{ left, top, width, height }}
       data-design-mate-finding={focus.findingId}
       aria-hidden="true"
     >
       <span
-        className={`absolute left-0 max-w-240 truncate rounded-full bg-accent px-7 py-3 text-[9px] font-[650] text-white shadow-[0_2px_8px_rgb(28_25_33/0.2)] ${
+        className={`absolute left-0 max-w-240 truncate rounded-full bg-accent px-7 py-3 text-[9px] font-[650] text-white shadow-[0_2px_8px_rgb(0_0_0/0.5)] ${
           placeLabelAbove ? "-top-24" : "top-2"
         }`}
       >
@@ -3295,7 +3295,7 @@ export function CanvasStage() {
             </p>
             <button
               type="button"
-              className="mx-auto mt-16 inline-flex h-32 items-center gap-7 rounded-field bg-accent px-13 text-[12px] font-semibold text-white shadow-[0_4px_12px_rgb(79_107_246/0.22)] transition-[filter] hover:brightness-105"
+              className="mx-auto mt-16 inline-flex h-32 items-center gap-7 rounded-field bg-accent px-13 text-[12px] font-semibold text-white shadow-[0_4px_12px_rgb(124_92_255/0.22)] transition-[filter] hover:brightness-105"
               onClick={() => window.location.reload()}
             >
               <RefreshCw size={14} aria-hidden="true" />

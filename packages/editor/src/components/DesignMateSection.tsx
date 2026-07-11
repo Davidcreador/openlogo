@@ -9,7 +9,6 @@ import {
   type ReactNode,
 } from "react";
 import {
-  ArrowRight,
   LocateFixed,
   RefreshCw,
   Save,
@@ -45,9 +44,7 @@ import {
   resolveDesignMateFocus,
 } from "../lib/design-mate-review";
 import {
-  DESIGN_MATE_CHAT_ENDPOINT,
   createDesignMateChatId,
-  designMateChatHeaderLabel,
   isDesignMateChatAnswerStale,
   type DesignMateChatAnswerContext,
 } from "../lib/design-mate-chat";
@@ -92,7 +89,7 @@ class DesignMateProposalErrorBoundary extends Component<
       return (
         <div
           role="alert"
-          className="rounded-[7px] border border-[rgb(194_70_62/0.28)] bg-[#fdf1f0] px-9 py-7 text-[10.5px] leading-[1.45] text-danger"
+          className="rounded-[7px] bg-[rgb(240_86_77/0.1)] px-9 py-7 text-[10.5px] leading-[1.45] text-danger"
         >
           Suggested changes are unavailable. The other Design Mate tools are
           still available.
@@ -128,7 +125,7 @@ class DesignMateChatErrorBoundary extends Component<
       return (
         <div
           role="alert"
-          className="rounded-[7px] border border-[rgb(194_70_62/0.28)] bg-[#fdf1f0] px-9 py-7 text-[10.5px] leading-[1.45] text-danger"
+          className="m-13 rounded-[7px] bg-[rgb(240_86_77/0.1)] px-9 py-7 text-[10.5px] leading-[1.45] text-danger"
         >
           <p className="m-0">
             Conversation is unavailable. The brief, feedback, and suggested
@@ -153,11 +150,11 @@ const LABEL = "grid gap-4 text-[10.5px] font-[600] text-ink-dim";
 const FIELD =
   "min-h-28 w-full rounded-field border border-field-border bg-field px-8 py-6 text-[12px] leading-[1.4] text-ink outline-none transition-[border-color,box-shadow,background-color] duration-140 ease-studio placeholder:text-ink-faint focus:border-accent focus:bg-card focus:shadow-ring";
 const TAB =
-  "flex-1 rounded-[6px] px-4 py-5 text-[10.5px] transition-[background-color,color,box-shadow] duration-120 ease-studio disabled:cursor-default disabled:opacity-35";
+  "rounded-[5px] px-7 py-3 text-[10px] transition-[background-color,color,box-shadow] duration-120 ease-studio disabled:cursor-default disabled:opacity-35";
 const SECONDARY =
   "inline-flex items-center justify-center gap-5 rounded-field border border-field-border bg-card px-9 py-6 text-[11px] font-[600] text-ink transition-[border-color,color] duration-140 ease-studio hover:enabled:border-accent hover:enabled:text-accent disabled:cursor-not-allowed disabled:opacity-40";
 const PRIMARY =
-  "inline-flex items-center justify-center gap-6 rounded-field bg-accent px-10 py-7 text-[11.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.2),0_1px_3px_rgb(79_107_246/0.3)] transition-[filter] duration-140 ease-studio hover:enabled:brightness-[1.08] disabled:cursor-not-allowed disabled:opacity-45";
+  "inline-flex shrink-0 items-center justify-center gap-5 rounded-[7px] bg-accent px-9 py-5 text-[10.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.2),0_1px_3px_rgb(124_92_255/0.3)] transition-[filter] duration-140 ease-studio hover:enabled:brightness-[1.08] disabled:cursor-not-allowed disabled:opacity-45";
 
 const SCOPES: ReadonlyArray<{
   id: ReviewScope;
@@ -234,32 +231,34 @@ function FindingCard({
     <li
       data-severity={finding.severity}
       aria-current={focused ? "true" : undefined}
-      className={`rounded-[8px] border-l-[3px] px-10 py-9 text-[11.5px] transition-[box-shadow,transform] ${
-        focused
-          ? "shadow-[0_0_0_2px_rgb(79_107_246/0.35)]"
-          : ""
-      } ${
-        finding.severity === "warning"
-          ? "border-[#f59e0b] bg-[#fdf6e9]"
-          : finding.severity === "strong"
-            ? "border-danger bg-[#fdf1f0]"
-            : "border-accent bg-accent-soft"
+      className={`-mx-6 grid gap-4 rounded-[8px] px-6 py-8 transition-[background-color] duration-140 ease-studio ${
+        focused ? "bg-[rgb(124_92_255/0.09)]" : ""
       }`}
     >
-      <div className="flex items-start justify-between gap-8">
-        <span className="font-[650] leading-[1.35] text-ink">
+      <div className="flex items-start gap-6">
+        <span
+          className={`mt-4 h-5 w-5 shrink-0 rounded-full ${
+            finding.severity === "warning"
+              ? "bg-[#e4c07a]"
+              : finding.severity === "strong"
+                ? "bg-danger"
+                : "bg-accent"
+          }`}
+          aria-hidden="true"
+        />
+        <span className="min-w-0 flex-1 text-[11px] font-[650] leading-[1.35] text-ink">
           <span className="sr-only">{severityLabel(finding)}: </span>
           {finding.title}
         </span>
-        <span className="shrink-0 rounded-full bg-[rgb(255_255_255/0.58)] px-6 py-2 text-[8.5px] font-[650] uppercase tracking-[0.06em] text-ink-dim">
+        <span className="shrink-0 text-[8.5px] font-[650] uppercase tracking-[0.06em] text-ink-faint">
           {finding.category}
         </span>
       </div>
-      <p className="mx-0 my-5 leading-[1.45] text-[#55515c]">
+      <p className="m-0 pl-11 text-[10.5px] leading-[1.5] text-ink-dim">
         {finding.detail}
       </p>
       {finding.evidence.length > 0 && (
-        <p className="m-0 text-[10px] leading-[1.45] text-ink-dim">
+        <p className="m-0 pl-11 text-[9.5px] leading-[1.45] text-ink-faint">
           {finding.evidence
             .slice(0, 2)
             .map(
@@ -269,26 +268,25 @@ function FindingCard({
             .join(" · ")}
         </p>
       )}
-      <div className="mt-7 flex flex-wrap items-end justify-between gap-8">
-        <em className="min-w-0 flex-1 text-[10.5px] leading-[1.4] text-ink-dim">
+      <div className="flex flex-wrap items-end justify-between gap-8 pl-11">
+        <em className="min-w-0 flex-1 text-[10px] leading-[1.4] text-ink-dim">
           {finding.action}
         </em>
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-5">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-8">
           {relatedProposal && onViewProposal && (
             <button
               type="button"
-              className="inline-flex items-center gap-4 rounded-field border border-field-border bg-card px-7 py-4 text-[10px] font-[650] text-ink transition-colors hover:border-accent hover:text-accent"
+              className="text-[10px] font-[650] text-ink-dim transition-colors duration-140 ease-studio hover:text-accent"
               onClick={onViewProposal}
               aria-label={`Review suggested change: ${relatedProposal.proposal.label}`}
             >
               Review fix
-              <ArrowRight size={11} aria-hidden="true" />
             </button>
           )}
           {canFocus && (
             <button
               type="button"
-              className="inline-flex items-center gap-4 rounded-field border border-[rgb(79_107_246/0.28)] bg-card px-7 py-4 text-[10px] font-[650] text-accent transition-colors hover:bg-accent-soft"
+              className="inline-flex items-center gap-4 text-[10px] font-[650] text-accent transition-[filter] duration-140 ease-studio hover:brightness-[1.15]"
               onClick={onFocus}
               aria-label={`${focused ? "Hide" : "Show"} ${finding.title} on canvas`}
               aria-pressed={focused}
@@ -342,9 +340,6 @@ export function DesignMateSection() {
   const keyObjectId = useEditorStore((state) => state.keyObjectId);
   const activeGroupId = useEditorStore((state) => state.activeGroupId);
   const scope = useEditorStore((state) => state.designMateScope);
-  const remoteEnabled = useEditorStore(
-    (state) => state.designMateRemoteEnabled,
-  );
   const reviewSnapshot = useEditorStore((state) => state.designMateReview);
   const canvasFocus = useEditorStore(
     (state) => state.designMateCanvasFocus,
@@ -918,46 +913,91 @@ export function DesignMateSection() {
   }
 
   const findings = reviewSnapshot?.review.findings ?? [];
+  const hasReviewContent =
+    stale ||
+    error !== null ||
+    reviewSnapshot !== null ||
+    createdVariantId !== null ||
+    (chatProposalBaseDocument !== null && chatPreparedProposals.length > 0);
+
+  const scopeControls = (
+    <div className="flex items-center justify-between gap-8">
+      <div
+        className="flex shrink-0 rounded-[7px] border border-field-border bg-field p-2"
+        role="group"
+        aria-label="Design Mate focus"
+      >
+        {SCOPES.map((item) => {
+          const disabled = item.id === "selection" && !hasSelection;
+          const active = effectiveScope === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              className={`${TAB} ${
+                active
+                  ? "bg-card font-semibold text-ink shadow-[0_1px_2px_rgb(0_0_0/0.3)]"
+                  : "text-ink-dim"
+              }`}
+              onClick={() => setScope(item.id)}
+              aria-pressed={active}
+              disabled={disabled}
+              title={
+                disabled
+                  ? "Select one or more logo objects first"
+                  : item.title
+              }
+            >
+              {item.label}
+            </button>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        className={PRIMARY}
+        onClick={() =>
+          status === "reviewing" ? stopReview() : void runReview()
+        }
+        disabled={chatRunning}
+        title={
+          chatRunning
+            ? "Wait for the current Design Mate answer to finish"
+            : status === "reviewing"
+              ? "Stop the current review"
+              : "Ask Design Mate to review the current focus"
+        }
+      >
+        {status === "reviewing" ? (
+          <Square size={10} fill="currentColor" aria-hidden="true" />
+        ) : (
+          <Sparkles size={12} aria-hidden="true" />
+        )}
+        {status === "reviewing"
+          ? "Stop"
+          : reviewSnapshot
+            ? "Look again"
+            : "Take a look"}
+      </button>
+    </div>
+  );
 
   return (
     <section
-      className="grid gap-10"
+      className="flex min-h-0 flex-1 flex-col"
       aria-label="Design Mate workspace"
     >
-      <div className="rounded-[10px] border border-[rgb(79_107_246/0.18)] bg-[linear-gradient(145deg,#f7f8ff,var(--color-accent-soft))] p-11 shadow-[0_1px_2px_rgb(79_107_246/0.08)]">
-        <div className="flex items-start justify-between gap-10">
-          <div>
-            <h2 className="m-0 flex items-center gap-6 text-[12px] font-[680] text-ink">
-              <Sparkles size={14} className="text-accent" aria-hidden="true" />
-              Hey — want a second pair of eyes?
-            </h2>
-            <p className="mb-0 mt-4 text-[10.5px] leading-[1.5] text-ink-dim">
-              I’ll call out what’s working, spot what’s getting in the way,
-              and leave every decision to you.
-            </p>
-          </div>
-          <span className="shrink-0 rounded-full border border-[rgb(79_107_246/0.14)] bg-card/80 px-6 py-2 text-[8.5px] font-[650] uppercase tracking-[0.06em] text-accent-deep">
-            {designMateChatHeaderLabel(
-              remoteEnabled ? DESIGN_MATE_CHAT_ENDPOINT : null,
-            )}
-          </span>
-        </div>
-      </div>
-
-      <div className="rounded-[10px] border border-panel-hairline bg-card p-10 shadow-[0_1px_2px_rgb(28_25_33/0.04)]">
-            <div className="flex items-start justify-between gap-8">
-              <div>
-                <strong className="block text-[11.5px] font-[650] text-ink">
-                  Brand brief
-                </strong>
-                <p className="m-0 mt-2 text-[10px] leading-[1.4] text-ink-dim">
-                  Tell me what this identity needs to mean, and I’ll keep it in
-                  mind.
-                </p>
-              </div>
+      <div className="shrink-0 border-b border-panel-hairline">
+            <div className="flex w-full items-center gap-7 px-13 py-8">
+              <span className="shrink-0 text-[10.5px] font-[650] text-ink">
+                Brief
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[10px] text-ink-faint">
+                {draft.brandName.trim() || "Context I should keep in mind"}
+              </span>
               <button
                 type="button"
-                className="text-[10.5px] font-[650] text-accent"
+                className="shrink-0 text-[10px] font-[650] text-accent"
                 onClick={() => setBriefExpanded((value) => !value)}
                 aria-expanded={briefExpanded}
               >
@@ -966,7 +1006,8 @@ export function DesignMateSection() {
             </div>
 
             {briefExpanded && (
-              <fieldset className="mt-9 grid gap-7 border-0 p-0">
+              <div className="max-h-300 overflow-y-auto px-13 pb-10">
+              <fieldset className="grid gap-7 border-0 p-0">
                 <legend className="sr-only">Brand brief</legend>
                 <label className={LABEL}>
                   Brand name
@@ -1086,86 +1127,21 @@ export function DesignMateSection() {
                   Save brief
                 </button>
               </fieldset>
+              </div>
             )}
           </div>
 
-          <div className="rounded-[10px] border border-panel-hairline bg-card p-10 shadow-[0_1px_2px_rgb(28_25_33/0.04)]">
-            <div className="mb-7 flex items-center justify-between gap-8">
-              <strong className="text-[11.5px] font-[650] text-ink">
-                Where should I focus?
-              </strong>
-              <span className="text-[9.5px] text-ink-dim">
-                Everything I do
-              </span>
-            </div>
-            <div
-              className="flex rounded-[8px] border border-field-border bg-field p-3"
-              role="group"
-              aria-label="Design Mate focus"
-            >
-              {SCOPES.map((item) => {
-                const disabled = item.id === "selection" && !hasSelection;
-                const active = effectiveScope === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={`${TAB} ${
-                      active
-                        ? "bg-card font-semibold text-ink shadow-[0_1px_2px_rgb(28_25_33/0.1)]"
-                        : "text-ink-dim"
-                    }`}
-                    onClick={() => setScope(item.id)}
-                    aria-pressed={active}
-                    disabled={disabled}
-                    title={
-                      disabled
-                        ? "Select one or more logo objects first"
-                        : item.title
-                    }
-                  >
-                    {item.label}
-                  </button>
-                );
-              })}
-            </div>
-            <p className="mx-0 mb-0 mt-4 text-[9px] leading-[1.4] text-ink-dim">
-              I’ll keep both my feedback and our conversation focused here.
-            </p>
-            <button
-              type="button"
-              className={`${PRIMARY} mt-7 w-full`}
-              onClick={() =>
-                status === "reviewing"
-                  ? stopReview()
-                  : void runReview()
-              }
-              disabled={chatRunning}
-              title={
-                chatRunning
-                  ? "Wait for the current Design Mate answer to finish"
-                  : status === "reviewing"
-                    ? "Stop the current review"
-                    : undefined
-              }
-            >
-              {status === "reviewing" ? (
-                <Square size={11} fill="currentColor" aria-hidden="true" />
-              ) : (
-                <Sparkles size={13} aria-hidden="true" />
-              )}
-              {status === "reviewing"
-                ? "Stop review"
-                : reviewSnapshot
-                  ? "Look again"
-                  : "Take a look"}
-            </button>
-          </div>
+          {hasReviewContent && (
+          <div
+            className="max-h-[50%] min-h-0 overflow-y-auto border-b border-panel-hairline"
+            style={{ flex: "0 1 auto" }}
+          >
+          <div className="grid gap-11 px-13 py-11">
 
           {stale && (
             <div
               role="status"
-              className="rounded-[7px] border border-[#e7c883] bg-[#fff8e8] px-9 py-7 text-[10.5px] leading-[1.45] text-[#73551f]"
+              className="rounded-[7px] bg-[rgb(232_195_126/0.08)] px-9 py-6 text-[10px] leading-[1.45] text-[#e4c07a]"
             >
               You’ve changed the canvas since I last looked. Let me take
               another pass before you use these notes.
@@ -1175,37 +1151,31 @@ export function DesignMateSection() {
           {error && (
             <div
               role="alert"
-              className="rounded-[7px] border border-[rgb(194_70_62/0.28)] bg-[#fdf1f0] px-9 py-7 text-[10.5px] leading-[1.45] text-danger"
+              className="rounded-[7px] bg-[rgb(240_86_77/0.1)] px-9 py-6 text-[10px] leading-[1.45] text-danger"
             >
               {error}
             </div>
           )}
 
           {reviewSnapshot && (
-            <div
-              className="rounded-[10px] border border-panel-hairline bg-card p-10 shadow-[0_1px_2px_rgb(28_25_33/0.04)]"
-              aria-live="polite"
-              aria-atomic="false"
-            >
-              <div className="mb-8 flex items-start justify-between gap-8">
-                <div>
-                  <h3 className="m-0 text-[10.5px] font-[680] uppercase tracking-[0.07em] text-ink">
-                    What I noticed
-                  </h3>
-                  <p className="mb-0 mt-3 text-[11px] leading-[1.5] text-ink-dim">
-                    {reviewSnapshot.review.summary}
-                  </p>
-                </div>
-                <span className="shrink-0 rounded-full bg-field px-6 py-2 text-[9px] tabular-nums text-ink-dim">
+            <div aria-live="polite" aria-atomic="false">
+              <div className="flex items-baseline justify-between gap-8">
+                <h3 className="m-0 text-[9.5px] font-[680] uppercase tracking-[0.08em] text-ink-dim">
+                  What I noticed
+                </h3>
+                <span className="shrink-0 text-[9px] tabular-nums text-ink-faint">
                   {findings.length} {findings.length === 1 ? "finding" : "findings"}
                 </span>
               </div>
+              <p className="mx-0 mb-0 mt-5 text-[10.5px] leading-[1.5] text-ink-dim">
+                {reviewSnapshot.review.summary}
+              </p>
               {findings.length === 0 ? (
-                <p className="m-0 rounded-[7px] bg-[#eef8f1] px-9 py-7 text-[10.5px] text-[#2f6b43]">
+                <p className="m-0 mt-7 text-[10.5px] leading-[1.5] text-[#7fd6a0]">
                   Nothing is fighting for attention in this pass. Nice work.
                 </p>
               ) : (
-                <ul className="m-0 grid list-none gap-8 p-0">
+                <ul className="m-0 mt-6 grid list-none gap-2 p-0">
                   {findings.map((finding) => {
                     const relatedProposal = preparedProposals.find(
                       (prepared) =>
@@ -1284,7 +1254,7 @@ export function DesignMateSection() {
 
           {createdVariantId && (
             <div
-              className="flex items-center justify-between gap-8 rounded-[8px] border border-[#a9d4b7] bg-[#eef8f1] px-9 py-7 text-[10.5px] leading-[1.4] text-[#2f6b43]"
+              className="flex items-center justify-between gap-8 rounded-[8px] bg-[rgb(84_196_130/0.1)] px-9 py-7 text-[10px] leading-[1.45] text-[#7fd6a0]"
               role="status"
             >
               <span>
@@ -1293,38 +1263,13 @@ export function DesignMateSection() {
               </span>
               <button
                 type="button"
-                className="shrink-0 rounded-field border border-[#8fc39f] bg-card px-8 py-5 font-[650] text-[#2f6b43]"
+                className="shrink-0 font-[650] text-[#7fd6a0] underline-offset-2 hover:underline"
                 onClick={viewCreatedVariant}
               >
                 View variant
               </button>
             </div>
           )}
-
-          <DesignMateChatErrorBoundary
-            resetKey={`${document.id}\u0000${documentGeneration}`}
-          >
-            <Suspense
-              fallback={
-                <div
-                  role="status"
-                  aria-live="polite"
-                  className="rounded-[7px] border border-panel-hairline bg-field px-9 py-7 text-[10.5px] text-ink-dim"
-                >
-                  Loading conversation…
-                </div>
-              }
-            >
-              <DesignMateChatPanel
-                disabled={applyingProposal !== null}
-                onRunningChange={setChatRunning}
-                onProposalsClear={clearChatProposals}
-                onProposalsReady={receiveChatProposals}
-                onProposalOutcomeConsumed={consumeChatProposalOutcome}
-                proposalOutcome={chatMemoryEvent}
-              />
-            </Suspense>
-          </DesignMateChatErrorBoundary>
 
           {chatProposalBaseDocument &&
             chatPreparedProposals.length > 0 && (
@@ -1338,7 +1283,7 @@ export function DesignMateSection() {
                     <div
                       role="status"
                       aria-live="polite"
-                      className="rounded-[7px] border border-panel-hairline bg-field px-9 py-7 text-[10.5px] text-ink-dim"
+                      className="text-[10px] text-ink-dim"
                     >
                       Loading conversation suggestions…
                     </div>
@@ -1368,6 +1313,35 @@ export function DesignMateSection() {
                 </Suspense>
               </DesignMateProposalErrorBoundary>
             )}
+          </div>
+          </div>
+          )}
+
+          <DesignMateChatErrorBoundary
+            resetKey={`${document.id} ${documentGeneration}`}
+          >
+            <Suspense
+              fallback={
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="flex min-h-160 flex-1 items-center justify-center text-[10.5px] text-ink-dim"
+                >
+                  Loading conversation…
+                </div>
+              }
+            >
+              <DesignMateChatPanel
+                disabled={applyingProposal !== null}
+                controls={scopeControls}
+                onRunningChange={setChatRunning}
+                onProposalsClear={clearChatProposals}
+                onProposalsReady={receiveChatProposals}
+                onProposalOutcomeConsumed={consumeChatProposalOutcome}
+                proposalOutcome={chatMemoryEvent}
+              />
+            </Suspense>
+          </DesignMateChatErrorBoundary>
     </section>
   );
 }

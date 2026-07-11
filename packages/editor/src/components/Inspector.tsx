@@ -116,7 +116,7 @@ const NODE_ICONS = {
    paper background; fields share the warm sunken look with an accent
    focus ring. */
 const SECTION =
-  "inspector-section shrink-0 rounded-[12px] border border-panel-hairline bg-card p-14 shadow-[0_1px_2px_rgb(28_25_33/0.04)]";
+  "inspector-section shrink-0 rounded-[12px] border border-panel-hairline bg-card p-14 shadow-[0_1px_2px_rgb(0_0_0/0.2)]";
 const SECTION_HEAD = "section-head mb-12 flex min-h-22 items-center justify-between gap-8";
 const SECTION_H2 =
   "m-0 text-[11px] font-[680] uppercase tracking-[0.075em] text-ink-dim";
@@ -129,7 +129,7 @@ const FILL_SWATCH =
   "fill-swatch h-28 w-28 flex-none cursor-pointer rounded-field border border-field-border bg-transparent p-2";
 const OPACITY_FIELD = "flex min-w-0 flex-1 items-center gap-6";
 const SWATCH =
-  "h-24 w-24 cursor-pointer rounded-[7px] border border-[rgb(28_25_33/0.1)] shadow-[inset_0_1px_0_rgb(255_255_255/0.12)] transition-[transform,box-shadow] duration-140 ease-studio hover:-translate-y-1 hover:scale-[1.08] hover:shadow-[0_2px_6px_rgb(28_25_33/0.18)]";
+  "h-24 w-24 cursor-pointer rounded-[7px] border border-[rgb(255_255_255/0.1)] shadow-[inset_0_1px_0_rgb(255_255_255/0.12)] transition-[transform,box-shadow] duration-140 ease-studio hover:-translate-y-1 hover:scale-[1.08] hover:shadow-[0_2px_6px_rgb(0_0_0/0.45)]";
 const STROKE_HEAD =
   "mb-6 flex items-center justify-between text-[11px] font-[650] uppercase tracking-[0.06em] text-ink-dim";
 const STROKE_TOGGLE_BASE =
@@ -142,7 +142,7 @@ const SELECT =
 const TEXT_INPUT =
   "h-32 rounded-field border border-field-border bg-field px-8 text-[12.5px] text-ink outline-none transition-[border-color,box-shadow] duration-140 ease-studio focus:border-accent focus:bg-card focus:shadow-ring";
 const OUTLINE_BUTTON =
-  "w-full rounded-field border border-dashed border-[rgb(28_25_33/0.22)] bg-transparent px-10 py-7 text-[12px] text-ink-dim transition-[border-color,color] duration-140 ease-studio hover:enabled:border-accent hover:enabled:text-accent disabled:cursor-not-allowed disabled:opacity-50";
+  "w-full rounded-field border border-dashed border-[rgb(255_255_255/0.22)] bg-transparent px-10 py-7 text-[12px] text-ink-dim transition-[border-color,color] duration-140 ease-studio hover:enabled:border-accent hover:enabled:text-accent disabled:cursor-not-allowed disabled:opacity-50";
 
 function PanelSection({
   title,
@@ -537,7 +537,7 @@ function AlignPanel({ nodeIds }: { nodeIds: readonly string[] }) {
   ] as const;
 
   const button =
-    "grid h-24 place-items-center rounded-[5px] text-ink-dim transition-[background-color,color,box-shadow] duration-120 ease-studio hover:enabled:bg-card hover:enabled:text-ink hover:enabled:shadow-[0_1px_2px_rgb(28_25_33/0.1)] disabled:cursor-default disabled:opacity-25";
+    "grid h-24 place-items-center rounded-[5px] text-ink-dim transition-[background-color,color,box-shadow] duration-120 ease-studio hover:enabled:bg-card hover:enabled:text-ink hover:enabled:shadow-[0_1px_2px_rgb(0_0_0/0.3)] disabled:cursor-default disabled:opacity-25";
 
   return (
     <>
@@ -788,7 +788,7 @@ function StrokeEditor({
                   type="button"
                   className={`rounded-[5px] px-4 text-[10.5px] capitalize transition-[background-color,color,box-shadow] duration-120 ease-studio ${
                     stroke.align === align
-                      ? "bg-card font-semibold text-ink shadow-[0_1px_2px_rgb(28_25_33/0.1)]"
+                      ? "bg-card font-semibold text-ink shadow-[0_1px_2px_rgb(0_0_0/0.3)]"
                       : "text-ink-dim hover:text-ink"
                   }`}
                   aria-pressed={stroke.align === align}
@@ -1227,7 +1227,7 @@ function DesignSection({
                   type="button"
                   className={`grid flex-1 place-items-center rounded-[4px] transition-[background-color,color] duration-120 ease-studio ${
                     node.align === align
-                      ? "active bg-card text-accent shadow-[0_1px_2px_rgb(28_25_33/0.1)]"
+                      ? "active bg-card text-accent shadow-[0_1px_2px_rgb(0_0_0/0.3)]"
                       : "text-ink-dim hover:text-ink"
                   }`}
                   onClick={() => patchSelection({ align })}
@@ -1464,7 +1464,7 @@ function defaultEffect(type: Effect["type"]): Effect {
         opacity: 0.35,
       };
     case "outline":
-      return { type, enabled: true, width: 3, color: "#4f6bf6", opacity: 1 };
+      return { type, enabled: true, width: 3, color: "#7c5cff", opacity: 1 };
     case "bevel":
       return { type, enabled: true, size: 2, soften: 4, intensity: 0.55 };
     case "glow":
@@ -2711,13 +2711,13 @@ export function Inspector() {
   // controls readable and gives deep layer trees a stable, full-height target.
   return (
     <aside
-      className="inspector flex min-h-0 flex-col overflow-hidden border-l border-panel-border bg-panel shadow-[-10px_0_32px_rgb(28_25_33/0.055)]"
+      className="inspector flex min-h-0 flex-col overflow-hidden border-l border-panel-border bg-panel shadow-[-10px_0_32px_rgb(0_0_0/0.25)]"
       aria-label="Inspector"
     >
       <header className="flex-none border-b border-panel-border bg-card/80 px-12 pb-10 pt-12 backdrop-blur-[10px]">
         <div className="mb-11 flex min-w-0 items-center gap-9">
           <span
-            className="grid h-34 w-34 flex-none place-items-center rounded-[10px] border border-[rgb(79_107_246/0.16)] bg-accent-soft text-accent"
+            className="grid h-34 w-34 flex-none place-items-center rounded-[10px] border border-[rgb(124_92_255/0.16)] bg-accent-soft text-accent"
             aria-hidden="true"
           >
             <ContextIcon size={15} strokeWidth={1.8} />
@@ -2748,7 +2748,7 @@ export function Inspector() {
             role="tab"
             className={`flex h-28 items-center justify-center gap-6 rounded-[6px] text-[11.5px] transition-[background-color,color,box-shadow] duration-140 ease-studio ${
               activeView === "properties"
-                ? "bg-card font-semibold text-ink shadow-[0_1px_3px_rgb(28_25_33/0.12)]"
+                ? "bg-card font-semibold text-ink shadow-[0_1px_3px_rgb(0_0_0/0.35)]"
                 : "text-ink-dim hover:text-ink"
             }`}
             aria-selected={activeView === "properties"}
@@ -2766,7 +2766,7 @@ export function Inspector() {
             role="tab"
             className={`flex h-28 items-center justify-center gap-6 rounded-[6px] text-[11.5px] transition-[background-color,color,box-shadow] duration-140 ease-studio ${
               activeView === "layers"
-                ? "bg-card font-semibold text-ink shadow-[0_1px_3px_rgb(28_25_33/0.12)]"
+                ? "bg-card font-semibold text-ink shadow-[0_1px_3px_rgb(0_0_0/0.35)]"
                 : "text-ink-dim hover:text-ink"
             }`}
             aria-selected={activeView === "layers"}
@@ -2780,7 +2780,7 @@ export function Inspector() {
             <span
               className={`rounded-full px-5 py-1 text-[9.5px] tabular-nums ${
                 activeView === "layers"
-                  ? "bg-accent-soft text-accent-deep"
+                  ? "bg-accent-soft text-[#a78fff]"
                   : "bg-card text-ink-dim"
               }`}
             >
@@ -2830,7 +2830,7 @@ export function Inspector() {
           className={`${SECTION} grid justify-items-center gap-6 px-14 pb-18 pt-22 text-center`}
         >
           <span
-            className="mb-4 grid h-34 w-34 place-items-center rounded-[10px] border border-[rgb(79_107_246/0.18)] bg-[linear-gradient(135deg,var(--color-accent-soft),#e4e9fd)] text-accent"
+            className="mb-4 grid h-34 w-34 place-items-center rounded-[10px] border border-[rgb(124_92_255/0.18)] bg-[linear-gradient(135deg,var(--color-accent-soft),#e4e9fd)] text-accent"
             aria-hidden="true"
           >
             <Shapes size={16} strokeWidth={1.75} />

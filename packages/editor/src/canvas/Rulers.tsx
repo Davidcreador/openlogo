@@ -7,11 +7,11 @@ import { useEditorStore } from "../state/editor-store";
 export const RULER_SIZE = 20;
 
 // Canvas 2D can't resolve CSS custom properties; these mirror styles.css tokens.
-const TICK_MINOR = "rgb(28 25 33 / 0.16)";
-const TICK_MID = "rgb(28 25 33 / 0.26)";
-const TICK_MAJOR = "rgb(28 25 33 / 0.44)";
-const LABEL_COLOR = "rgb(35 32 40 / 0.6)";
-const GUIDE_MARK = "#4f6bf6"; // --accent, matches renderer SELECTION_COLOR
+const TICK_MINOR = "rgb(233 231 240 / 0.14)";
+const TICK_MID = "rgb(233 231 240 / 0.24)";
+const TICK_MAJOR = "rgb(233 231 240 / 0.42)";
+const LABEL_COLOR = "rgb(233 231 240 / 0.55)";
+const GUIDE_MARK = "#7c5cff"; // --accent, matches renderer SELECTION_COLOR
 const LABEL_FONT =
   '500 9px Inter, ui-sans-serif, system-ui, -apple-system, sans-serif';
 
@@ -218,8 +218,8 @@ export function CanvasRulers({
 
   // Frosted panel material shared by both strips and the corner square.
   const material =
-    "absolute bg-[rgb(250_249_247/0.66)] backdrop-blur-[10px] backdrop-saturate-[1.15]";
-  const strip = `ruler ${material} z-15 overflow-hidden transition-colors duration-140 ease-studio hover:bg-[rgb(250_249_247/0.88)]`;
+    "absolute bg-[rgb(20_18_27/0.66)] backdrop-blur-[10px] backdrop-saturate-[1.15]";
+  const strip = `ruler ${material} z-15 overflow-hidden transition-colors duration-140 ease-studio hover:bg-[rgb(20_18_27/0.88)]`;
   const cursor = "ruler-cursor pointer-events-none absolute left-0 top-0 bg-accent opacity-0";
 
   return (

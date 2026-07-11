@@ -4,7 +4,7 @@ import { useLiveDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
 import { gradientHandlePoints } from "./gradient-annotator";
 
-const LINE = "#4f6bf6";
+const LINE = "#7c5cff";
 
 /**
  * Visual layer of the gradient annotator (G tool): the gradient line

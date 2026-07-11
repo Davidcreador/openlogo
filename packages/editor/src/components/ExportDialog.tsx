@@ -27,11 +27,11 @@ const FIELD =
 const TAB_BASE =
   "flex-1 rounded-[6px] py-5 text-[12px] transition-[background-color,color,box-shadow] duration-120 ease-studio disabled:cursor-default disabled:opacity-35";
 const TAB_ON =
-  "bg-card font-semibold text-ink shadow-[0_1px_2px_rgb(28_25_33/0.1)]";
+  "bg-card font-semibold text-ink shadow-[0_1px_2px_rgb(0_0_0/0.3)]";
 const BUTTON =
   "rounded-field border border-field-border bg-card px-12 py-6 text-[12px] text-ink transition-[border-color,color] duration-140 ease-studio hover:enabled:border-accent hover:enabled:text-accent disabled:cursor-not-allowed disabled:opacity-45";
 const PRIMARY =
-  "rounded-field bg-accent px-12 py-6 text-[12px] font-semibold text-white transition-[filter] duration-140 ease-studio hover:enabled:brightness-[1.08] disabled:cursor-not-allowed disabled:opacity-45";
+  "rounded-field bg-linear-to-b from-[#9578ff] to-accent px-12 py-6 text-[12px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.2)] transition-[filter,box-shadow] duration-140 ease-studio hover:enabled:brightness-[1.08] hover:enabled:shadow-[inset_0_1px_0_rgb(255_255_255/0.2),0_2px_10px_rgb(124_92_255/0.4)] disabled:cursor-not-allowed disabled:opacity-45";
 const ROW = "flex items-center justify-between gap-8 text-[12px] text-ink-dim";
 const CHECK = "flex items-center gap-6 text-[12px] text-ink-dim";
 
@@ -245,7 +245,7 @@ export function ExportDialog() {
   return (
     <div
       ref={dialogRef}
-      className="overlay-in fixed inset-0 z-40 grid place-items-center bg-[rgb(28_25_33/0.28)]"
+      className="overlay-in fixed inset-0 z-40 grid place-items-center bg-[rgb(8_6_12/0.55)]"
       onPointerDown={(event) => {
         if (event.target === event.currentTarget) {
           setOpen(false);

@@ -40,34 +40,36 @@
 
   --color-white: #ffffff;
 
-  /* Warm near-black chrome over a warm paper worksurface. Panels float
-     as cards on the canvas rather than docking as full-height rails. */
-  --color-chrome: #17151b;
+  /* Dark studio chrome (Linear/Framer register) with a violet creative
+     accent. Graphite layers: surface (worksurface, deepest) → panel →
+     card (raised) with sunken fields; artboards read as the lit stage. */
+  --color-chrome: #121017;
   --color-chrome-raised: rgb(255 255 255 / 0.06);
   --color-chrome-active: rgb(255 255 255 / 0.1);
   --color-chrome-border: rgb(255 255 255 / 0.08);
   --color-chrome-hairline: rgb(255 255 255 / 0.05);
-  --color-chrome-text: #eceaf0;
-  --color-chrome-dim: #98939f;
+  --color-chrome-text: #ecebf2;
+  --color-chrome-dim: #938fa0;
 
-  --color-panel: #faf9f7;
-  --color-card: #ffffff;
-  --color-panel-border: rgb(28 25 33 / 0.08);
-  --color-panel-hairline: rgb(28 25 33 / 0.06);
-  --color-ink: #232028;
-  --color-ink-dim: #817d89;
+  --color-panel: #191722;
+  --color-card: #221f2c;
+  --color-panel-border: rgb(255 255 255 / 0.08);
+  --color-panel-hairline: rgb(255 255 255 / 0.06);
+  --color-ink: #e9e7f0;
+  --color-ink-dim: #938fa0;
+  --color-ink-faint: #6b6678;
 
-  --color-field: #f1efec;
-  --color-field-border: rgb(28 25 33 / 0.07);
+  --color-field: #14121b;
+  --color-field-border: rgb(255 255 255 / 0.07);
 
-  --color-surface: #e9e6e1;
-  --color-canvas-dot: rgb(28 25 33 / 0.09);
+  --color-surface: #100e14;
+  --color-canvas-dot: rgb(255 255 255 / 0.055);
 
-  --color-accent: #4f6bf6;
-  --color-accent-deep: #3d55d6;
-  --color-accent-soft: #eef1fe;
-  --color-accent-ring: rgb(79 107 246 / 0.28);
-  --color-danger: #ef4444;
+  --color-accent: #7c5cff;
+  --color-accent-deep: #6647e0;
+  --color-accent-soft: rgb(124 92 255 / 0.14);
+  --color-accent-ring: rgb(124 92 255 / 0.35);
+  --color-danger: #f0564d;
 
   --radius-field: 6px;
   --radius-m: 8px;
@@ -75,19 +77,23 @@
   --radius-panel: 14px;
 
   --shadow-panel:
-    0 0 0 1px rgb(28 25 33 / 0.05),
-    0 1px 2px rgb(28 25 33 / 0.05),
-    0 8px 24px rgb(28 25 33 / 0.08),
-    0 28px 64px rgb(28 25 33 / 0.07);
+    0 0 0 1px rgb(0 0 0 / 0.35),
+    0 1px 2px rgb(0 0 0 / 0.3),
+    0 8px 24px rgb(0 0 0 / 0.32),
+    0 28px 64px rgb(0 0 0 / 0.28);
   --shadow-float:
-    0 0 0 1px rgb(28 25 33 / 0.05),
-    0 1px 3px rgb(28 25 33 / 0.07),
-    0 10px 28px rgb(28 25 33 / 0.11);
+    0 0 0 1px rgb(0 0 0 / 0.35),
+    0 1px 3px rgb(0 0 0 / 0.3),
+    0 10px 28px rgb(0 0 0 / 0.38);
   --shadow-menu:
     0 0 0 1px rgb(255 255 255 / 0.06),
     0 4px 12px rgb(8 6 12 / 0.3),
     0 18px 48px rgb(8 6 12 / 0.42);
   --shadow-ring: 0 0 0 2px var(--color-accent-ring);
+  --shadow-glow:
+    0 0 0 1px rgb(124 92 255 / 0.4),
+    0 2px 10px rgb(124 92 255 / 0.3),
+    0 8px 30px rgb(124 92 255 / 0.18);
 
   --ease-studio: cubic-bezier(0.3, 0.7, 0.4, 1);
 }
@@ -298,7 +304,7 @@
     display: grid;
     place-items: center;
     width: 16px;
-    color: #8ea0fa;
+    color: #a78fff;
   }
 
   .menu-label {
@@ -356,7 +362,7 @@
 
   .tool-flyout .menu-item.active {
     background: var(--color-chrome-raised);
-    color: #8ea0fa;
+    color: #a78fff;
   }
 
   .tool-flyout .menu-item small {
@@ -457,10 +463,10 @@
   }
 
   .inspector-section:hover {
-    border-color: rgb(28 25 33 / 0.09);
+    border-color: rgb(255 255 255 / 0.11);
     box-shadow:
-      0 1px 2px rgb(28 25 33 / 0.045),
-      0 5px 16px rgb(28 25 33 / 0.035);
+      0 1px 2px rgb(0 0 0 / 0.25),
+      0 5px 16px rgb(0 0 0 / 0.2);
   }
 
   .inspector-range {
@@ -479,8 +485,8 @@
       90deg,
       var(--color-accent) 0%,
       var(--color-accent) calc(var(--range-progress, 0) * 100%),
-      rgb(28 25 33 / 0.14) calc(var(--range-progress, 0) * 100%),
-      rgb(28 25 33 / 0.14) 100%
+      rgb(255 255 255 / 0.14) calc(var(--range-progress, 0) * 100%),
+      rgb(255 255 255 / 0.14) 100%
     );
   }
 
@@ -490,10 +496,10 @@
     margin-top: -6px;
     border: 2px solid var(--color-card);
     border-radius: 50%;
-    background: #686773;
+    background: #8d899c;
     box-shadow:
-      0 0 0 1px rgb(28 25 33 / 0.16),
-      0 2px 5px rgb(28 25 33 / 0.22);
+      0 0 0 1px rgb(0 0 0 / 0.4),
+      0 2px 5px rgb(0 0 0 / 0.35);
     appearance: none;
     -webkit-appearance: none;
   }
@@ -501,7 +507,7 @@
   .inspector-range::-moz-range-track {
     height: 4px;
     border-radius: 999px;
-    background: rgb(28 25 33 / 0.14);
+    background: rgb(255 255 255 / 0.14);
   }
 
   .inspector-range::-moz-range-progress {
@@ -515,17 +521,17 @@
     height: 14px;
     border: 2px solid var(--color-card);
     border-radius: 50%;
-    background: #686773;
+    background: #8d899c;
     box-shadow:
-      0 0 0 1px rgb(28 25 33 / 0.16),
-      0 2px 5px rgb(28 25 33 / 0.22);
+      0 0 0 1px rgb(0 0 0 / 0.4),
+      0 2px 5px rgb(0 0 0 / 0.35);
   }
 
   /* ---------- Editable swatch (webkit color-input internals) ---------- */
 
   .swatch-editable {
     padding: 0;
-    border: 1px solid rgb(28 25 33 / 0.1);
+    border: 1px solid rgb(255 255 255 / 0.14);
     background: none;
     -webkit-appearance: none;
     appearance: none;
@@ -544,7 +550,7 @@
 
   .inspector-card {
     scrollbar-width: thin;
-    scrollbar-color: rgb(28 25 33 / 0.18) transparent;
+    scrollbar-color: rgb(255 255 255 / 0.18) transparent;
   }
 
   .inspector-card::-webkit-scrollbar {
@@ -552,7 +558,7 @@
   }
 
   .inspector-card::-webkit-scrollbar-thumb {
-    background: rgb(28 25 33 / 0.14);
+    background: rgb(255 255 255 / 0.16);
     border-radius: 4px;
     border: 2px solid var(--color-panel);
   }
@@ -581,14 +587,14 @@
 
   .layer-row:hover {
     background: var(--color-field);
-    box-shadow: inset 0 0 0 1px rgb(28 25 33 / 0.04);
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06);
   }
 
   .layer-row.active {
     background: var(--color-accent-soft);
     box-shadow:
-      inset 0 0 0 1px rgb(79 107 246 / 0.22),
-      0 1px 2px rgb(79 107 246 / 0.1);
+      inset 0 0 0 1px rgb(124 92 255 / 0.22),
+      0 1px 2px rgb(124 92 255 / 0.1);
   }
 
   .layer-row[draggable="true"] {
@@ -664,7 +670,7 @@
     top: -1px;
     bottom: -1px;
     width: 1px;
-    background: rgb(28 25 33 / 0.09);
+    background: rgb(255 255 255 / 0.1);
   }
 
   .layer-caret {
@@ -680,7 +686,7 @@
   }
 
   .layer-caret:hover {
-    background: rgb(28 25 33 / 0.07);
+    background: rgb(255 255 255 / 0.08);
     color: var(--color-ink);
   }
 
@@ -719,8 +725,8 @@
   }
 
   .layer-row.active .layer-thumb {
-    border-color: rgb(79 107 246 / 0.35);
-    box-shadow: 0 1px 3px rgb(79 107 246 / 0.25);
+    border-color: rgb(124 92 255 / 0.35);
+    box-shadow: 0 1px 3px rgb(124 92 255 / 0.25);
   }
 
   .layer-thumb svg {
@@ -763,7 +769,7 @@
     flex-shrink: 0;
     padding: 1px 6px;
     border-radius: 999px;
-    background: rgb(28 25 33 / 0.06);
+    background: rgb(255 255 255 / 0.08);
     color: var(--color-ink-dim);
     font-size: 10px;
     font-weight: 600;
@@ -775,7 +781,7 @@
     padding: 1px 5px;
     border-radius: 4px;
     background: var(--color-accent-soft);
-    border: 1px solid rgb(79 107 246 / 0.16);
+    border: 1px solid rgb(124 92 255 / 0.16);
     color: var(--color-accent-deep);
     font-size: 9.5px;
     font-weight: 600;
@@ -806,7 +812,7 @@
   }
 
   .layer-toggle:hover {
-    background: rgb(28 25 33 / 0.07);
+    background: rgb(255 255 255 / 0.08);
     color: var(--color-ink);
   }
 
@@ -824,7 +830,7 @@
 
 :where(.toolbar, .menu, [data-testid="toast"])
   :where(button, input, select, textarea, [tabindex]):focus-visible {
-  outline-color: #aebaff;
+  outline-color: #b9a5ff;
 }
 
 @media (prefers-reduced-motion: reduce) {
