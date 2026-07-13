@@ -113,7 +113,7 @@ export function PreviewStrip() {
                     type="button"
                     className={`flex h-22 items-center gap-4 rounded-[5px] border px-5 text-[9px] font-medium transition-all duration-140 ease-studio ${
                       selected
-                        ? "border-accent bg-accent-soft text-[#a78fff]"
+                        ? "border-accent bg-accent-soft text-accent-ink"
                         : "border-transparent text-ink-dim hover:bg-field hover:text-ink"
                     }`}
                     key={option.id}
@@ -138,7 +138,7 @@ export function PreviewStrip() {
             </div>
           </div>
           <div
-            className={`flex items-end justify-center gap-16 rounded-[10px] border border-panel-hairline px-16 pb-8 pt-14 shadow-[inset_0_1px_2px_rgb(0_0_0/0.22)] ${
+            className={`flex items-end justify-center gap-16 rounded-[10px] border border-panel-hairline px-16 pb-8 pt-14 shadow-[inset_0_1px_2px_var(--shade-strip-inset)] ${
               surface === "transparent" ? "preview-transparency" : ""
             }`}
             style={{ backgroundColor: surfaceColor }}

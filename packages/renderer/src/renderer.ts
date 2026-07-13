@@ -86,7 +86,38 @@ export type Scene = {
   } | null;
 };
 
-const SELECTION_COLOR = "#7c5cff";
+/**
+ * Chrome-matched colors the GPU canvas cannot take from CSS custom
+ * properties. Values mirror styles.css: selection follows --color-accent,
+ * shadow/label strength is tuned per worksurface. setTheme() swaps the
+ * whole object, so hot paths read plain properties — no per-frame branches.
+ */
+export type RendererThemeName = "dark" | "light";
+
+type RendererTheme = {
+  selection: string;
+  artboardShadow: string;
+  artboardShadowAlpha: number;
+  artboardLabel: string;
+};
+
+const RENDERER_THEMES: Record<RendererThemeName, RendererTheme> = {
+  dark: {
+    selection: "#7c5cff",
+    artboardShadow: "#000000",
+    artboardShadowAlpha: 0.45,
+    artboardLabel: "#8a8598",
+  },
+  light: {
+    selection: "#4f6bf6",
+    artboardShadow: "#1c1921",
+    artboardShadowAlpha: 0.1,
+    artboardLabel: "#5d5966",
+  },
+};
+
+let activeTheme: RendererTheme = RENDERER_THEMES.dark;
+
 const GUIDE_COLOR = "#ec4899";
 const RULER_GUIDE_COLOR = "#06b6d4";
 
@@ -257,6 +288,23 @@ export class SceneRenderer {
 
   invalidate(): void {
     this.frameScheduler.invalidate();
+  }
+
+  /**
+   * Swap the theme-tied constants (module-wide — every renderer shares the
+   * app theme) and repaint. Artboard labels bake their color into cached
+   * paragraphs, so the label cache is dropped with it.
+   */
+  setTheme(name: RendererThemeName): void {
+    if (activeTheme === RENDERER_THEMES[name]) {
+      return;
+    }
+    activeTheme = RENDERER_THEMES[name];
+    for (const entry of this.labelCache.values()) {
+      entry.paragraph.delete();
+    }
+    this.labelCache.clear();
+    this.invalidate();
   }
 
   /** Recreate a missing surface after WebGL context loss. */
@@ -552,8 +600,8 @@ export class SceneRenderer {
 
     // Drop shadow + background.
     const shadow = new ck.Paint();
-    shadow.setColor(ck.parseColorString("#000000"));
-    shadow.setAlphaf(0.45);
+    shadow.setColor(ck.parseColorString(activeTheme.artboardShadow));
+    shadow.setAlphaf(activeTheme.artboardShadowAlpha);
     shadow.setMaskFilter(
       ck.MaskFilter.MakeBlur(ck.BlurStyle.Normal, 14 / camera.zoom, true),
     );
@@ -606,7 +654,7 @@ export class SceneRenderer {
       const outline = new ck.Paint();
       outline.setStyle(ck.PaintStyle.Stroke);
       outline.setStrokeWidth(1.25 / zoom);
-      outline.setColor(ck.parseColorString(SELECTION_COLOR));
+      outline.setColor(ck.parseColorString(activeTheme.selection));
       outline.setAlphaf(0.65);
       outline.setAntiAlias(true);
       canvas.drawRect(
@@ -633,7 +681,9 @@ export class SceneRenderer {
         maxLines: 1,
         ellipsis: "…",
         textStyle: {
-          color: ck.parseColorString(isActive ? SELECTION_COLOR : "#8a8598"),
+          color: ck.parseColorString(
+            isActive ? activeTheme.selection : activeTheme.artboardLabel,
+          ),
           fontFamilies: [family],
           fontSize,
           fontStyle: { weight: { value: 550 } },
@@ -1613,7 +1663,7 @@ export class SceneRenderer {
       const paint = new ck.Paint();
       paint.setStyle(ck.PaintStyle.Stroke);
       paint.setStrokeWidth(1.5 / scene.camera.zoom);
-      const color = ck.parseColorString(SELECTION_COLOR);
+      const color = ck.parseColorString(activeTheme.selection);
       color[3] = 0.55;
       paint.setColor(color);
       paint.setAntiAlias(true);
@@ -1659,7 +1709,7 @@ export class SceneRenderer {
     const outline = new ck.Paint();
     outline.setStyle(ck.PaintStyle.Stroke);
     outline.setStrokeWidth(1.5 / camera.zoom);
-    outline.setColor(ck.parseColorString(SELECTION_COLOR));
+    outline.setColor(ck.parseColorString(activeTheme.selection));
     outline.setAntiAlias(true);
     const dash = ck.PathEffect.MakeDash([6 / camera.zoom, 4 / camera.zoom], 0);
     outline.setPathEffect(dash);
@@ -1683,7 +1733,7 @@ export class SceneRenderer {
         const ring = new ck.Paint();
         ring.setStyle(ck.PaintStyle.Stroke);
         ring.setStrokeWidth(2.5 / camera.zoom);
-        ring.setColor(ck.parseColorString(SELECTION_COLOR));
+        ring.setColor(ck.parseColorString(activeTheme.selection));
         ring.setAntiAlias(true);
         const pad = 2 / camera.zoom;
         canvas.drawRect(
@@ -1707,7 +1757,7 @@ export class SceneRenderer {
     const stem = new ck.Paint();
     stem.setStyle(ck.PaintStyle.Stroke);
     stem.setStrokeWidth(1.25 / camera.zoom);
-    stem.setColor(ck.parseColorString(SELECTION_COLOR));
+    stem.setColor(ck.parseColorString(activeTheme.selection));
     stem.setAntiAlias(true);
     const stemPath = new ck.Path();
     stemPath.moveTo(stemTop.x, bounds.y);
@@ -1731,7 +1781,7 @@ export class SceneRenderer {
     const handleStroke = new ck.Paint();
     handleStroke.setStyle(ck.PaintStyle.Stroke);
     handleStroke.setStrokeWidth(1.25 / camera.zoom);
-    handleStroke.setColor(ck.parseColorString(SELECTION_COLOR));
+    handleStroke.setColor(ck.parseColorString(activeTheme.selection));
     handleStroke.setAntiAlias(true);
 
     for (const handle of selectionHandles(bounds)) {
@@ -1778,7 +1828,7 @@ export class SceneRenderer {
           const fill = new ck.Paint();
           fill.setAntiAlias(true);
           const color = ck.parseColorString(
-            region.state === "deleted" ? "#ef4444" : SELECTION_COLOR,
+            region.state === "deleted" ? "#ef4444" : activeTheme.selection,
           );
           color[3] = fillAlpha;
           fill.setColor(color);
@@ -1790,7 +1840,7 @@ export class SceneRenderer {
         stroke.setStyle(ck.PaintStyle.Stroke);
         stroke.setAntiAlias(true);
         stroke.setStrokeWidth((region.hovered ? 2 : 1) / zoom);
-        const strokeColor = ck.parseColorString(SELECTION_COLOR);
+        const strokeColor = ck.parseColorString(activeTheme.selection);
         strokeColor[3] = region.hovered ? 1 : 0.55;
         stroke.setColor(strokeColor);
         canvas.drawPath(path, stroke);
@@ -2003,7 +2053,7 @@ export class SceneRenderer {
     );
 
     const fill = new ck.Paint();
-    fill.setColor(ck.parseColorString(filled ? SELECTION_COLOR : "#ffffff"));
+    fill.setColor(ck.parseColorString(filled ? activeTheme.selection : "#ffffff"));
     fill.setAntiAlias(true);
     canvas.drawRect(rect, fill);
     fill.delete();
@@ -2011,7 +2061,7 @@ export class SceneRenderer {
     const stroke = new ck.Paint();
     stroke.setStyle(ck.PaintStyle.Stroke);
     stroke.setStrokeWidth(1.25 / zoom);
-    stroke.setColor(ck.parseColorString(SELECTION_COLOR));
+    stroke.setColor(ck.parseColorString(activeTheme.selection));
     stroke.setAntiAlias(true);
     canvas.drawRect(rect, stroke);
     stroke.delete();
@@ -2037,7 +2087,7 @@ export class SceneRenderer {
     line.delete();
 
     const dot = new ck.Paint();
-    dot.setColor(ck.parseColorString(SELECTION_COLOR));
+    dot.setColor(ck.parseColorString(activeTheme.selection));
     dot.setAntiAlias(true);
     canvas.drawCircle(handle.x, handle.y, 3.5 / zoom, dot);
     dot.delete();
@@ -2048,7 +2098,7 @@ export class SceneRenderer {
     const paint = new ck.Paint();
     paint.setStyle(ck.PaintStyle.Stroke);
     paint.setStrokeWidth(1.5 / zoom);
-    paint.setColor(ck.parseColorString(SELECTION_COLOR));
+    paint.setColor(ck.parseColorString(activeTheme.selection));
     paint.setAntiAlias(true);
     return paint;
   }
@@ -2161,7 +2211,7 @@ export class SceneRenderer {
     );
 
     const fill = new ck.Paint();
-    fill.setColor(ck.parseColorString(SELECTION_COLOR));
+    fill.setColor(ck.parseColorString(activeTheme.selection));
     fill.setAlphaf(0.08);
     canvas.drawRect(rect, fill);
     fill.delete();
@@ -2169,7 +2219,7 @@ export class SceneRenderer {
     const stroke = new ck.Paint();
     stroke.setStyle(ck.PaintStyle.Stroke);
     stroke.setStrokeWidth(1 / scene.camera.zoom);
-    stroke.setColor(ck.parseColorString(SELECTION_COLOR));
+    stroke.setColor(ck.parseColorString(activeTheme.selection));
     canvas.drawRect(rect, stroke);
     stroke.delete();
   }

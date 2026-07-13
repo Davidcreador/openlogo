@@ -241,7 +241,7 @@ export function PaintEditor({
   const toggleButton =
     "min-h-28 flex-1 rounded-[6px] py-4 text-[11.5px] transition-[background-color,color,box-shadow] duration-120 ease-studio";
   const toggleActive =
-    "bg-card font-semibold text-ink shadow-[0_1px_2px_rgb(0_0_0/0.3)]";
+    "bg-card font-semibold text-ink shadow-tab";
 
   const offsetFromEvent = (event: React.PointerEvent): number => {
     const rect = rampRef.current!.getBoundingClientRect();
@@ -315,7 +315,7 @@ export function PaintEditor({
             ref={rampRef}
             id={rampId}
             data-testid="gradient-ramp"
-            className="relative mb-18 h-18 cursor-crosshair rounded-[7px] border border-[rgb(255_255_255/0.14)] shadow-[inset_0_1px_2px_rgb(0_0_0/0.35)]"
+            className="relative mb-18 h-18 cursor-crosshair rounded-[7px] border border-[rgb(var(--edge-rgb)_/_0.14)] shadow-[inset_0_1px_2px_var(--shade-ramp-inset)]"
             style={{ background: rampBackground(gradient.stops) }}
             role="group"
             aria-label={`${label} gradient stops`}
@@ -401,7 +401,7 @@ export function PaintEditor({
                 onLostPointerCapture={() => finishDrag(false)}
               >
                 <span
-                  className={`h-15 w-15 rounded-full border-2 shadow-[0_1px_3px_rgb(0_0_0/0.5)] ${
+                  className={`h-15 w-15 rounded-full border-2 shadow-[0_1px_3px_var(--shade-stop)] ${
                     index === stopIndex
                       ? "border-accent ring-2 ring-white"
                       : "border-white"
@@ -414,7 +414,7 @@ export function PaintEditor({
           </div>
 
           {stop && (
-            <div className="mb-10 grid gap-7 rounded-m border border-field-border bg-[rgb(241_239_236/0.56)] p-7">
+            <div className="mb-10 grid gap-7 rounded-m border border-field-border bg-field/56 p-7">
               <div className="flex min-w-0 items-center gap-6">
                 <input
                   type="color"

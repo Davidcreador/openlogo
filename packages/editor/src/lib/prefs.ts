@@ -9,13 +9,18 @@ import type { ReviewScope } from "@openlogo/core";
 
 const PREFS_KEY = "openlogo:prefs";
 
+export type ThemeName = "dark" | "light";
+
 export type EditorPrefs = {
+  /** UI theme. Dark is the product default; light only when chosen. */
+  theme: ThemeName;
   pixelSnap: boolean;
   designMateScope: ReviewScope;
   designMateRemoteEnabled: boolean;
 };
 
 const DEFAULTS: EditorPrefs = {
+  theme: "dark",
   pixelSnap: false,
   designMateScope: "active-artboard",
   designMateRemoteEnabled: false,
@@ -37,6 +42,9 @@ export function loadPrefs(): EditorPrefs {
     }
     const parsed = JSON.parse(raw) as Partial<EditorPrefs>;
     return {
+      // index.html's pre-paint script applies the same "light-only-if-stored"
+      // rule; keep the two in sync or the theme will flash on load.
+      theme: parsed.theme === "light" ? "light" : DEFAULTS.theme,
       pixelSnap:
         typeof parsed.pixelSnap === "boolean"
           ? parsed.pixelSnap

@@ -68,8 +68,19 @@
   --color-accent: #7c5cff;
   --color-accent-deep: #6647e0;
   --color-accent-soft: rgb(124 92 255 / 0.14);
+  --color-accent-soft-2: rgb(124 92 255 / 0.04);
   --color-accent-ring: rgb(124 92 255 / 0.35);
+  /* Accent renditions per surface: tint sits on dark chrome (menus,
+     toolbar), ink is readable accent text on panel/accent-soft, grad is
+     the top stop of gradient primary buttons. */
+  --color-accent-tint: #a78fff;
+  --color-accent-ink: #a78fff;
+  --color-accent-grad: #9578ff;
   --color-danger: #f0564d;
+  --color-warn-ink: #e4c07a;
+  --color-warn-soft: rgb(232 195 126 / 0.08);
+  --color-ok-ink: #7fd6a0;
+  --color-scrim: rgb(8 6 12 / 0.55);
 
   --radius-field: 6px;
   --radius-m: 8px;
@@ -91,9 +102,16 @@
     0 18px 48px rgb(8 6 12 / 0.42);
   --shadow-ring: 0 0 0 2px var(--color-accent-ring);
   --shadow-glow:
-    0 0 0 1px rgb(124 92 255 / 0.4),
-    0 2px 10px rgb(124 92 255 / 0.3),
-    0 8px 30px rgb(124 92 255 / 0.18);
+    0 0 0 1px color-mix(in srgb, var(--color-accent) 40%, transparent),
+    0 2px 10px color-mix(in srgb, var(--color-accent) 30%, transparent),
+    0 8px 30px color-mix(in srgb, var(--color-accent) 18%, transparent);
+  /* Elevation shades whose strength is tuned per theme (deep blacks on
+     dark, faint warm ink on light). */
+  --shadow-pop: 0 10px 30px rgb(0 0 0 / 0.45);
+  --shadow-tab: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-tab-lg: 0 1px 3px rgb(0 0 0 / 0.35);
+  --shadow-section: 0 1px 2px rgb(0 0 0 / 0.2);
+  --shadow-rail: -10px 0 32px rgb(0 0 0 / 0.25);
 
   --ease-studio: cubic-bezier(0.3, 0.7, 0.4, 1);
 }
@@ -107,12 +125,42 @@
   }
 
   :root {
+    color-scheme: dark;
     color: var(--color-ink);
     font-family: var(--font-sans);
     font-synthesis: none;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     font-size: 13px;
+
+    /* Accent glows for JSX arbitrary shadows — derived from the accent so
+       both themes stay in key without per-theme overrides. */
+    --glow-16: color-mix(in srgb, var(--color-accent) 16%, transparent);
+    --glow-22: color-mix(in srgb, var(--color-accent) 22%, transparent);
+    --glow-25: color-mix(in srgb, var(--color-accent) 25%, transparent);
+    --glow-28: color-mix(in srgb, var(--color-accent) 28%, transparent);
+    --glow-30: color-mix(in srgb, var(--color-accent) 30%, transparent);
+    --glow-40: color-mix(in srgb, var(--color-accent) 40%, transparent);
+    --glow-45: color-mix(in srgb, var(--color-accent) 45%, transparent);
+
+    /* Hairline channel on raised surfaces: white lift on dark, warm ink
+       on light. Use as rgb(var(--edge-rgb) / alpha). */
+    --edge-rgb: 255 255 255;
+
+    /* One-off shadow shades whose alpha is tuned per theme. */
+    --shade-swatch-hover: rgb(0 0 0 / 0.45);
+    --shade-ramp-inset: rgb(0 0 0 / 0.35);
+    --shade-stop: rgb(0 0 0 / 0.5);
+    --shade-focus-label: rgb(0 0 0 / 0.5);
+    --shade-strip-inset: rgb(0 0 0 / 0.22);
+    --shade-pivot: rgb(8 6 12 / 0.5);
+
+    /* Keyboard-focus halo on dark chrome (toolbar, menus, toasts). */
+    --focus-halo: #b9a5ff;
+
+    /* Frosted ruler strips over the worksurface (Rulers.tsx). */
+    --ruler-mat: rgb(20 18 27 / 0.66);
+    --ruler-mat-hover: rgb(20 18 27 / 0.88);
   }
 
   * {
@@ -304,7 +352,7 @@
     display: grid;
     place-items: center;
     width: 16px;
-    color: #a78fff;
+    color: var(--color-accent-tint);
   }
 
   .menu-label {
@@ -362,7 +410,7 @@
 
   .tool-flyout .menu-item.active {
     background: var(--color-chrome-raised);
-    color: #a78fff;
+    color: var(--color-accent-tint);
   }
 
   .tool-flyout .menu-item small {
@@ -485,8 +533,8 @@
       90deg,
       var(--color-accent) 0%,
       var(--color-accent) calc(var(--range-progress, 0) * 100%),
-      rgb(255 255 255 / 0.14) calc(var(--range-progress, 0) * 100%),
-      rgb(255 255 255 / 0.14) 100%
+      rgb(var(--edge-rgb) / 0.14) calc(var(--range-progress, 0) * 100%),
+      rgb(var(--edge-rgb) / 0.14) 100%
     );
   }
 
@@ -507,7 +555,7 @@
   .inspector-range::-moz-range-track {
     height: 4px;
     border-radius: 999px;
-    background: rgb(255 255 255 / 0.14);
+    background: rgb(var(--edge-rgb) / 0.14);
   }
 
   .inspector-range::-moz-range-progress {
@@ -550,7 +598,7 @@
 
   .inspector-card {
     scrollbar-width: thin;
-    scrollbar-color: rgb(255 255 255 / 0.18) transparent;
+    scrollbar-color: rgb(var(--edge-rgb) / 0.18) transparent;
   }
 
   .inspector-card::-webkit-scrollbar {
@@ -593,8 +641,8 @@
   .layer-row.active {
     background: var(--color-accent-soft);
     box-shadow:
-      inset 0 0 0 1px rgb(124 92 255 / 0.22),
-      0 1px 2px rgb(124 92 255 / 0.1);
+      inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 22%, transparent),
+      0 1px 2px color-mix(in srgb, var(--color-accent) 10%, transparent);
   }
 
   .layer-row[draggable="true"] {
@@ -725,8 +773,8 @@
   }
 
   .layer-row.active .layer-thumb {
-    border-color: rgb(124 92 255 / 0.35);
-    box-shadow: 0 1px 3px rgb(124 92 255 / 0.25);
+    border-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--color-accent) 25%, transparent);
   }
 
   .layer-thumb svg {
@@ -781,7 +829,7 @@
     padding: 1px 5px;
     border-radius: 4px;
     background: var(--color-accent-soft);
-    border: 1px solid rgb(124 92 255 / 0.16);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 16%, transparent);
     color: var(--color-accent-deep);
     font-size: 9.5px;
     font-weight: 600;
@@ -821,6 +869,125 @@
   }
 }
 
+/* ---------- Light theme ----------
+   Dark is the default (:root above). Light restores the pre-reskin warm
+   paper look verbatim: same dark chrome, paper panels, blue accent. Values
+   are the ones the pixel-faithful Tailwind migration was verified against —
+   change them only alongside a fresh screenshot pass. The block is
+   unlayered so it beats the @layer theme/components defaults. */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --color-chrome: #17151b;
+  --color-chrome-text: #eceaf0;
+  --color-chrome-dim: #98939f;
+
+  --color-panel: #faf9f7;
+  --color-card: #ffffff;
+  --color-panel-border: rgb(28 25 33 / 0.08);
+  --color-panel-hairline: rgb(28 25 33 / 0.06);
+  --color-ink: #232028;
+  --color-ink-dim: #817d89;
+  --color-ink-faint: #a5a1ac;
+
+  --color-field: #f1efec;
+  --color-field-border: rgb(28 25 33 / 0.07);
+
+  --color-surface: #e9e6e1;
+  --color-canvas-dot: rgb(28 25 33 / 0.09);
+
+  --color-accent: #4f6bf6;
+  --color-accent-deep: #3d55d6;
+  --color-accent-soft: #eef1fe;
+  --color-accent-soft-2: #e4e9fd;
+  --color-accent-ring: rgb(79 107 246 / 0.28);
+  --color-accent-tint: #8ea0fa;
+  --color-accent-ink: #3d55d6;
+  --color-accent-grad: #5d77f7;
+  --color-danger: #ef4444;
+  --color-warn-ink: #7c5a12;
+  --color-warn-soft: #fdf6e9;
+  --color-ok-ink: #1e7a4a;
+  --color-scrim: rgb(28 25 33 / 0.28);
+
+  --shadow-panel:
+    0 0 0 1px rgb(28 25 33 / 0.05),
+    0 1px 2px rgb(28 25 33 / 0.05),
+    0 8px 24px rgb(28 25 33 / 0.08),
+    0 28px 64px rgb(28 25 33 / 0.07);
+  --shadow-float:
+    0 0 0 1px rgb(28 25 33 / 0.05),
+    0 1px 3px rgb(28 25 33 / 0.07),
+    0 10px 28px rgb(28 25 33 / 0.11);
+  --shadow-pop: 0 10px 30px rgb(28 25 33 / 0.18);
+  --shadow-tab: 0 1px 2px rgb(28 25 33 / 0.1);
+  --shadow-tab-lg: 0 1px 3px rgb(28 25 33 / 0.12);
+  --shadow-section: 0 1px 2px rgb(28 25 33 / 0.04);
+  --shadow-rail: -10px 0 32px rgb(28 25 33 / 0.055);
+
+  --edge-rgb: 28 25 33;
+  --shade-swatch-hover: rgb(28 25 33 / 0.18);
+  --shade-ramp-inset: rgb(28 25 33 / 0.08);
+  --shade-stop: rgb(28 25 33 / 0.32);
+  --shade-focus-label: rgb(28 25 33 / 0.2);
+  --shade-strip-inset: rgb(28 25 33 / 0.05);
+  --shade-pivot: rgb(28 25 33 / 0.25);
+  --focus-halo: #aebaff;
+  --ruler-mat: rgb(250 249 247 / 0.66);
+  --ruler-mat-hover: rgb(250 249 247 / 0.88);
+}
+
+/* Component states whose overlay strength is tuned per theme (a white
+   lift on dark needs more alpha than warm ink on paper). */
+[data-theme="light"] .inspector-section:hover {
+  border-color: rgb(28 25 33 / 0.09);
+  box-shadow:
+    0 1px 2px rgb(28 25 33 / 0.045),
+    0 5px 16px rgb(28 25 33 / 0.035);
+}
+
+[data-theme="light"] .inspector-range::-webkit-slider-thumb {
+  background: #686773;
+  box-shadow:
+    0 0 0 1px rgb(28 25 33 / 0.16),
+    0 2px 5px rgb(28 25 33 / 0.22);
+}
+
+[data-theme="light"] .inspector-range::-moz-range-thumb {
+  background: #686773;
+  box-shadow:
+    0 0 0 1px rgb(28 25 33 / 0.16),
+    0 2px 5px rgb(28 25 33 / 0.22);
+}
+
+[data-theme="light"] .swatch-editable {
+  border-color: rgb(28 25 33 / 0.1);
+}
+
+[data-theme="light"] .inspector-card::-webkit-scrollbar-thumb {
+  background: rgb(28 25 33 / 0.14);
+}
+
+[data-theme="light"] .layer-row:hover {
+  box-shadow: inset 0 0 0 1px rgb(28 25 33 / 0.04);
+}
+
+[data-theme="light"] .layer-indent::before {
+  background: rgb(28 25 33 / 0.09);
+}
+
+[data-theme="light"] .layer-caret:hover {
+  background: rgb(28 25 33 / 0.07);
+}
+
+[data-theme="light"] .layer-count {
+  background: rgb(28 25 33 / 0.06);
+}
+
+[data-theme="light"] .layer-toggle:hover {
+  background: rgb(28 25 33 / 0.07);
+}
+
 /* Keyboard focus must survive utility classes that intentionally remove the
    native outline from compact fields. Pointer interaction stays unchanged. */
 :where(button, input, select, textarea, [tabindex]):focus-visible {
@@ -830,7 +997,7 @@
 
 :where(.toolbar, .menu, [data-testid="toast"])
   :where(button, input, select, textarea, [tabindex]):focus-visible {
-  outline-color: #b9a5ff;
+  outline-color: var(--focus-halo);
 }
 
 @media (prefers-reduced-motion: reduce) {

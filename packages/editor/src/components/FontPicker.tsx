@@ -344,7 +344,7 @@ export function FontPicker({
           ref={panelRef}
           id={panelId}
           data-testid="font-picker-panel"
-          className="dialog-in fixed z-50 flex flex-col gap-6 rounded-card border border-panel-hairline bg-card p-8 shadow-[0_10px_30px_rgb(0_0_0/0.45)]"
+          className="dialog-in fixed z-50 flex flex-col gap-6 rounded-card border border-panel-hairline bg-card p-8 shadow-pop"
           style={{ top: panelPos.top, left: panelPos.left, width: PANEL_W }}
           role="dialog"
           aria-modal="false"

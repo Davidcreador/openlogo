@@ -6,12 +6,33 @@ import { useEditorStore } from "../state/editor-store";
 /** Ruler thickness in CSS px. Guide-drag scripts press inside this band. */
 export const RULER_SIZE = 20;
 
-// Canvas 2D can't resolve CSS custom properties; these mirror styles.css tokens.
-const TICK_MINOR = "rgb(233 231 240 / 0.14)";
-const TICK_MID = "rgb(233 231 240 / 0.24)";
-const TICK_MAJOR = "rgb(233 231 240 / 0.42)";
-const LABEL_COLOR = "rgb(233 231 240 / 0.55)";
-const GUIDE_MARK = "#7c5cff"; // --accent, matches renderer SELECTION_COLOR
+// Canvas 2D can't resolve CSS custom properties; these mirror styles.css
+// tokens per theme (guide mark = --accent = renderer selection color).
+type RulerColors = {
+  tickMinor: string;
+  tickMid: string;
+  tickMajor: string;
+  label: string;
+  guideMark: string;
+};
+
+const RULER_THEMES: Record<"dark" | "light", RulerColors> = {
+  dark: {
+    tickMinor: "rgb(233 231 240 / 0.14)",
+    tickMid: "rgb(233 231 240 / 0.24)",
+    tickMajor: "rgb(233 231 240 / 0.42)",
+    label: "rgb(233 231 240 / 0.55)",
+    guideMark: "#7c5cff",
+  },
+  light: {
+    tickMinor: "rgb(28 25 33 / 0.16)",
+    tickMid: "rgb(28 25 33 / 0.26)",
+    tickMajor: "rgb(28 25 33 / 0.44)",
+    label: "rgb(35 32 40 / 0.6)",
+    guideMark: "#4f6bf6",
+  },
+};
+
 const LABEL_FONT =
   '500 9px Inter, ui-sans-serif, system-ui, -apple-system, sans-serif';
 
@@ -47,6 +68,7 @@ function drawScale(
   zoom: number,
   origin: number,
   guides: number[],
+  colors: RulerColors,
 ) {
   const rect = canvas.getBoundingClientRect();
   const length = axis === "x" ? rect.width : rect.height;
@@ -83,7 +105,11 @@ function drawScale(
     const isMajor = i % divisions === 0;
     const isMid = !isMajor && divisions % 2 === 0 && i % (divisions / 2) === 0;
     const size = isMajor ? 9 : isMid ? 6 : 4;
-    ctx.fillStyle = isMajor ? TICK_MAJOR : isMid ? TICK_MID : TICK_MINOR;
+    ctx.fillStyle = isMajor
+      ? colors.tickMajor
+      : isMid
+        ? colors.tickMid
+        : colors.tickMinor;
 
     if (axis === "x") {
       ctx.fillRect(pos, RULER_SIZE - size, 1, size);
@@ -92,7 +118,7 @@ function drawScale(
     }
 
     if (isMajor) {
-      ctx.fillStyle = LABEL_COLOR;
+      ctx.fillStyle = colors.label;
       const label = String(Math.round(value));
       if (axis === "x") {
         ctx.fillText(label, pos + 4, 9);
@@ -108,7 +134,7 @@ function drawScale(
   }
 
   // Existing guides get a small accent notch at the canvas edge.
-  ctx.fillStyle = GUIDE_MARK;
+  ctx.fillStyle = colors.guideMark;
   for (const guide of guides) {
     const pos = Math.round(origin + guide * zoom);
     if (pos < -3 || pos > length + 3) {
@@ -140,6 +166,7 @@ export function CanvasRulers({
 }) {
   const document = useDocument();
   const camera = useEditorStore((state) => state.camera);
+  const theme = useEditorStore((state) => state.theme);
   const topRef = useRef<HTMLCanvasElement | null>(null);
   const leftRef = useRef<HTMLCanvasElement | null>(null);
   const cursorTopRef = useRef<HTMLDivElement | null>(null);
@@ -152,6 +179,7 @@ export function CanvasRulers({
       return;
     }
     const cam = useEditorStore.getState().camera;
+    const colors = RULER_THEMES[useEditorStore.getState().theme];
     const artboard = getActiveArtboard(documentStore.document);
     // Both ruler strips sit RULER_SIZE px in from the host origin, and the
     // GPU canvas fills the host, so screen-space minus RULER_SIZE is exact.
@@ -161,6 +189,7 @@ export function CanvasRulers({
       cam.zoom,
       (artboard.x - cam.offset.x) * cam.zoom - RULER_SIZE,
       artboard.guides?.v ?? [],
+      colors,
     );
     drawScale(
       left,
@@ -168,12 +197,13 @@ export function CanvasRulers({
       cam.zoom,
       (artboard.y - cam.offset.y) * cam.zoom - RULER_SIZE,
       artboard.guides?.h ?? [],
+      colors,
     );
   }, []);
 
   useEffect(() => {
     draw();
-  }, [draw, document, camera]);
+  }, [draw, document, camera, theme]);
 
   useEffect(() => {
     const host = topRef.current?.closest<HTMLElement>(".canvas-host");
@@ -216,10 +246,11 @@ export function CanvasRulers({
     };
   }, [draw]);
 
-  // Frosted panel material shared by both strips and the corner square.
+  // Frosted panel material shared by both strips and the corner square
+  // (--ruler-mat/-hover are themed in styles.css).
   const material =
-    "absolute bg-[rgb(20_18_27/0.66)] backdrop-blur-[10px] backdrop-saturate-[1.15]";
-  const strip = `ruler ${material} z-15 overflow-hidden transition-colors duration-140 ease-studio hover:bg-[rgb(20_18_27/0.88)]`;
+    "absolute bg-[var(--ruler-mat)] backdrop-blur-[10px] backdrop-saturate-[1.15]";
+  const strip = `ruler ${material} z-15 overflow-hidden transition-colors duration-140 ease-studio hover:bg-[var(--ruler-mat-hover)]`;
   const cursor = "ruler-cursor pointer-events-none absolute left-0 top-0 bg-accent opacity-0";
 
   return (

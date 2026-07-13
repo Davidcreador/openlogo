@@ -630,13 +630,13 @@ function DesignMateFocusOverlay() {
 
   return (
     <div
-      className="pointer-events-none absolute z-10 rounded-[5px] border-2 border-dashed border-accent shadow-[0_0_0_3px_rgb(124_92_255/0.16),0_0_22px_rgb(124_92_255/0.28)]"
+      className="pointer-events-none absolute z-10 rounded-[5px] border-2 border-dashed border-accent shadow-[0_0_0_3px_var(--glow-16),0_0_22px_var(--glow-28)]"
       style={{ left, top, width, height }}
       data-design-mate-finding={focus.findingId}
       aria-hidden="true"
     >
       <span
-        className={`absolute left-0 max-w-240 truncate rounded-full bg-accent px-7 py-3 text-[9px] font-[650] text-white shadow-[0_2px_8px_rgb(0_0_0/0.5)] ${
+        className={`absolute left-0 max-w-240 truncate rounded-full bg-accent px-7 py-3 text-[9px] font-[650] text-white shadow-[0_2px_8px_var(--shade-focus-label)] ${
           placeLabelAbove ? "-top-24" : "top-2"
         }`}
       >
@@ -672,6 +672,7 @@ export function CanvasStage() {
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   const keyObjectId = useEditorStore((state) => state.keyObjectId);
   const camera = useEditorStore((state) => state.camera);
+  const theme = useEditorStore((state) => state.theme);
   const tool = useEditorStore((state) => state.tool);
   const setTool = useEditorStore((state) => state.setTool);
   const setSelection = useEditorStore((state) => state.setSelection);
@@ -813,6 +814,9 @@ export function CanvasStage() {
       }
 
       const renderer = new SceneRenderer(canvasKit, canvas, fonts);
+      // The theme may have been toggled while CanvasKit compiled; the
+      // theme effect below only fires on later changes.
+      renderer.setTheme(useEditorStore.getState().theme);
       rendererRef.current = renderer;
       fontStore.attach(fonts, renderer);
 
@@ -890,6 +894,11 @@ export function CanvasStage() {
   useEffect(() => {
     syncScene();
   }, [camera, selectedNodeIds, keyObjectId, syncScene]);
+
+  // Theme swaps renderer constants (selection accent, artboard shadow).
+  useEffect(() => {
+    rendererRef.current?.setTheme(theme);
+  }, [theme]);
 
   // Space bar toggles temporary pan mode.
   useEffect(() => {
@@ -3295,7 +3304,7 @@ export function CanvasStage() {
             </p>
             <button
               type="button"
-              className="mx-auto mt-16 inline-flex h-32 items-center gap-7 rounded-field bg-accent px-13 text-[12px] font-semibold text-white shadow-[0_4px_12px_rgb(124_92_255/0.22)] transition-[filter] hover:brightness-105"
+              className="mx-auto mt-16 inline-flex h-32 items-center gap-7 rounded-field bg-accent px-13 text-[12px] font-semibold text-white shadow-[0_4px_12px_var(--glow-22)] transition-[filter] hover:brightness-105"
               onClick={() => window.location.reload()}
             >
               <RefreshCw size={14} aria-hidden="true" />

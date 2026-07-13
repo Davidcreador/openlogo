@@ -25,6 +25,7 @@ describe("editor preferences", () => {
       }),
     );
     expect(loadPrefs()).toEqual({
+      theme: "dark",
       pixelSnap: true,
       designMateScope: "active-artboard",
       designMateRemoteEnabled: false,
@@ -34,14 +35,29 @@ describe("editor preferences", () => {
   it("round-trips explicit remote consent and the preferred review scope", () => {
     installStorage();
     savePrefs({
+      theme: "dark",
       pixelSnap: false,
       designMateScope: "document",
       designMateRemoteEnabled: true,
     });
     expect(loadPrefs()).toEqual({
+      theme: "dark",
       pixelSnap: false,
       designMateScope: "document",
       designMateRemoteEnabled: true,
     });
+  });
+
+  it("defaults the theme to dark, including for unknown stored values", () => {
+    installStorage();
+    expect(loadPrefs().theme).toBe("dark");
+    installStorage(JSON.stringify({ theme: "solarized" }));
+    expect(loadPrefs().theme).toBe("dark");
+  });
+
+  it("round-trips an explicit light theme choice", () => {
+    installStorage();
+    savePrefs({ ...loadPrefs(), theme: "light" });
+    expect(loadPrefs().theme).toBe("light");
   });
 });

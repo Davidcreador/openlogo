@@ -41,7 +41,7 @@ const LONG_PRESS_MS = 350;
 const TOOL_BUTTON =
   "toolbar-button grid h-36 w-36 place-items-center rounded-[9px] transition-[background-color,color,box-shadow] duration-140 ease-studio";
 const TOOL_BUTTON_ACTIVE =
-  "bg-linear-to-b from-[#9578ff] to-accent text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.24),0_2px_8px_rgb(124_92_255/0.45)]";
+  "bg-linear-to-b from-accent-grad to-accent text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.24),0_2px_8px_var(--glow-45)]";
 const TOOL_BUTTON_IDLE =
   "text-chrome-dim hover:bg-chrome-raised hover:text-chrome-text aria-disabled:cursor-not-allowed aria-disabled:opacity-40";
 

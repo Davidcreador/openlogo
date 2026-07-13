@@ -79,7 +79,7 @@ export function ColorInfoChip({ color }: { color: string }) {
           ref={panelRef}
           id={popoverId}
           data-testid="color-info-popover"
-          className="dialog-in fixed z-50 w-228 rounded-card border border-panel-hairline bg-card p-10 text-[11.5px] shadow-[0_10px_30px_rgb(0_0_0/0.45)]"
+          className="dialog-in fixed z-50 w-228 rounded-card border border-panel-hairline bg-card p-10 text-[11.5px] shadow-pop"
           style={{ top: pos.top, left: pos.left }}
           role="dialog"
           aria-modal="false"
@@ -100,7 +100,7 @@ export function ColorInfoChip({ color }: { color: string }) {
           </h3>
           <div className="mb-6 flex items-center gap-6">
             <i
-              className="h-16 w-16 flex-none rounded-[4px] border border-[rgb(255_255_255/0.12)]"
+              className="h-16 w-16 flex-none rounded-[4px] border border-[rgb(var(--edge-rgb)_/_0.12)]"
               style={{ background: color }}
               aria-hidden="true"
             />
@@ -112,7 +112,7 @@ export function ColorInfoChip({ color }: { color: string }) {
           {info.spot && (
             <div className="flex items-center gap-6 text-ink-dim" data-testid="color-info-spot">
               <i
-                className="h-12 w-12 flex-none rounded-[3px] border border-[rgb(255_255_255/0.12)]"
+                className="h-12 w-12 flex-none rounded-[3px] border border-[rgb(var(--edge-rgb)_/_0.12)]"
                 style={{ background: info.spot.hex }}
                 aria-hidden="true"
               />
@@ -124,7 +124,7 @@ export function ColorInfoChip({ color }: { color: string }) {
           )}
           {info.gamutHint && (
             <p
-              className="mx-0 mb-0 mt-6 rounded-[6px] border-l-[3px] border-[#f59e0b] bg-[#fdf6e9] px-8 py-5 leading-[1.4] text-[#7c5a12]"
+              className="mx-0 mb-0 mt-6 rounded-[6px] border-l-[3px] border-[#f59e0b] bg-warn-soft px-8 py-5 leading-[1.4] text-warn-ink"
               data-testid="color-info-gamut"
             >
               {info.gamutHint}

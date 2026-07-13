@@ -12,7 +12,9 @@ import {
   Magnet,
   Pencil,
   Plus,
+  Moon,
   Save,
+  Sun,
   Upload,
   Redo2,
   SquaresExclude,
@@ -490,7 +492,7 @@ function ArtboardMenu() {
               <button
                 key={preset.label}
                 type="button"
-                className="flex flex-col items-start gap-1 rounded-[7px] border border-chrome-border bg-chrome-raised px-8 py-6 transition-colors duration-120 ease-studio hover:border-[#a78fff]"
+                className="flex flex-col items-start gap-1 rounded-[7px] border border-chrome-border bg-chrome-raised px-8 py-6 transition-colors duration-120 ease-studio hover:border-accent-tint"
                 onClick={() => addArtboard(preset.width, preset.height)}
                 aria-label={`Add ${preset.label} artboard ${preset.width}×${preset.height}`}
               >
@@ -527,7 +529,7 @@ function ArtboardMenu() {
             />
             <button
               type="button"
-              className="ml-auto inline-flex h-24 items-center gap-4 rounded-[6px] bg-linear-to-b from-[#9578ff] to-accent px-9 text-[11.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.24)] hover:brightness-[1.08]"
+              className="ml-auto inline-flex h-24 items-center gap-4 rounded-[6px] bg-linear-to-b from-accent-grad to-accent px-9 text-[11.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.24)] hover:brightness-[1.08]"
               onClick={() => {
                 if (customSizeValid) {
                   addArtboard(normalizedCustomWidth, normalizedCustomHeight);
@@ -580,7 +582,7 @@ function ExportMenu() {
       <button
         type="button"
         data-export-dialog-trigger
-        className="export-button flex items-center gap-7 rounded-[9px] bg-linear-to-b from-[#9578ff] to-accent px-13 py-7 text-[12.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.22),0_1px_3px_rgb(8_6_12/0.45)] transition-[filter,box-shadow] duration-140 ease-studio hover:brightness-[1.09] hover:shadow-[inset_0_1px_0_rgb(255_255_255/0.22),0_2px_10px_rgb(124_92_255/0.45),0_8px_30px_rgb(124_92_255/0.25)]"
+        className="export-button flex items-center gap-7 rounded-[9px] bg-linear-to-b from-accent-grad to-accent px-13 py-7 text-[12.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.22),0_1px_3px_rgb(8_6_12/0.45)] transition-[filter,box-shadow] duration-140 ease-studio hover:brightness-[1.09] hover:shadow-[inset_0_1px_0_rgb(255_255_255/0.22),0_2px_10px_var(--glow-45),0_8px_30px_var(--glow-25)]"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
       >
@@ -642,6 +644,8 @@ export function TopBar() {
   const setSelection = useEditorStore((state) => state.setSelection);
   const pixelSnap = useEditorStore((state) => state.pixelSnap);
   const setPixelSnap = useEditorStore((state) => state.setPixelSnap);
+  const theme = useEditorStore((state) => state.theme);
+  const setTheme = useEditorStore((state) => state.setTheme);
   const setToast = useEditorStore((state) => state.setToast);
   const setDocumentLibraryOpen = useEditorStore(
     (state) => state.setDocumentLibraryOpen,
@@ -930,6 +934,30 @@ export function TopBar() {
           style={{ display: "none" }}
           onChange={(event) => void handleImportFile(event)}
         />
+        </div>
+        <div
+          className="flex items-center rounded-[10px] border border-chrome-hairline bg-[rgb(255_255_255/0.035)] p-3"
+          role="group"
+          aria-label="Appearance"
+        >
+          <button
+            type="button"
+            className={ICON_BUTTON}
+            data-testid="theme-toggle"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            title={
+              theme === "dark"
+                ? "Switch to light theme"
+                : "Switch to dark theme"
+            }
+            aria-label={
+              theme === "dark"
+                ? "Switch to light theme"
+                : "Switch to dark theme"
+            }
+          >
+            {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
         </div>
         <ExportMenu />
       </div>

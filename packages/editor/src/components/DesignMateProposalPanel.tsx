@@ -27,11 +27,11 @@ const RISK_BADGES: Record<
 > = {
   low: {
     label: "Low risk",
-    className: "text-[#7fd6a0]",
+    className: "text-ok-ink",
   },
   medium: {
     label: "Medium risk",
-    className: "text-[#e4c07a]",
+    className: "text-warn-ink",
   },
   high: {
     label: "High risk",
@@ -42,7 +42,7 @@ const RISK_BADGES: Record<
 const SECONDARY =
   "inline-flex items-center justify-center rounded-field border border-field-border bg-card px-8 py-5 text-[10.5px] font-[600] text-ink transition-[border-color,color] duration-140 ease-studio hover:enabled:border-accent hover:enabled:text-accent disabled:cursor-not-allowed disabled:opacity-45";
 const PRIMARY =
-  "inline-flex items-center justify-center rounded-field bg-accent px-9 py-5 text-[10.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.2),0_1px_3px_rgb(124_92_255/0.3)] transition-[filter] duration-140 ease-studio hover:enabled:brightness-[1.08] disabled:cursor-not-allowed disabled:opacity-45";
+  "inline-flex items-center justify-center rounded-field bg-accent px-9 py-5 text-[10.5px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.2),0_1px_3px_var(--glow-30)] transition-[filter] duration-140 ease-studio hover:enabled:brightness-[1.08] disabled:cursor-not-allowed disabled:opacity-45";
 
 function ProposalCard({
   baseDocument,
@@ -226,7 +226,7 @@ export function DesignMateProposalPanel({
       </div>
 
       {stale && (
-        <p className="mx-0 mb-0 mt-7 rounded-[6px] bg-[rgb(232_195_126/0.08)] px-7 py-5 text-[9.5px] leading-[1.4] text-[#e4c07a]">
+        <p className="mx-0 mb-0 mt-7 rounded-[6px] bg-warn-soft px-7 py-5 text-[9.5px] leading-[1.4] text-warn-ink">
           {staleMessage}
         </p>
       )}

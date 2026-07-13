@@ -17,6 +17,31 @@
       crossorigin
     />
     <title>OpenLogo Studio</title>
+    <script>
+      // Theme must be on <html> before the bundle paints anything (no
+      // flash). Dark is the default; light applies only when explicitly
+      // stored (lib/prefs.ts reads the same key with the same rule).
+      (function () {
+        var theme = "dark";
+        try {
+          var prefs = JSON.parse(
+            localStorage.getItem("openlogo:prefs") || "{}",
+          );
+          if (prefs && prefs.theme === "light") {
+            theme = "light";
+          }
+        } catch (error) {
+          /* unreadable prefs = default dark */
+        }
+        document.documentElement.dataset.theme = theme;
+        if (theme === "light") {
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) {
+            meta.setAttribute("content", "#17151b");
+          }
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

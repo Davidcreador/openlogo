@@ -585,7 +585,7 @@ export function DesignMateChatPanel({
                 key={entry.id}
                 className={`max-w-[88%] px-9 py-7 text-ink ${
                   entry.role === "user"
-                    ? "ml-auto rounded-[12px] rounded-br-[4px] bg-[rgb(124_92_255/0.2)]"
+                    ? "ml-auto rounded-[12px] rounded-br-[4px] bg-accent/20"
                     : "mr-auto rounded-[12px] rounded-bl-[4px] border border-panel-hairline bg-card"
                 }`}
               >
@@ -656,7 +656,7 @@ export function DesignMateChatPanel({
         {stale && (
           <p
             role="status"
-            className="mx-0 mb-7 mt-0 text-[9px] leading-[1.4] text-[#e4c07a]"
+            className="mx-0 mb-7 mt-0 text-[9px] leading-[1.4] text-warn-ink"
           >
             The canvas or request scope changed after this answer. Ask again
             for current guidance.

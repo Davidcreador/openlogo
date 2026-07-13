@@ -38,7 +38,7 @@ class DesignMateErrorBoundary extends Component<
     if (this.state.failed) {
       return (
         <div
-          className="m-12 rounded-[10px] bg-[rgb(240_86_77/0.1)] p-12 text-[11px] leading-[1.5] text-danger"
+          className="m-12 rounded-[10px] bg-danger/10 p-12 text-[11px] leading-[1.5] text-danger"
           role="status"
         >
           I hit a snag while getting ready. Your canvas is safe. Reload the
@@ -168,8 +168,8 @@ export function DesignMateCompanion() {
         data-design-mate-trigger
         className={`pointer-events-auto flex items-center gap-6 rounded-full border px-11 py-7 shadow-float transition-[transform,background-color,border-color,color] duration-180 ease-studio hover:-translate-y-1 ${
           open
-            ? "border-[rgb(124_92_255/0.4)] bg-card text-ink"
-            : "border-panel-border bg-card text-ink hover:border-[rgb(124_92_255/0.4)]"
+            ? "border-accent/40 bg-card text-ink"
+            : "border-panel-border bg-card text-ink hover:border-accent/40"
         }`}
         onClick={toggle}
         aria-expanded={open}

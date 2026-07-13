@@ -4,7 +4,9 @@ import { useLiveDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
 import { gradientHandlePoints } from "./gradient-annotator";
 
-const LINE = "#7c5cff";
+// SVG presentation attributes resolve CSS custom properties, so the
+// annotator follows the themed accent with no JS involvement.
+const LINE = "var(--color-accent)";
 
 /**
  * Visual layer of the gradient annotator (G tool): the gradient line

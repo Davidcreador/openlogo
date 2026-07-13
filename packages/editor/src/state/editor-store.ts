@@ -7,7 +7,7 @@ import type {
   DesignMateFocusTarget,
   DesignMateRequestSignature,
 } from "../lib/design-mate-review";
-import { loadPrefs, savePrefs } from "../lib/prefs";
+import { loadPrefs, savePrefs, type ThemeName } from "../lib/prefs";
 
 export type Tool =
   | "select"
@@ -75,6 +75,12 @@ type EditorState = {
   documentLibraryOpen: boolean;
   /** Round committed positions/dimensions to whole pixels (persisted). */
   pixelSnap: boolean;
+  /**
+   * UI theme (persisted; dark default). index.html applies the stored
+   * value to <html data-theme> before first paint; setTheme keeps the
+   * DOM attribute, prefs and subscribers (renderer, rulers) in sync.
+   */
+  theme: ThemeName;
   /** Transient status message (file open errors etc.); null = hidden. */
   toast: string | null;
   setTool: (tool: Tool) => void;
@@ -82,6 +88,7 @@ type EditorState = {
   setExportDialogOpen: (open: boolean) => void;
   setDocumentLibraryOpen: (open: boolean) => void;
   setPixelSnap: (on: boolean) => void;
+  setTheme: (theme: ThemeName) => void;
   setToast: (message: string | null) => void;
   setEditingPathId: (id: string | null) => void;
   setActiveGroupId: (id: string | null) => void;
@@ -121,6 +128,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   exportDialogOpen: false,
   documentLibraryOpen: false,
   pixelSnap: initialPrefs.pixelSnap,
+  theme: initialPrefs.theme,
   toast: null,
   setTool: (tool) => set({ tool }),
   setTransformDialogOpen: (transformDialogOpen) => set({ transformDialogOpen }),
@@ -130,6 +138,11 @@ export const useEditorStore = create<EditorState>((set) => ({
   setPixelSnap: (pixelSnap) => {
     savePrefs({ ...loadPrefs(), pixelSnap });
     set({ pixelSnap });
+  },
+  setTheme: (theme) => {
+    savePrefs({ ...loadPrefs(), theme });
+    document.documentElement.dataset.theme = theme;
+    set({ theme });
   },
   setToast: (toast) => set({ toast }),
   setEditingPathId: (editingPathId) => set({ editingPathId }),

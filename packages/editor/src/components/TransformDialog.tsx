@@ -113,7 +113,7 @@ export function TransformDialog() {
   return (
     <div
       ref={dialogRef}
-      className="overlay-in fixed inset-0 z-40 grid place-items-center bg-[rgb(8_6_12/0.55)]"
+      className="overlay-in fixed inset-0 z-40 grid place-items-center bg-scrim"
       onPointerDown={(event) => {
         if (event.target === event.currentTarget) {
           setOpen(false);
@@ -139,7 +139,7 @@ export function TransformDialog() {
               type="button"
               className={`${TAB_BASE} ${
                 mode === item
-                  ? "bg-card font-semibold text-ink shadow-[0_1px_2px_rgb(0_0_0/0.3)]"
+                  ? "bg-card font-semibold text-ink shadow-tab"
                   : "text-ink-dim"
               }`}
               onClick={() => setMode(item)}
@@ -218,7 +218,7 @@ export function TransformDialog() {
                 <i
                   aria-hidden="true"
                   className={`h-7 w-7 rounded-full ${
-                    pivotId === id ? "bg-accent" : "bg-[rgb(8_6_12/0.5)]"
+                    pivotId === id ? "bg-accent" : "bg-[var(--shade-pivot)]"
                   }`}
                 />
               </button>
