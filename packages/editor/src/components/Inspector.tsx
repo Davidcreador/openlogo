@@ -21,6 +21,9 @@ import {
   AlignStartHorizontal,
   AlignStartVertical,
   AlignVerticalSpaceBetween,
+  ArrowDown,
+  ArrowUp,
+  BringToFront,
   ChevronDown,
   ChevronRight,
   Circle,
@@ -34,6 +37,7 @@ import {
   Lock,
   PenTool,
   RotateCw,
+  SendToBack,
   Shapes,
   SlidersHorizontal,
   Spline,
@@ -79,6 +83,7 @@ import {
 } from "../lib/group-ops";
 import {
   alignNodes,
+  arrangeNodes,
   distributeNodes,
   distributeNodesSpacing,
   expandStrokeOp,
@@ -522,6 +527,39 @@ function TextContentField({
   );
 }
 
+/** Z-order controls: send to back / backward / forward / bring to front. */
+function ArrangeRow({ nodeIds }: { nodeIds: readonly string[] }) {
+  const button =
+    "grid h-24 place-items-center rounded-[5px] text-ink-dim transition-[background-color,color,box-shadow] duration-120 ease-studio hover:bg-card hover:text-ink hover:shadow-tab";
+  const buttons = [
+    { placement: "back", icon: SendToBack, label: "Send to back ([)" },
+    { placement: "backward", icon: ArrowDown, label: "Send backward (\u2318[)" },
+    { placement: "forward", icon: ArrowUp, label: "Bring forward (\u2318])" },
+    { placement: "front", icon: BringToFront, label: "Bring to front (])" },
+  ] as const;
+
+  return (
+    <div
+      className="mb-6 grid grid-cols-4 gap-2 rounded-m border border-field-border bg-field p-3"
+      role="group"
+      aria-label="Arrange z-order"
+    >
+      {buttons.map(({ placement, icon: Icon, label }) => (
+        <button
+          key={placement}
+          type="button"
+          className={button}
+          title={label}
+          aria-label={label}
+          onClick={() => arrangeNodes(nodeIds, placement)}
+        >
+          <Icon size={13} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function AlignPanel({ nodeIds }: { nodeIds: readonly string[] }) {
   const canDistribute = nodeIds.length >= 3;
   const setTransformDialogOpen = useEditorStore(
@@ -872,6 +910,7 @@ function DesignSection({
         }
       >
         <AlignPanel nodeIds={[node.id]} />
+        <ArrangeRow nodeIds={[node.id]} />
 
         <div className={FIELD_GRID}>
           <NumberField
@@ -1835,6 +1874,7 @@ function GroupSection({ group }: { group: GroupNode }) {
       )}
 
       <AlignPanel nodeIds={[group.id]} />
+      <ArrangeRow nodeIds={[group.id]} />
 
       <div className={FIELD_GRID}>
         <NumberField
@@ -2611,6 +2651,7 @@ function MultiDesignSection({
     <>
       <PanelSection title="Layout" meta={`${nodes.length} selected`}>
         <AlignPanel nodeIds={nodes.map((node) => node.id)} />
+        <ArrangeRow nodeIds={nodes.map((node) => node.id)} />
         {textPathPair && (
           <button
             type="button"

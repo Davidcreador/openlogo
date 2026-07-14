@@ -27,6 +27,101 @@ import { documentStore } from "../state/document";
 
 type Unit = { id: string; bounds: Bounds };
 
+export type ArrangePlacement = "front" | "forward" | "backward" | "back";
+
+/**
+ * Desired child order after arranging `selected` within one container.
+ * Selected nodes keep their relative z-order; front/back jump the block
+ * to the end/start, forward/backward step it one slot past the nearest
+ * unselected neighbour.
+ */
+function arrangedOrder(
+  list: readonly string[],
+  selected: ReadonlySet<string>,
+  placement: ArrangePlacement,
+): string[] {
+  const picked = list.filter((id) => selected.has(id));
+  const rest = list.filter((id) => !selected.has(id));
+  if (placement === "front") {
+    return [...rest, ...picked];
+  }
+  if (placement === "back") {
+    return [...picked, ...rest];
+  }
+  // Stepwise: walk items so no selected node swaps past another.
+  const next = [...list];
+  if (placement === "forward") {
+    for (let i = next.length - 2; i >= 0; i -= 1) {
+      if (selected.has(next[i]!) && !selected.has(next[i + 1]!)) {
+        [next[i], next[i + 1]] = [next[i + 1]!, next[i]!];
+      }
+    }
+  } else {
+    for (let i = 1; i < next.length; i += 1) {
+      if (selected.has(next[i]!) && !selected.has(next[i - 1]!)) {
+        [next[i], next[i - 1]] = [next[i - 1]!, next[i]!];
+      }
+    }
+  }
+  return next;
+}
+
+/**
+ * Move nodes within their containers' z-order as one undoable step.
+ * Selected nodes keep their relative order; nodes from different
+ * containers arrange independently. Returns false when nothing moves.
+ */
+export function arrangeNodes(
+  nodeIds: readonly string[],
+  placement: ArrangePlacement,
+): boolean {
+  const document = documentStore.document;
+  const byContainer = new Map<string, Set<string>>();
+  for (const nodeId of nodeIds) {
+    const containerId = findContainerId(document, nodeId);
+    if (containerId) {
+      (
+        byContainer.get(containerId) ??
+        byContainer.set(containerId, new Set()).get(containerId)!
+      ).add(nodeId);
+    }
+  }
+
+  const commands: Array<{
+    type: "reorder-node";
+    containerId: string;
+    nodeId: string;
+    toIndex: number;
+  }> = [];
+  for (const [containerId, selected] of byContainer) {
+    const list = getContainerChildIds(document, containerId);
+    const target = arrangedOrder(list, selected, placement);
+    // Emit moves that transform list into target: settle each slot in
+    // order; reorder-node splices, so the working copy tracks state.
+    const work = [...list];
+    for (let i = 0; i < target.length; i += 1) {
+      const nodeId = target[i]!;
+      const from = work.indexOf(nodeId);
+      if (from !== i) {
+        work.splice(from, 1);
+        work.splice(i, 0, nodeId);
+        commands.push({ type: "reorder-node", containerId, nodeId, toIndex: i });
+      }
+    }
+  }
+
+  if (commands.length === 0) {
+    return false;
+  }
+  if (commands.length === 1) {
+    documentStore.apply(commands[0]!);
+  } else {
+    documentStore.apply({ type: "batch", commands, label: "Arrange" });
+  }
+  return true;
+}
+
+
 /**
  * Selection units: a group counts as one unit with derived bounds, so
  * align/distribute move whole groups instead of scattering children.

@@ -9,9 +9,7 @@ import { ZoomControls } from "./components/ZoomControls";
 import {
   collectLeafNodeIds,
   createInitialDocument,
-  findContainerId,
   getActiveArtboard,
-  getContainerChildIds,
   getParentGroupId,
   pixelSnapPatch,
 } from "@openlogo/core";
@@ -40,6 +38,7 @@ import {
   groupSelection,
   ungroupSelection,
 } from "./lib/group-ops";
+import { arrangeNodes } from "./lib/object-ops";
 import { fontCatalog } from "./lib/font-catalog";
 import { DocumentSession } from "./lib/document-session";
 import { documentLibrary } from "./lib/document-library";
@@ -590,32 +589,25 @@ export default function App() {
           return;
         }
 
-        // ⌘] forward, ⌘[ backward within the node's container.
-        if ((key === "]" || key === "[") && selection.length === 1) {
+        // ⌘] forward, ⌘[ backward within each node's container.
+        if ((key === "]" || key === "[") && selection.length > 0) {
           event.preventDefault();
-          const document = documentStore.document;
-          const nodeId = selection[0]!;
-          const containerId = findContainerId(document, nodeId);
-          if (!containerId) {
-            return;
-          }
-          const list = getContainerChildIds(document, containerId);
-          const index = list.indexOf(nodeId);
-          const toIndex =
-            key === "]"
-              ? Math.min(list.length - 1, index + 1)
-              : Math.max(0, index - 1);
-          if (index !== -1 && toIndex !== index) {
-            documentStore.apply({
-              type: "reorder-node",
-              containerId,
-              nodeId,
-              toIndex,
-            });
-          }
+          arrangeNodes(selection, key === "]" ? "forward" : "backward");
           return;
         }
 
+        return;
+      }
+
+      // ] to front, [ to back (Figma convention; ⌘ variants step one slot).
+      if ((key === "]" || key === "[") && !state.editingPathId) {
+        if (state.selectedNodeIds.length > 0) {
+          event.preventDefault();
+          arrangeNodes(
+            state.selectedNodeIds,
+            key === "]" ? "front" : "back",
+          );
+        }
         return;
       }
 
