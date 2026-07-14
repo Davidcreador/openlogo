@@ -5,6 +5,7 @@ import {
   useReducer,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
@@ -13,8 +14,10 @@ import { Send, ShieldCheck, Sparkles, Square, X } from "lucide-react";
 import {
   DESIGN_MATE_CHAT_LIMITS,
   buildDocumentIdentity,
+  createDirectDesignMateChatProvider,
   createFallbackDesignMateChatProvider,
   createHeuristicDesignMateChatProvider,
+  createOpenAIResponsesTransport,
   createRemoteDesignMateChatProvider,
   makeDesignMateChatCancelledError,
   makeDesignMateProviderError,
@@ -48,6 +51,10 @@ import {
   createDesignMateRequestSignature,
   resolveEffectiveDesignMateScope,
 } from "../lib/design-mate-review";
+import {
+  loadDesignMateProviderSettings,
+  subscribeDesignMateProviderSettings,
+} from "../lib/design-mate-settings";
 import { documentStore, useDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
 
@@ -156,15 +163,35 @@ export function DesignMateChatPanel({
     (state) => state.setDesignMateRemoteEnabled,
   );
 
-  const providerSetup = useMemo(
-    () =>
-      createDesignMateChatProviderSetup(
-        remoteEnabled ? DESIGN_MATE_CHAT_ENDPOINT : null,
-        PROVIDER_FACTORIES,
-        { getAccessToken: getDesignMateAccessToken },
-      ),
-    [remoteEnabled],
+  const providerSettings = useSyncExternalStore(
+    subscribeDesignMateProviderSettings,
+    loadDesignMateProviderSettings,
   );
+
+  const providerSetup = useMemo(() => {
+    if (remoteEnabled && providerSettings) {
+      const direct = createDirectDesignMateChatProvider(
+        createOpenAIResponsesTransport({
+          apiKey: providerSettings.apiKey,
+          model: providerSettings.model,
+          baseUrl: providerSettings.baseUrl,
+          id: "openai-direct",
+        }),
+      );
+      return {
+        mode: "direct-with-fallback" as const,
+        provider: createFallbackDesignMateChatProvider(
+          direct,
+          createHeuristicDesignMateChatProvider(),
+        ),
+      };
+    }
+    return createDesignMateChatProviderSetup(
+      remoteEnabled ? DESIGN_MATE_CHAT_ENDPOINT : null,
+      PROVIDER_FACTORIES,
+      { getAccessToken: getDesignMateAccessToken },
+    );
+  }, [providerSettings, remoteEnabled]);
   const modeLabel = designMateChatModeLabel(providerSetup.mode);
   const effectiveScope = resolveEffectiveDesignMateScope(
     requestedScope,
@@ -406,7 +433,7 @@ export function DesignMateChatPanel({
     setPrompt("");
 
     let attachments: readonly DesignMateVisualAttachment[] = [];
-    if (providerSetup.mode === "remote-with-fallback") {
+    if (providerSetup.mode !== "local") {
       setVisualNote("Preparing a bounded visual preview…");
       try {
         const visual = await import("../lib/design-mate-visual-context");
@@ -630,7 +657,7 @@ export function DesignMateChatPanel({
       </div>
 
       <div className="shrink-0 border-t border-panel-hairline px-13 pb-10 pt-9">
-        {DESIGN_MATE_CHAT_ENDPOINT && (
+        {(DESIGN_MATE_CHAT_ENDPOINT || providerSettings) && (
           <div className="mb-8 flex items-start gap-6 rounded-[8px] bg-field px-9 py-7">
             <ShieldCheck
               size={12}
@@ -639,8 +666,8 @@ export function DesignMateChatPanel({
             />
             <p className="m-0 min-w-0 flex-1 text-[9px] leading-[1.5] text-ink-dim">
               {remoteEnabled
-                ? "Remote AI is on — messages, bounded design context, review findings, and up to three PNG previews go to the configured service. The raw OpenLogo document is never uploaded. "
-                : "Local guidance stays on this device. Remote AI sends messages, bounded design context, review findings, and up to three PNG previews to the configured service and its model provider. "}
+                ? "Remote AI is on — messages, bounded design context, review findings, and up to three PNG previews go to the configured model provider. The raw OpenLogo document is never uploaded. "
+                : "Local guidance stays on this device. Remote AI sends messages, bounded design context, review findings, and up to three PNG previews to the configured model provider. "}
               <button
                 type="button"
                 className="font-[650] text-accent disabled:opacity-40"

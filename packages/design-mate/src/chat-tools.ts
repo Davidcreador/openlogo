@@ -20,6 +20,8 @@ export const DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL_NAME =
   "inspect_design_review";
 export const DESIGN_MATE_CHAT_EXPORT_OPTIONS_TOOL_NAME =
   "explain_export_options";
+export const DESIGN_MATE_CHAT_COLOR_CONTRAST_TOOL_NAME =
+  "check_color_contrast";
 
 export const DESIGN_MATE_CHAT_PROPOSAL_TOOL_LIMITS = Object.freeze({
   actions: 4,
@@ -436,9 +438,35 @@ export const DESIGN_MATE_CHAT_PROPOSAL_TOOL = deepFreeze({
   },
 });
 
+export const DESIGN_MATE_CHAT_COLOR_CONTRAST_TOOL = deepFreeze({
+  type: "function",
+  name: DESIGN_MATE_CHAT_COLOR_CONTRAST_TOOL_NAME,
+  description:
+    "Compute the WCAG contrast ratio between two solid colors from the supplied design context or conversation. Pure computation: it never reads the document or changes anything.",
+  strict: true,
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      foreground: {
+        type: "string",
+        description:
+          "The foreground color as a CSS hex value in #RGB or #RRGGBB form.",
+      },
+      background: {
+        type: "string",
+        description:
+          "The background color as a CSS hex value in #RGB or #RRGGBB form.",
+      },
+    },
+    required: ["foreground", "background"],
+  },
+});
+
 export const DESIGN_MATE_CHAT_READ_ONLY_TOOLS = deepFreeze([
   DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL,
   DESIGN_MATE_CHAT_EXPORT_OPTIONS_TOOL,
+  DESIGN_MATE_CHAT_COLOR_CONTRAST_TOOL,
 ] as const);
 
 export const DESIGN_MATE_CHAT_MODEL_TOOLS = deepFreeze([
@@ -658,6 +686,76 @@ function exportOptionsToolOutput(value: unknown): string | null {
   });
 }
 
+function parseHexColor(
+  value: unknown,
+): { r: number; g: number; b: number } | null {
+  if (typeof value !== "string" || !/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(value)) {
+    return null;
+  }
+  const hex =
+    value.length === 4
+      ? `#${value[1]}${value[1]}${value[2]}${value[2]}${value[3]}${value[3]}`
+      : value;
+  return {
+    r: Number.parseInt(hex.slice(1, 3), 16),
+    g: Number.parseInt(hex.slice(3, 5), 16),
+    b: Number.parseInt(hex.slice(5, 7), 16),
+  };
+}
+
+function relativeLuminance(channel: { r: number; g: number; b: number }): number {
+  const linear = (value: number) => {
+    const scaled = value / 255;
+    return scaled <= 0.04045
+      ? scaled / 12.92
+      : Math.pow((scaled + 0.055) / 1.055, 2.4);
+  };
+  return (
+    0.2126 * linear(channel.r) +
+    0.7152 * linear(channel.g) +
+    0.0722 * linear(channel.b)
+  );
+}
+
+function colorContrastToolOutput(value: unknown): string | null {
+  if (!isPlainRecord(value) || !hasExactKeys(value, ["foreground", "background"])) {
+    return null;
+  }
+  const foreground = parseHexColor(value.foreground);
+  const background = parseHexColor(value.background);
+  if (!foreground || !background) {
+    // Schema-valid but unparseable colors get a corrective payload so the
+    // model can retry instead of failing the whole turn.
+    return boundedToolOutput({
+      error: "Colors must be CSS hex values in #RGB or #RRGGBB form.",
+    });
+  }
+  const lighter = Math.max(
+    relativeLuminance(foreground),
+    relativeLuminance(background),
+  );
+  const darker = Math.min(
+    relativeLuminance(foreground),
+    relativeLuminance(background),
+  );
+  const ratio = (lighter + 0.05) / (darker + 0.05);
+  const rounded = Math.round(ratio * 100) / 100;
+  return boundedToolOutput({
+    ratio: rounded,
+    wcag: {
+      normalTextAA: rounded >= 4.5,
+      largeTextAA: rounded >= 3,
+      normalTextAAA: rounded >= 7,
+    },
+    guidance:
+      rounded >= 4.5
+        ? "Strong contrast; safe for small lockups and favicon-scale marks."
+        : rounded >= 3
+          ? "Adequate for large display use only; expect legibility loss at small sizes."
+          : "Insufficient contrast for reliable logo legibility.",
+  });
+}
+
 /**
  * Execute one model-requested read-only helper against already validated,
  * bounded prompt data. Null means the call must fail closed.
@@ -672,6 +770,9 @@ export function executeDesignMateChatReadOnlyTool(
   }
   if (toolName === DESIGN_MATE_CHAT_EXPORT_OPTIONS_TOOL_NAME) {
     return exportOptionsToolOutput(value);
+  }
+  if (toolName === DESIGN_MATE_CHAT_COLOR_CONTRAST_TOOL_NAME) {
+    return colorContrastToolOutput(value);
   }
   return null;
 }

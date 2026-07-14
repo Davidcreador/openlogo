@@ -1,12 +1,13 @@
 import {
   DESIGN_MATE_CHAT_LIMITS,
   DESIGN_MATE_CHAT_EXPORT_OPTIONS_TOOL_NAME,
+  DESIGN_MATE_CHAT_COLOR_CONTRAST_TOOL_NAME,
   DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL_NAME,
   DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
   type DesignMateChatPrompt,
   type DesignMateChatProviderChunk,
   type DesignMateProviderError,
-} from "@openlogo/design-mate";
+} from "./index";
 import { describe, expect, it, vi } from "vitest";
 import {
   createOpenAIResponsesTransport,
@@ -195,6 +196,7 @@ describe("OpenAI Responses model transport", () => {
     expect(body.tools.map((tool) => tool.name)).toEqual([
       DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL_NAME,
       DESIGN_MATE_CHAT_EXPORT_OPTIONS_TOOL_NAME,
+      DESIGN_MATE_CHAT_COLOR_CONTRAST_TOOL_NAME,
       DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
     ]);
     expect(
@@ -214,6 +216,11 @@ describe("OpenAI Responses model transport", () => {
     ]);
     expect(body.input[1]?.content).toEqual([
       { type: "input_text", text: "Earlier question" },
+    ]);
+    // Assistant history must be output_text; the Responses API rejects
+    // input_text on assistant items with a 400.
+    expect(body.input[2]?.content).toEqual([
+      { type: "output_text", text: "Earlier answer" },
     ]);
     expect(body.input.at(-1)?.content).toEqual([
       { type: "input_text", text: "Current question" },

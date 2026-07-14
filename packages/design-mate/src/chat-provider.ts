@@ -11,8 +11,10 @@ import {
   makeDesignMateProviderError,
 } from "./provider";
 import { buildHeuristicDesignMateProposals } from "./heuristic-proposals";
+import { assembleDesignMateChatPrompt } from "./chat-prompt";
 import { toDesignMateChatWireRequest } from "./chat-request";
 import { decodeDesignMateChatSse } from "./chat-sse";
+import type { DesignMateModelTransport } from "./model-transport";
 
 function isAbortLike(cause: unknown): boolean {
   try {
@@ -539,6 +541,37 @@ export function createRemoteDesignMateChatProvider(
           "The Design Mate chat provider ended without a terminal event.",
           { code: "invalid-chat-response", retryable: false },
         );
+      }
+    },
+  };
+}
+
+/**
+ * Drives a model transport directly from the host application (no relay
+ * service). The transport already emits validated provider chunks.
+ */
+export function createDirectDesignMateChatProvider(
+  transport: DesignMateModelTransport,
+): DesignMateChatProvider {
+  const id = transport.id;
+  return {
+    id,
+    stream: async function* (request, signal) {
+      throwIfAborted(id, signal);
+      let prompt;
+      try {
+        prompt = assembleDesignMateChatPrompt(request);
+      } catch {
+        throw makeDesignMateProviderError(
+          id,
+          "The Design Mate chat request is invalid.",
+          { code: "invalid-request", retryable: false },
+        );
+      }
+      try {
+        yield* transport.stream(prompt, signal);
+      } catch (cause) {
+        throw normalizeDesignMateChatProviderError(id, cause, signal);
       }
     },
   };

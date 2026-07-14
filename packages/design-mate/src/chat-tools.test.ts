@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DESIGN_MATE_MUTATION_TOOLS,
+  DESIGN_MATE_CHAT_COLOR_CONTRAST_TOOL_NAME,
   DESIGN_MATE_CHAT_EXPORT_OPTIONS_TOOL_NAME,
   DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL_NAME,
   DESIGN_MATE_CHAT_MODEL_TOOLS,
@@ -74,6 +75,7 @@ describe("Design Mate chat proposal tool", () => {
     expect(DESIGN_MATE_CHAT_MODEL_TOOLS.map((tool) => tool.name)).toEqual([
       DESIGN_MATE_CHAT_INSPECT_REVIEW_TOOL_NAME,
       DESIGN_MATE_CHAT_EXPORT_OPTIONS_TOOL_NAME,
+      DESIGN_MATE_CHAT_COLOR_CONTRAST_TOOL_NAME,
       DESIGN_MATE_CHAT_PROPOSAL_TOOL_NAME,
     ]);
     expect(Object.isFrozen(DESIGN_MATE_CHAT_MODEL_TOOLS)).toBe(true);
@@ -279,6 +281,53 @@ describe("Design Mate chat proposal tool", () => {
         },
         "invalid-opacity",
       ),
+    ).toBeNull();
+  });
+});
+
+describe("Design Mate color contrast tool", () => {
+  const review = { summary: "None", findings: [] };
+
+  function contrast(value: unknown): string | null {
+    return executeDesignMateChatReadOnlyTool(
+      DESIGN_MATE_CHAT_COLOR_CONTRAST_TOOL_NAME,
+      value,
+      review,
+    );
+  }
+
+  it("computes the WCAG ratio for black on white", () => {
+    const output = JSON.parse(
+      contrast({ foreground: "#000000", background: "#ffffff" })!,
+    );
+    expect(output.ratio).toBe(21);
+    expect(output.wcag).toEqual({
+      normalTextAA: true,
+      largeTextAA: true,
+      normalTextAAA: true,
+    });
+  });
+
+  it("expands #RGB shorthand and flags weak pairings", () => {
+    const output = JSON.parse(
+      contrast({ foreground: "#777", background: "#888" })!,
+    );
+    expect(output.ratio).toBeLessThan(3);
+    expect(output.wcag.largeTextAA).toBe(false);
+    expect(output.guidance).toMatch(/Insufficient/);
+  });
+
+  it("returns a corrective payload for unparseable colors", () => {
+    const output = JSON.parse(
+      contrast({ foreground: "red", background: "#ffffff" })!,
+    );
+    expect(output.error).toMatch(/hex/i);
+  });
+
+  it("fails closed on structurally invalid arguments", () => {
+    expect(contrast({ foreground: "#000" })).toBeNull();
+    expect(
+      contrast({ foreground: "#000", background: "#fff", extra: 1 }),
     ).toBeNull();
   });
 });

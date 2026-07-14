@@ -15,6 +15,7 @@ import {
   Plus,
   Moon,
   Save,
+  Settings,
   Sun,
   Upload,
   Redo2,
@@ -37,6 +38,7 @@ import {
 } from "@openlogo/core";
 import { type BooleanOp, fitBounds } from "@openlogo/renderer";
 import { applyBooleanOp, combinableNodes } from "../lib/boolean-ops";
+import { SettingsDialog } from "./SettingsDialog";
 import { cancelActiveCanvasSessions } from "../lib/canvas-sessions";
 import {
   canMakeCompoundPath,
@@ -608,6 +610,7 @@ function ExportMenu() {
 }
 
 export function TopBar() {
+  const [showSettings, setShowSettings] = useState(false);
   const document = useDocument(); // re-render on history/name changes
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   const setSelection = useEditorStore((state) => state.setSelection);
@@ -953,8 +956,20 @@ export function TopBar() {
           >
             {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
           </button>
+          <button
+            type="button"
+            className={ICON_BUTTON}
+            onClick={() => setShowSettings(true)}
+            title="Settings"
+            aria-label="Open settings"
+          >
+            <Settings size={16} />
+          </button>
         </div>
         <ExportMenu />
+        {showSettings && (
+          <SettingsDialog onClose={() => setShowSettings(false)} />
+        )}
       </div>
     </header>
   );

@@ -18,7 +18,10 @@ const RELATIVE_URL_BASE = "https://openlogo.invalid";
 
 export const DESIGN_MATE_TRANSCRIPT_LIMIT = 48;
 
-export type DesignMateChatMode = "remote-with-fallback" | "local";
+export type DesignMateChatMode =
+  | "direct-with-fallback"
+  | "remote-with-fallback"
+  | "local";
 export type DesignMateAccessTokenProvider = (
   signal?: AbortSignal,
 ) => string | null | Promise<string | null>;
@@ -249,6 +252,9 @@ export function createDesignMateChatProviderSetup(
 }
 
 export function designMateChatModeLabel(mode: DesignMateChatMode): string {
+  if (mode === "direct-with-fallback") {
+    return "AI (your API key)";
+  }
   return mode === "remote-with-fallback"
     ? "AI + local fallback"
     : "Local guidance";

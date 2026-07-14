@@ -10,6 +10,8 @@ export * from "./contracts";
 export * from "./context";
 export * from "./heuristic-proposals";
 export * from "./identity";
+export * from "./model-transport";
+export * from "./openai-responses";
 export * from "./orchestrator";
 export * from "./provider";
 export * from "./proposals";
