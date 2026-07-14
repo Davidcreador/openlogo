@@ -744,9 +744,9 @@ export function DashboardView({
             className="sr-only"
             accept={`${OPENLOGO_EXTENSION},application/json,.svg,image/svg+xml`}
             onChange={(event) => {
-              const files = event.target.files;
-              event.target.value = "";
-              if (files) {
+              const files = Array.from(event.currentTarget.files ?? []);
+              event.currentTarget.value = "";
+              if (files.length > 0) {
                 void handleFiles(files);
               }
             }}

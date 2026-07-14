@@ -357,6 +357,34 @@ describe("SVG import hardening", () => {
     expect(result.warnings?.join(" ")).toMatch(/1 unsupported text/i);
   });
 
+  it("keeps the default line height when foreign text omits it", async () => {
+    const result = await runImport(`
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 120">
+        <rect width="300" height="120" fill="#f5f1e8" />
+        <text x="20" y="70" font-family="Georgia" font-size="48">Studio North</text>
+      </svg>
+    `);
+
+    expect(result).toHaveLength(1);
+    const text = importedNodes().find((node) => node.type === "text");
+    expect(text?.type).toBe("text");
+    if (text?.type === "text") {
+      expect(text.lineHeight).toBeGreaterThan(0);
+    }
+    expect(documentStore.document.artboards[0]?.nodeIds).toEqual([...result]);
+  });
+
+  it("does not report IDs when invalid imported nodes reject the insert", async () => {
+    const result = await runImport(`
+      <svg xmlns="http://www.w3.org/2000/svg">
+        <text x="10" y="20" font-size="-1">Invalid</text>
+      </svg>
+    `);
+
+    expect(result).toHaveLength(0);
+    expect(importedNodes()).toEqual([]);
+  });
+
   it("resolves foreign linear and radial gradients for fill and stroke", async () => {
     const result = await runImport(`
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">

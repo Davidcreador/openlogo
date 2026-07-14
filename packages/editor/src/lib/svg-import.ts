@@ -666,8 +666,12 @@ function parseText(
   node.fontWeight = numericAttr(element, "font-weight", node.fontWeight);
   node.fontStyle = styleValue(element, "font-style") === "italic" ? "italic" : "normal";
   node.letterSpacing = numericAttr(element, "letter-spacing", 0);
-  const lineHeight = Number(styleValue(element, "line-height"));
-  node.lineHeight = Number.isFinite(lineHeight) ? lineHeight : node.lineHeight;
+  const lineHeight = Number(
+    styleValue(element, "line-height") ?? node.lineHeight,
+  );
+  if (Number.isFinite(lineHeight) && lineHeight > 0) {
+    node.lineHeight = lineHeight;
+  }
   node.align = align;
   const features = parseFontFeatures(styleValue(element, "font-feature-settings"));
   if (features) {
@@ -1480,10 +1484,13 @@ export const importSvg = (
     };
     rootIds.forEach(visit);
 
+    const beforeInsert = documentStore.committedDocument;
     documentStore.apply({
       type: "insert-nodes",
       artboardId: artboard.id,
       nodes: [...nodeTable.values()].filter((node) => reachable.has(node.id)),
     });
-    return importResult(rootIds, state.warnings);
+    return documentStore.committedDocument === beforeInsert
+      ? importResult([], state.warnings)
+      : importResult(rootIds, state.warnings);
   });

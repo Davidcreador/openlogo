@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -223,6 +223,76 @@ async function waitForReload(client, previousTimeOrigin, expectedWidth) {
   );
 }
 
+async function importDashboardSvg(client, filePath, expectedWidth) {
+  const deadline = Date.now() + 60_000;
+  let inputNodeId = 0;
+  while (Date.now() < deadline && inputNodeId === 0) {
+    const ready = await evaluate(
+      client,
+      `window.innerWidth === ${expectedWidth} && Boolean(document.querySelector('input[accept*=".svg"]'))`,
+    );
+    if (ready) {
+      await client("DOM.enable");
+      const { root } = await client("DOM.getDocument", { depth: 0 });
+      const result = await client("DOM.querySelector", {
+        nodeId: root.nodeId,
+        selector: 'input[accept*=".svg"]',
+      });
+      inputNodeId = result.nodeId;
+      break;
+    }
+    await wait(100);
+  }
+  if (inputNodeId === 0) {
+    throw new Error("The dashboard SVG input was unavailable.");
+  }
+  await client("DOM.setFileInputFiles", {
+    nodeId: inputNodeId,
+    files: [filePath],
+  });
+
+  let lastState = null;
+  while (Date.now() < deadline) {
+    lastState = await evaluate(
+      client,
+      `(() => {
+        const body = document.body?.innerText ?? "";
+        return {
+          entered: Boolean(document.querySelector('canvas[aria-label="OpenLogo canvas"]')),
+          crashed: body.includes("The editor hit an unexpected error."),
+          width: window.innerWidth,
+        };
+      })()`,
+    );
+    if (lastState?.crashed) {
+      throw new Error("The dashboard SVG import entered a recovery state.");
+    }
+    if (lastState?.entered && lastState.width === expectedWidth) {
+      return;
+    }
+    await wait(100);
+  }
+  throw new Error(
+    `The dashboard did not open the imported SVG: ${JSON.stringify(lastState)}`,
+  );
+}
+
+async function verifyImportedSvg(client) {
+  const deadline = Date.now() + 30_000;
+  let lastCount = null;
+  while (Date.now() < deadline) {
+    lastCount = await evaluate(
+      client,
+      `Number(document.querySelector("#inspector-layers-tab span:last-child")?.textContent ?? 0)`,
+    );
+    if (Number.isFinite(lastCount) && lastCount > 0) {
+      return;
+    }
+    await wait(100);
+  }
+  throw new Error(`The imported SVG remained empty (layer count ${lastCount}).`);
+}
+
 async function openDashboardDocument(client, expectedWidth) {
   const deadline = Date.now() + 60_000;
   let createRequested = false;
@@ -427,6 +497,14 @@ async function stopBrowser(child, exited) {
 }
 
 const profile = await mkdtemp(join(tmpdir(), "openlogo-browser-smoke-"));
+const svgFixture = join(profile, "browser-smoke.svg");
+await writeFile(
+  svgFixture,
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 120">
+    <rect width="240" height="120" fill="#f5f1e8" />
+    <text x="20" y="72" font-family="Georgia" font-size="42">Smoke</text>
+  </svg>`,
+);
 const server = await createServer({
   root: packageRoot,
   logLevel: "error",
@@ -486,8 +564,9 @@ try {
   await client("Page.navigate", {
     url: `http://127.0.0.1:${appPort}/`,
   });
-  await openDashboardDocument(client, 1_440);
+  await importDashboardSvg(client, svgFixture, 1_440);
   await waitForEditor(client, 1_440);
+  await verifyImportedSvg(client);
   await verifyDesignMatePanel(client);
 
   const desktopTimeOrigin = await evaluate(client, "performance.timeOrigin");
@@ -502,7 +581,7 @@ try {
   await openDashboardDocument(client, 390);
   await waitForEditor(client, 390);
   process.stdout.write(
-    "OpenLogo dashboard, editor, and Design Mate browser smoke checks passed.\n",
+    "OpenLogo dashboard SVG import, editor, and Design Mate browser smoke checks passed.\n",
   );
 } catch (cause) {
   process.stderr.write(browserOutput);
