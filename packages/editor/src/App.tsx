@@ -5,6 +5,7 @@ import { PreviewStrip } from "./components/PreviewStrip";
 import { Toast } from "./components/Toast";
 import { Toolbar } from "./components/Toolbar";
 import { TopBar } from "./components/TopBar";
+import { ArtboardEdgeControls } from "./components/ArtboardEdgeControls";
 import { ZoomControls } from "./components/ZoomControls";
 import {
   collectLeafNodeIds,
@@ -868,6 +869,7 @@ export default function App() {
               <EditorTemplatePanel />
             </Suspense>
           )}
+          <ArtboardEdgeControls />
           <ZoomControls />
           <PreviewStrip />
           <Suspense fallback={null}>

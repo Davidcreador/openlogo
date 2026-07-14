@@ -55,6 +55,7 @@ import {
 import { exportPack } from "../lib/export-pack";
 import { deleteSelection as deleteSelectedUnits } from "../lib/group-ops";
 import { clearEditingSession } from "../lib/session-resume";
+import { ensureArtboardVisible } from "../lib/artboard-ops";
 import { MAX_SVG_IMPORT_BYTES, importSvg } from "../lib/svg-import";
 import { documentStore, useDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
@@ -153,45 +154,6 @@ function fitCameraTo(artboardId: string) {
     state.setCamera(
       fitBounds(target, state.viewport.width, state.viewport.height, 48, 1),
     );
-  }
-}
-
-/**
- * Scroll (never zoom) just enough to bring an artboard into view; no-op
- * when it is already fully visible. New/duplicated boards land adjacent
- * to their anchor, so the camera must not jump — only reveal.
- */
-function ensureArtboardVisible(artboardId: string) {
-  const state = useEditorStore.getState();
-  const target = documentStore.document.artboards.find(
-    (item) => item.id === artboardId,
-  );
-  if (!target || state.viewport.width === 0) {
-    return;
-  }
-
-  const { camera, viewport } = state;
-  const viewWidth = viewport.width / camera.zoom;
-  const viewHeight = viewport.height / camera.zoom;
-  const margin = 24 / camera.zoom;
-
-  let ox = camera.offset.x;
-  let oy = camera.offset.y;
-  // Minimal nudge per axis; a board wider/taller than the viewport keeps
-  // its near (top-left) edge visible.
-  if (target.x - margin < ox) {
-    ox = target.x - margin;
-  } else if (target.x + target.width + margin > ox + viewWidth) {
-    ox = Math.min(target.x - margin, target.x + target.width + margin - viewWidth);
-  }
-  if (target.y - margin < oy) {
-    oy = target.y - margin;
-  } else if (target.y + target.height + margin > oy + viewHeight) {
-    oy = Math.min(target.y - margin, target.y + target.height + margin - viewHeight);
-  }
-
-  if (ox !== camera.offset.x || oy !== camera.offset.y) {
-    state.setCamera({ ...camera, offset: { x: ox, y: oy } });
   }
 }
 
