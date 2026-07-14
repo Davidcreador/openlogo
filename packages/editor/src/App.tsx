@@ -653,6 +653,23 @@ export default function App() {
           event.preventDefault();
           deleteSelection(state.selectedNodeIds);
           state.setSelection([]);
+          return;
+        }
+        // Nothing selected: delete the active artboard (never the last
+        // one). Undoable, and the toast says so.
+        const doc = documentStore.document;
+        if (doc.artboards.length > 1) {
+          event.preventDefault();
+          const target = doc.artboards.find(
+            (item) => item.id === doc.activeArtboardId,
+          );
+          if (target) {
+            documentStore.apply({
+              type: "remove-artboard",
+              artboardId: target.id,
+            });
+            state.setToast(`Deleted “${target.name}” — ⌘Z to undo.`);
+          }
         }
         return;
       }
