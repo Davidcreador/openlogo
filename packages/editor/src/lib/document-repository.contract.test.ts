@@ -93,7 +93,94 @@ describe.each(adapters)("DocumentRepository contract: $name", ({ create }) => {
       documentId: initial.id,
       name: "Initial",
       revision: 1,
+      thumbnail: null,
+      folderId: null,
     });
+    expect(second.folders).toEqual([]);
+  });
+
+  it("manages folders and derived thumbnails without advancing head revisions", async () => {
+    const initial = makeDocument("doc-dashboard", "Dashboard document");
+    await Effect.runPromise(fixture.repository.bootstrap(initial));
+
+    const folder = await Effect.runPromise(
+      fixture.repository.createFolder("  Client work  "),
+    );
+    const moved = await Effect.runPromise(
+      fixture.repository.moveDocument(initial.id, folder.folderId),
+    );
+    const thumbnail = "data:image/png;base64,iVBORw0KGgo=";
+    const thumbnailed = await Effect.runPromise(
+      fixture.repository.setThumbnail(initial.id, thumbnail),
+    );
+    const committed = await Effect.runPromise(
+      fixture.repository.commitDocument({
+        documentId: initial.id,
+        expectedRevision: 1,
+        document: { ...initial, name: "Saved after metadata" },
+      }),
+    );
+    const renamed = await Effect.runPromise(
+      fixture.repository.renameFolder(folder.folderId, "Approved"),
+    );
+    const bootstrap = await Effect.runPromise(
+      fixture.repository.bootstrap(makeDocument("ignored", "Ignored")),
+    );
+
+    expect(folder).toMatchObject({
+      folderId: expect.any(String),
+      name: "Client work",
+      createdAt: expect.any(Number),
+    });
+    expect(moved).toMatchObject({ revision: 1, folderId: folder.folderId });
+    expect(thumbnailed).toMatchObject({ revision: 1, thumbnail });
+    expect(committed).toMatchObject({
+      revision: 2,
+      summary: {
+        name: "Saved after metadata",
+        thumbnail,
+        folderId: folder.folderId,
+      },
+    });
+    expect(renamed).toMatchObject({
+      folderId: folder.folderId,
+      name: "Approved",
+      createdAt: folder.createdAt,
+    });
+    expect(bootstrap.folders).toEqual([renamed]);
+    expect(bootstrap.documents[0]).toMatchObject({
+      revision: 2,
+      thumbnail,
+      folderId: folder.folderId,
+    });
+
+    await Effect.runPromise(fixture.repository.deleteFolder(folder.folderId));
+    const afterDelete = await Effect.runPromise(
+      fixture.repository.bootstrap(initial),
+    );
+    expect(afterDelete.folders).toEqual([]);
+    expect(afterDelete.documents[0]?.folderId).toBeNull();
+    expect(afterDelete.documents[0]?.thumbnail).toBe(thumbnail);
+  });
+
+  it("rejects moves to missing folders without changing document metadata", async () => {
+    const initial = makeDocument("doc-missing-folder", "No folder");
+    await Effect.runPromise(fixture.repository.bootstrap(initial));
+
+    const outcome = await Effect.runPromise(
+      Effect.either(
+        fixture.repository.moveDocument(initial.id, "folder-missing"),
+      ),
+    );
+    const documents = await Effect.runPromise(
+      fixture.repository.listDocuments(),
+    );
+
+    expect(outcome).toMatchObject({
+      _tag: "Left",
+      left: { _tag: "FolderNotFoundError", folderId: "folder-missing" },
+    });
+    expect(documents[0]?.folderId).toBeNull();
   });
 
   it("creates, lists, loads, and activates independent documents", async () => {

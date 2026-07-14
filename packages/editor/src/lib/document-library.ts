@@ -8,8 +8,10 @@ import {
   DEFAULT_AUTOMATIC_VERSION_LIMIT,
   DocumentRevisionConflict,
   cloneLogoDocument,
+  sortDocumentFolders,
   sortDocumentSummaries,
   sortDocumentVersions,
+  type DocumentFolder,
   type DocumentRepository,
   type DocumentRepositoryFailure,
   type DocumentSummary,
@@ -20,6 +22,7 @@ import type {
   DocumentSaveResult,
   DocumentSession,
 } from "./document-session";
+import { renderDocumentThumbnail } from "./document-thumbnail";
 import { IndexedDbDocumentRepository } from "./indexeddb-document-repository";
 
 async function runRepositoryEffect<A>(
@@ -42,12 +45,15 @@ export type DocumentLibraryOperation =
   | "unarchive"
   | "version"
   | "restore"
+  | "folder"
+  | "move"
   | null;
 
 export type DocumentLibraryState = {
   ready: boolean;
   activeDocumentId: string | null;
   readonly documents: readonly DocumentSummary[];
+  readonly folders: readonly DocumentFolder[];
   readonly versions: readonly DocumentVersion[];
   operation: DocumentLibraryOperation;
   notice: string | null;
@@ -135,6 +141,10 @@ function replaceSummary(
  */
 export class DocumentLibraryController {
   private readonly repository: DocumentRepository;
+  private readonly thumbnailRenderer: (
+    document: LogoDocument,
+  ) => Promise<string>;
+  private readonly thumbnailDelayMs: number;
   private session: DocumentSession | null = null;
   private activeRevision: number | null = null;
   /** Current head revision already protected by any recovery version. */
@@ -142,18 +152,34 @@ export class DocumentLibraryController {
   /** Avoid cloning a large document into history on every 800 ms autosave. */
   private lastCheckpointAt = 0;
   private readonly listeners = new Set<() => void>();
+  private thumbnailTimer: ReturnType<typeof setTimeout> | null = null;
+  private thumbnailGeneration = 0;
+  private readonly thumbnailBackfills = new Set<string>();
   private current: DocumentLibraryState = {
     ready: false,
     activeDocumentId: null,
     documents: [],
+    folders: [],
     versions: [],
     operation: null,
     notice: null,
     error: null,
   };
 
-  constructor(repository: DocumentRepository) {
+  constructor(
+    repository: DocumentRepository,
+    options: {
+      thumbnailRenderer?: (document: LogoDocument) => Promise<string>;
+      thumbnailDelayMs?: number;
+    } = {},
+  ) {
     this.repository = repository;
+    this.thumbnailRenderer =
+      options.thumbnailRenderer ?? renderDocumentThumbnail;
+    const thumbnailDelayMs = options.thumbnailDelayMs ?? 2_000;
+    this.thumbnailDelayMs = Number.isFinite(thumbnailDelayMs)
+      ? Math.max(0, thumbnailDelayMs)
+      : 2_000;
   }
 
   get snapshot(): DocumentLibraryState {
@@ -177,17 +203,48 @@ export class DocumentLibraryController {
     }
   }
 
-  /** Bootstrap v2, migrate a legacy v1 current document, and load the head. */
-  async loadActiveDocument(initialDocument: LogoDocument): Promise<LogoDocument> {
+  /** Hydrate dashboard metadata without loading a head or starting a session. */
+  async bootstrapLibrary(initialDocument: LogoDocument): Promise<void> {
     try {
       const bootstrap = await runRepositoryEffect(
         this.repository.bootstrap(initialDocument),
       );
+      this.activeRevision = null;
+      this.checkpointedRevision = null;
+      this.lastCheckpointAt = 0;
+      this.update({
+        ready: true,
+        activeDocumentId: bootstrap.activeDocumentId,
+        documents: bootstrap.documents,
+        folders: bootstrap.folders,
+        versions: [],
+        notice: this.migrationNotice(bootstrap.migration),
+        error: null,
+      });
+    } catch (error: unknown) {
+      this.update({ ready: false, error: documentLibraryErrorMessage(error) });
+      throw error;
+    }
+  }
+
+  /** Bootstrap v3, migrate a legacy v1 current document, and load the head. */
+  async loadActiveDocument(initialDocument: LogoDocument): Promise<LogoDocument> {
+    await this.bootstrapLibrary(initialDocument);
+    return this.openDocument(this.requireActiveDocumentId());
+  }
+
+  /** Load one dashboard selection and prepare its optimistic session revision. */
+  async openDocument(documentId: string): Promise<LogoDocument> {
+    return this.runOperation("switch", async () => {
       const loaded = await runRepositoryEffect(
-        this.repository.loadDocument(bootstrap.activeDocumentId),
+        this.repository.loadDocument(documentId),
       );
       const versions = await runRepositoryEffect(
-        this.repository.listVersions(bootstrap.activeDocumentId),
+        this.repository.listVersions(documentId),
+      );
+      await runRepositoryEffect(this.repository.setActiveDocument(documentId));
+      const documents = await runRepositoryEffect(
+        this.repository.listDocuments(),
       );
 
       this.activeRevision = loaded.revision;
@@ -200,17 +257,13 @@ export class DocumentLibraryController {
         this.checkpointedRevision === null ? 0 : Date.now();
       this.update({
         ready: true,
-        activeDocumentId: bootstrap.activeDocumentId,
-        documents: bootstrap.documents,
+        activeDocumentId: documentId,
+        documents,
         versions,
-        notice: this.migrationNotice(bootstrap.migration),
         error: null,
       });
       return loaded.document;
-    } catch (error: unknown) {
-      this.update({ ready: false, error: documentLibraryErrorMessage(error) });
-      throw error;
-    }
+    });
   }
 
   /** DocumentSession save callback: checkpoint the old head, then CAS commit. */
@@ -237,6 +290,7 @@ export class DocumentLibraryController {
         documents: replaceSummary(this.current.documents, result.summary),
         error: null,
       });
+      this.scheduleThumbnail(document);
     } catch (error: unknown) {
       if (isRevisionConflict(error)) {
         try {
@@ -277,7 +331,9 @@ export class DocumentLibraryController {
 
   async createDocument(document?: LogoDocument): Promise<LogoDocument> {
     return this.runOperation("create", async () => {
-      await this.requireSavedTransition();
+      if (this.session) {
+        await this.requireSavedTransition();
+      }
       const next = cloneLogoDocument(document ?? createInitialDocument());
       const result = await runRepositoryEffect(
         this.repository.createDocument({ document: next, makeActive: true }),
@@ -285,7 +341,7 @@ export class DocumentLibraryController {
       this.activeRevision = result.revision;
       this.checkpointedRevision = null;
       this.lastCheckpointAt = 0;
-      this.session!.adoptDocument(next);
+      this.session?.adoptDocument(next);
       this.update({
         activeDocumentId: next.id,
         documents: replaceSummary(this.current.documents, result.summary),
@@ -324,10 +380,66 @@ export class DocumentLibraryController {
     });
   }
 
+  /** Dashboard duplicate: clone any retained head without opening it. */
+  async duplicateDocument(documentId: string): Promise<LogoDocument> {
+    return this.runOperation("duplicate", async () => {
+      const loaded = await runRepositoryEffect(
+        this.repository.loadDocument(documentId),
+      );
+      const duplicate = cloneLogoDocument(loaded.document);
+      duplicate.id = createId("doc");
+      duplicate.name = `${duplicate.name.trim() || "Untitled OpenLogo"} copy`;
+      const result = await runRepositoryEffect(
+        this.repository.createDocument({
+          document: duplicate,
+          makeActive: false,
+        }),
+      );
+      this.update({
+        documents: replaceSummary(this.current.documents, result.summary),
+        error: null,
+      });
+      return duplicate;
+    });
+  }
+
+  /** Dashboard rename: commit the selected head with optimistic revision. */
+  async renameDocument(
+    documentId: string,
+    name: string,
+  ): Promise<DocumentSummary> {
+    return this.runOperation("rename", async () => {
+      const normalized = name.trim().slice(0, 120);
+      if (!normalized) {
+        throw new Error("Document name cannot be empty.");
+      }
+      const loaded = await runRepositoryEffect(
+        this.repository.loadDocument(documentId),
+      );
+      const result = await runRepositoryEffect(
+        this.repository.commitDocument({
+          documentId,
+          expectedRevision: loaded.revision,
+          document: { ...loaded.document, name: normalized },
+        }),
+      );
+      if (documentId === this.current.activeDocumentId) {
+        this.activeRevision = result.revision;
+      }
+      this.update({
+        documents: replaceSummary(this.current.documents, result.summary),
+        error: null,
+      });
+      return result.summary;
+    });
+  }
+
   /** Imported files become independent documents; an id collision creates a copy. */
   async importDocument(input: LogoDocument): Promise<LogoDocument> {
     return this.runOperation("import", async () => {
-      await this.requireSavedTransition();
+      if (this.session) {
+        await this.requireSavedTransition();
+      }
       const document = cloneLogoDocument(input);
       if (
         this.current.documents.some(
@@ -343,7 +455,7 @@ export class DocumentLibraryController {
       this.activeRevision = result.revision;
       this.checkpointedRevision = null;
       this.lastCheckpointAt = 0;
-      this.session!.adoptDocument(document);
+      this.session?.adoptDocument(document);
       this.update({
         activeDocumentId: document.id,
         documents: replaceSummary(this.current.documents, result.summary),
@@ -394,7 +506,7 @@ export class DocumentLibraryController {
   }> {
     return this.runOperation("archive", async () => {
       const wasActive = documentId === this.requireActiveDocumentId();
-      if (wasActive) {
+      if (wasActive && this.session) {
         await this.requireSavedTransition();
       }
 
@@ -408,7 +520,7 @@ export class DocumentLibraryController {
         this.activeRevision = result.activeDocument.revision;
         this.checkpointedRevision = null;
         this.lastCheckpointAt = 0;
-        this.session!.adoptDocument(adopted);
+        this.session?.adoptDocument(adopted);
         try {
           versions = await runRepositoryEffect(
             this.repository.listVersions(result.activeDocumentId),
@@ -457,6 +569,115 @@ export class DocumentLibraryController {
       });
       return summary;
     });
+  }
+
+  async createFolder(name: string): Promise<DocumentFolder> {
+    return this.runOperation("folder", async () => {
+      const folder = await runRepositoryEffect(
+        this.repository.createFolder(name),
+      );
+      this.update({
+        folders: sortDocumentFolders([...this.current.folders, folder]),
+        error: null,
+      });
+      return folder;
+    });
+  }
+
+  async renameFolder(folderId: string, name: string): Promise<DocumentFolder> {
+    return this.runOperation("folder", async () => {
+      const folder = await runRepositoryEffect(
+        this.repository.renameFolder(folderId, name),
+      );
+      this.update({
+        folders: sortDocumentFolders([
+          ...this.current.folders.filter((item) => item.folderId !== folderId),
+          folder,
+        ]),
+        error: null,
+      });
+      return folder;
+    });
+  }
+
+  async deleteFolder(folderId: string): Promise<void> {
+    await this.runOperation("folder", async () => {
+      await runRepositoryEffect(this.repository.deleteFolder(folderId));
+      this.update({
+        folders: this.current.folders.filter(
+          (folder) => folder.folderId !== folderId,
+        ),
+        documents: this.current.documents.map((summary) =>
+          summary.folderId === folderId
+            ? { ...summary, folderId: null }
+            : summary,
+        ),
+        error: null,
+      });
+    });
+  }
+
+  async moveDocument(
+    documentId: string,
+    folderId: string | null,
+  ): Promise<DocumentSummary> {
+    return this.runOperation("move", async () => {
+      const summary = await runRepositoryEffect(
+        this.repository.moveDocument(documentId, folderId),
+      );
+      this.update({
+        documents: replaceSummary(this.current.documents, summary),
+        error: null,
+      });
+      return summary;
+    });
+  }
+
+  /** Best-effort legacy thumbnail fill; never occupies the UI operation slot. */
+  async backfillThumbnail(documentId: string): Promise<void> {
+    const initialSummary = this.current.documents.find(
+      (summary) => summary.documentId === documentId,
+    );
+    if (
+      !initialSummary ||
+      initialSummary.thumbnail ||
+      this.thumbnailBackfills.has(documentId)
+    ) {
+      return;
+    }
+
+    this.thumbnailBackfills.add(documentId);
+    try {
+      const loaded = await runRepositoryEffect(
+        this.repository.loadDocument(documentId),
+      );
+      const dataUrl = await this.thumbnailRenderer(loaded.document);
+      const latest = await runRepositoryEffect(
+        this.repository.loadDocument(documentId),
+      );
+      const currentSummary = this.current.documents.find(
+        (summary) => summary.documentId === documentId,
+      );
+      if (
+        !currentSummary ||
+        currentSummary.thumbnail ||
+        currentSummary.revision !== loaded.revision ||
+        latest.revision !== loaded.revision
+      ) {
+        return;
+      }
+      const summary = await runRepositoryEffect(
+        this.repository.setThumbnail(documentId, dataUrl),
+      );
+      this.update({
+        documents: replaceSummary(this.current.documents, summary),
+      });
+    } catch {
+      // Derived previews are optional. Keep the placeholder without surfacing
+      // repository or rendering failures to the dashboard.
+    } finally {
+      this.thumbnailBackfills.delete(documentId);
+    }
   }
 
   async flushRename(): Promise<void> {
@@ -537,6 +758,13 @@ export class DocumentLibraryController {
     }
   }
 
+  /** Flush editor commits before its runtime is torn down for the dashboard. */
+  async prepareForDashboard(): Promise<void> {
+    if (this.session) {
+      await this.requireSavedTransition();
+    }
+  }
+
   private async ensureAutomaticCheckpoint(
     documentId: string,
     revision: number,
@@ -611,6 +839,41 @@ export class DocumentLibraryController {
     }
   }
 
+  private scheduleThumbnail(document: LogoDocument): void {
+    this.thumbnailGeneration += 1;
+    const generation = this.thumbnailGeneration;
+    if (this.thumbnailTimer) {
+      clearTimeout(this.thumbnailTimer);
+    }
+    const snapshot = cloneLogoDocument(document);
+    this.thumbnailTimer = setTimeout(() => {
+      this.thumbnailTimer = null;
+      void this.generateThumbnail(snapshot, generation);
+    }, this.thumbnailDelayMs);
+  }
+
+  private async generateThumbnail(
+    document: LogoDocument,
+    generation: number,
+  ): Promise<void> {
+    try {
+      const dataUrl = await this.thumbnailRenderer(document);
+      if (generation !== this.thumbnailGeneration) {
+        return;
+      }
+      const summary = await runRepositoryEffect(
+        this.repository.setThumbnail(document.id, dataUrl),
+      );
+      if (generation === this.thumbnailGeneration) {
+        this.update({
+          documents: replaceSummary(this.current.documents, summary),
+        });
+      }
+    } catch (error) {
+      console.warn("Could not update the document thumbnail.", error);
+    }
+  }
+
   private async runOperation<A>(
     operation: Exclude<DocumentLibraryOperation, null>,
     run: () => Promise<A>,
@@ -668,6 +931,8 @@ export class DocumentLibraryController {
         patch.documents === undefined
           ? this.current.documents
           : patch.documents,
+      folders:
+        patch.folders === undefined ? this.current.folders : patch.folders,
       versions:
         patch.versions === undefined
           ? this.current.versions

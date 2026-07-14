@@ -8,12 +8,14 @@ import {
   DocumentNotFoundError,
   DocumentRepositoryError,
   DocumentRevisionConflict,
+  FolderNotFoundError,
   LastUnarchivedDocumentError,
   type ArchiveDocumentResult,
   type CommitDocumentRequest,
   type CommitDocumentResult,
   type CreateDocumentRequest,
   type CreateVersionRequest,
+  type DocumentFolder,
   type DocumentRepository,
   type DocumentRepositoryBootstrap,
   type DocumentRepositoryFailure,
@@ -24,7 +26,9 @@ import {
   decodeRepositoryDocument,
   documentSummary,
   isDocumentRepositoryFailure,
+  isPngDataUrl,
   normalizeDocumentSummary,
+  sortDocumentFolders,
   sortDocumentSummaries,
   sortDocumentVersions,
 } from "./document-repository";
@@ -48,6 +52,7 @@ export class MemoryDocumentRepository implements DocumentRepository {
   private readonly heads = new Map<string, HeadRecord>();
   private readonly summaries = new Map<string, DocumentSummary>();
   private readonly versions = new Map<string, DocumentVersion>();
+  private readonly folders = new Map<string, DocumentFolder>();
   private activeDocumentId: string | null = null;
 
   constructor(options: MemoryDocumentRepositoryOptions = {}) {
@@ -90,6 +95,7 @@ export class MemoryDocumentRepository implements DocumentRepository {
       return {
         activeDocumentId: this.activeDocumentId,
         documents: this.sortedSummaries(),
+        folders: this.sortedFolders(),
         migration: { status: "none" },
       };
     });
@@ -185,10 +191,88 @@ export class MemoryDocumentRepository implements DocumentRepository {
         previousSummary.createdAt,
         updatedAt,
         previousSummary.lastOpenedAt,
+        previousSummary.archivedAt,
+        previousSummary.thumbnail,
+        previousSummary.folderId,
       );
       this.heads.set(request.documentId, { document, revision });
       this.summaries.set(request.documentId, summary);
       return { revision, summary: structuredClone(summary) };
+    });
+  }
+
+  setThumbnail(
+    documentId: string,
+    dataUrl: string,
+  ): Effect.Effect<DocumentSummary, DocumentRepositoryFailure> {
+    return this.attempt("write", () => {
+      this.requireHead(documentId);
+      if (!isPngDataUrl(dataUrl)) {
+        throw new Error("Document thumbnails must be PNG data URLs.");
+      }
+      const summary = { ...this.requireSummary(documentId), thumbnail: dataUrl };
+      this.summaries.set(documentId, summary);
+      return structuredClone(summary);
+    });
+  }
+
+  createFolder(
+    name: string,
+  ): Effect.Effect<DocumentFolder, DocumentRepositoryFailure> {
+    return this.attempt("write", () => {
+      const folder: DocumentFolder = {
+        folderId: this.makeId("folder"),
+        name: normalizeFolderName(name),
+        createdAt: this.now(),
+      };
+      if (this.folders.has(folder.folderId)) {
+        throw new Error(`Folder ${folder.folderId} already exists.`);
+      }
+      this.folders.set(folder.folderId, folder);
+      return structuredClone(folder);
+    });
+  }
+
+  renameFolder(
+    folderId: string,
+    name: string,
+  ): Effect.Effect<DocumentFolder, DocumentRepositoryFailure> {
+    return this.attempt("write", () => {
+      const folder = {
+        ...this.requireFolder(folderId),
+        name: normalizeFolderName(name),
+      };
+      this.folders.set(folderId, folder);
+      return structuredClone(folder);
+    });
+  }
+
+  deleteFolder(
+    folderId: string,
+  ): Effect.Effect<void, DocumentRepositoryFailure> {
+    return this.attempt("write", () => {
+      this.requireFolder(folderId);
+      this.folders.delete(folderId);
+      for (const [documentId, summary] of this.summaries) {
+        if (summary.folderId === folderId) {
+          this.summaries.set(documentId, { ...summary, folderId: null });
+        }
+      }
+    });
+  }
+
+  moveDocument(
+    documentId: string,
+    folderId: string | null,
+  ): Effect.Effect<DocumentSummary, DocumentRepositoryFailure> {
+    return this.attempt("write", () => {
+      this.requireHead(documentId);
+      if (folderId !== null) {
+        this.requireFolder(folderId);
+      }
+      const summary = { ...this.requireSummary(documentId), folderId };
+      this.summaries.set(documentId, summary);
+      return structuredClone(summary);
     });
   }
 
@@ -371,10 +455,22 @@ export class MemoryDocumentRepository implements DocumentRepository {
     return normalizeDocumentSummary(summary);
   }
 
+  private requireFolder(folderId: string): DocumentFolder {
+    const folder = this.folders.get(folderId);
+    if (!folder) {
+      throw new FolderNotFoundError({ folderId });
+    }
+    return folder;
+  }
+
   private sortedSummaries(): DocumentSummary[] {
     return sortDocumentSummaries(
       [...this.summaries.values()].map((summary) => structuredClone(summary)),
     );
+  }
+
+  private sortedFolders(): DocumentFolder[] {
+    return sortDocumentFolders([...this.folders.values()]);
   }
 
   private attempt<A>(
@@ -389,4 +485,12 @@ export class MemoryDocumentRepository implements DocumentRepository {
           : new DocumentRepositoryError({ operation, cause }),
     });
   }
+}
+
+function normalizeFolderName(name: string): string {
+  const normalized = name.trim();
+  if (!normalized) {
+    throw new Error("Folder name cannot be empty.");
+  }
+  return normalized;
 }

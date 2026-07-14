@@ -62,7 +62,11 @@ import {
   shapeParamsPatch,
   unitBounds,
 } from "@openlogo/core";
-import { catalogEntry, nearestWeight } from "../lib/font-catalog";
+import {
+  catalogEntry,
+  nearestStyle,
+  nearestWeight,
+} from "../lib/font-catalog";
 import { fontStore } from "../lib/font-store";
 import { FontPicker } from "./FontPicker";
 import { PaintEditor, paintPreviewBackground } from "./PaintEditor";
@@ -1128,12 +1132,16 @@ function DesignSection({
               value={node.fontFamily}
               onApply={(family) => {
                 const weight = nearestWeight(family, node.fontWeight);
-                void fontStore.ensure(
-                  family.name,
-                  weight,
+                const style = nearestStyle(
+                  family,
                   node.fontStyle ?? "normal",
                 );
-                patchSelection({ fontFamily: family.name, fontWeight: weight });
+                void fontStore.ensure(family.name, weight, style);
+                patchSelection({
+                  fontFamily: family.name,
+                  fontWeight: weight,
+                  fontStyle: style === "italic" ? "italic" : undefined,
+                });
               }}
             />
             <select

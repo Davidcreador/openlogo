@@ -26,7 +26,7 @@ export type KerningFn = (left: string, right: string) => number;
  */
 export class FontRegistry {
   readonly provider: TypefaceFontProvider;
-  private families = new Set<string>();
+  private families = new Map<string, string>();
   private typefaces = new Map<string, Typeface>();
   private kerning = new Map<string, KerningFn>();
 
@@ -43,14 +43,14 @@ export class FontRegistry {
     const providerFamily =
       style === "italic" ? FontRegistry.italicAlias(family) : family;
     this.provider.registerFont(data, providerFamily);
-    this.families.add(providerFamily.toLowerCase());
+    this.families.set(providerFamily.toLowerCase(), providerFamily);
 
     // Italic-only families (no upright cut anywhere): make the base name
     // resolvable too, so plain lookups don't fall through to an arbitrary
     // fallback family.
     if (style === "italic" && !this.families.has(family.toLowerCase())) {
       this.provider.registerFont(data.slice(0), family);
-      this.families.add(family.toLowerCase());
+      this.families.set(family.toLowerCase(), family);
     }
 
     // Typeface creation may consume the buffer wasm-side; hand it a copy.
@@ -80,8 +80,9 @@ export class FontRegistry {
       .map((part) => part.trim().replace(/^["']|["']$/g, ""));
 
     for (const part of parts) {
-      if (this.families.has(part.toLowerCase())) {
-        return part;
+      const family = this.families.get(part.toLowerCase());
+      if (family) {
+        return family;
       }
     }
 

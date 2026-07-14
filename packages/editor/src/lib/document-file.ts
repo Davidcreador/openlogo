@@ -61,7 +61,7 @@ export const openDocumentFile = (
       ),
     );
 
-    yield* Effect.tryPromise({
+    const imported = yield* Effect.tryPromise({
       try: () => documentLibrary.importDocument(document),
       catch: (error) =>
         openError(
@@ -73,9 +73,17 @@ export const openDocumentFile = (
 
     yield* Effect.sync(() => {
       const state = useEditorStore.getState();
+      if (state.view === "dashboard") {
+        documentStore.reset(imported);
+        state.setRendererReady(false);
+        state.setDocumentSessionState("loading");
+        state.setDocumentLibraryOpen(false);
+        state.setView("editor");
+      }
       state.setSelection([]);
       state.setActiveGroupId(null);
       state.setEditingPathId(null);
+      state.setTool("select");
       ensureDocumentFonts();
     });
   });

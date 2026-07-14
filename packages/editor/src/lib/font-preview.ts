@@ -1,4 +1,8 @@
-import { type FontFamily, nearestWeight } from "./font-catalog";
+import {
+  type FontFamily,
+  nearestStyle,
+  nearestWeight,
+} from "./font-catalog";
 
 /**
  * Lightweight woff2 FontFaces for picker-row previews. Browser-only on
@@ -41,9 +45,11 @@ export function ensurePreview(family: FontFamily): void {
   states.set(family.name, "loading");
 
   const weight = nearestWeight(family, 400);
-  const url = `https://cdn.jsdelivr.net/fontsource/fonts/${family.id}@latest/latin-${weight}-normal.woff2`;
+  const style = nearestStyle(family, "normal");
+  const url = `https://cdn.jsdelivr.net/fontsource/fonts/${family.id}@latest/latin-${weight}-${style}.woff2`;
   const face = new FontFace(family.name, `url(${url})`, {
     weight: String(weight),
+    style,
   });
 
   face

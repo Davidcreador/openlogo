@@ -1,6 +1,7 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Effect } from "effect";
 import { CanvasStage } from "./canvas/CanvasStage";
+import { DashboardView } from "./components/DashboardView";
 import { Inspector } from "./components/Inspector";
 import { PreviewStrip } from "./components/PreviewStrip";
 import { Toast } from "./components/Toast";
@@ -9,6 +10,7 @@ import { TopBar } from "./components/TopBar";
 import { ZoomControls } from "./components/ZoomControls";
 import {
   collectLeafNodeIds,
+  createInitialDocument,
   findContainerId,
   getActiveArtboard,
   getContainerChildIds,
@@ -44,6 +46,7 @@ import { fontCatalog } from "./lib/font-catalog";
 import { DocumentSession } from "./lib/document-session";
 import { documentLibrary } from "./lib/document-library";
 import { markDocumentReady } from "./lib/performance";
+import { importSvg } from "./lib/svg-import";
 import { ensureDocumentFonts } from "./lib/text-to-path";
 import { documentStore } from "./state/document";
 import { type Tool, useEditorStore } from "./state/editor-store";
@@ -95,7 +98,11 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 export default function App() {
+  const view = useEditorStore((state) => state.view);
   const [sessionReady, setSessionReady] = useState(false);
+  const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
+  const [bootstrapLoading, setBootstrapLoading] = useState(true);
+  const pendingSvgRef = useRef<File | null>(null);
   const transformDialogOpen = useEditorStore(
     (state) => state.transformDialogOpen,
   );
@@ -128,16 +135,50 @@ export default function App() {
     transformDialogOpen,
   ]);
 
-  // Hydrate before enabling edits, then persist committed changes in order.
+  // Dashboard boot reads repository metadata only. CanvasKit, the active head,
+  // fonts, and DocumentSession remain cold until the user enters the editor.
   useEffect(() => {
     let disposed = false;
-    // IndexedDB restore and WASM compilation are independent. Start both at
-    // once so cold startup pays the slower cost, not their sum; CanvasStage
-    // consumes the same cached promise and owns user-facing failure recovery.
+    setBootstrapLoading(true);
+    void documentLibrary
+      .bootstrapLibrary(documentStore.document)
+      .then(() => {
+        if (disposed) {
+          return;
+        }
+        setBootstrapLoading(false);
+        const migrationNotice = documentLibrary.snapshot.notice;
+        if (migrationNotice) {
+          useEditorStore.getState().setToast(migrationNotice);
+        }
+      })
+      .catch((error: unknown) => {
+        if (disposed) {
+          return;
+        }
+        console.error("Document library bootstrap failed", error);
+        setBootstrapLoading(false);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [bootstrapAttempt]);
+
+  // Once a project is chosen, compile CanvasKit and start ordered persistence
+  // together. CanvasStage consumes the cached CanvasKit promise and owns its
+  // user-facing failure recovery, preserving the established startup budget.
+  useEffect(() => {
+    if (view !== "editor") {
+      setSessionReady(false);
+      return;
+    }
+    let disposed = false;
     void getCanvasKit().catch(() => undefined);
     const session = new DocumentSession({
       store: documentStore,
-      load: () => documentLibrary.loadActiveDocument(documentStore.document),
+      // Dashboard open/create already proved the repository head readable and
+      // prepared its revision. Session restoration adopts that selected copy.
+      load: async () => documentStore.document,
       save: (document) => documentLibrary.saveDocument(document),
       getVisibilityState: () => window.document.visibilityState,
       onStateChange: (state) =>
@@ -170,6 +211,36 @@ export default function App() {
         if (migrationNotice) {
           useEditorStore.getState().setToast(migrationNotice);
         }
+        const pendingSvg = pendingSvgRef.current;
+        pendingSvgRef.current = null;
+        if (pendingSvg) {
+          void pendingSvg
+            .text()
+            .then((text) => Effect.runPromise(importSvg(text)))
+            .then((ids) => {
+              if (disposed) {
+                return;
+              }
+              if (ids.length > 0) {
+                useEditorStore.getState().setSelection(ids);
+                useEditorStore
+                  .getState()
+                  .setToast(`Imported “${pendingSvg.name}”.`);
+              } else {
+                useEditorStore
+                  .getState()
+                  .setToast("This SVG contains no supported editable shapes.");
+              }
+            })
+            .catch((error: unknown) => {
+              if (!disposed) {
+                console.warn("SVG import failed", error);
+                useEditorStore
+                  .getState()
+                  .setToast("SVG import failed. The new project was preserved.");
+              }
+            });
+        }
         // Documents can reference catalog-only families; once the full
         // index is in, resolve any that the built-in list couldn't.
         void Effect.runPromise(fontCatalog.init()).then(() => {
@@ -198,7 +269,7 @@ export default function App() {
       documentLibrary.detachSession(session);
       session.dispose();
     };
-  }, []);
+  }, [view]);
 
   // Commands and document switches can remove nodes without going through a
   // selection-specific UI path. Keep every editor reference inside the
@@ -234,7 +305,7 @@ export default function App() {
 
   // Global keyboard shortcuts.
   useEffect(() => {
-    if (!sessionReady) {
+    if (!sessionReady || view !== "editor") {
       return;
     }
 
@@ -600,7 +671,73 @@ export default function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [sessionReady]);
+  }, [sessionReady, view]);
+
+  function enterDocument(
+    document: Parameters<typeof documentStore.reset>[0],
+    openHistory = false,
+  ) {
+    documentStore.cancelPreview();
+    documentStore.reset(document);
+    const editor = useEditorStore.getState();
+    editor.setSelection([]);
+    editor.setActiveGroupId(null);
+    editor.setEditingPathId(null);
+    editor.setTool("select");
+    editor.setRendererReady(false);
+    editor.setDocumentSessionState("loading");
+    editor.setDocumentLibraryOpen(openHistory);
+    setSessionReady(false);
+    editor.setView("editor");
+  }
+
+  async function importSvgProject(file: File): Promise<void> {
+    const document = createInitialDocument();
+    const artboard = document.artboards[0]!;
+    document.name = file.name.replace(/\.svg$/i, "").trim() || "Imported SVG";
+    document.nodes = {};
+    artboard.nodeIds = [];
+    artboard.name = "Imported SVG";
+    const created = await documentLibrary.createDocument(document);
+    pendingSvgRef.current = file;
+    enterDocument(created);
+  }
+
+  if (view === "dashboard") {
+    if (bootstrapLoading) {
+      return (
+        <main
+          className="grid h-screen place-items-center bg-chrome text-chrome-text"
+          aria-busy="true"
+          aria-label="Loading OpenLogo projects"
+        >
+          <div className="flex items-center gap-12 rounded-panel border border-chrome-hairline bg-[rgb(255_255_255/0.035)] px-18 py-14 shadow-[0_12px_40px_rgb(8_6_12/0.35)]">
+            <span className="grid h-36 w-36 place-items-center rounded-[10px] bg-[linear-gradient(135deg,#6a82f8,var(--color-accent)_55%,var(--color-accent-deep))] text-[13px] font-extrabold tracking-[-0.05em] text-white">
+              OL
+            </span>
+            <span>
+              <strong className="block text-[14px]">OpenLogo</strong>
+              <span className="mt-2 block text-[12px] text-chrome-dim">
+                Loading projects…
+              </span>
+            </span>
+          </div>
+        </main>
+      );
+    }
+    return (
+      <>
+        <DashboardView
+          onEnterDocument={enterDocument}
+          onImportSvg={importSvgProject}
+          onRetryBootstrap={() =>
+            setBootstrapAttempt((attempt) => attempt + 1)
+          }
+        />
+        <Toast />
+      </>
+    );
+  }
 
   if (!sessionReady) {
     return (

@@ -4,7 +4,7 @@ import {
   type LogoDocument,
 } from "@openlogo/core";
 import { Effect } from "effect";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DocumentLibraryController,
   DocumentTransitionBlockedError,
@@ -92,9 +92,16 @@ function deterministicRepository(): MemoryDocumentRepository {
 async function setup(
   initial = makeDocument("doc-initial", "Initial"),
   repository: MemoryDocumentRepository = deterministicRepository(),
+  controllerOptions: ConstructorParameters<typeof DocumentLibraryController>[1] = {
+    thumbnailRenderer: async () => "data:image/png;base64,dGVzdA==",
+    thumbnailDelayMs: 0,
+  },
 ) {
   const store = new FakeDocumentStore(initial);
-  const controller = new DocumentLibraryController(repository);
+  const controller = new DocumentLibraryController(
+    repository,
+    controllerOptions,
+  );
   const session = new DocumentSession({
     store,
     load: () => controller.loadActiveDocument(initial),
@@ -107,7 +114,121 @@ async function setup(
   return { controller, initial, repository, session, store };
 }
 
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
 describe("DocumentLibraryController", () => {
+  it("bootstraps dashboard metadata without loading a document head", async () => {
+    const initial = makeDocument("doc-dashboard-boot", "Dashboard boot");
+    const repository = deterministicRepository();
+    const loadDocument = vi.spyOn(repository, "loadDocument");
+    const listVersions = vi.spyOn(repository, "listVersions");
+    const controller = new DocumentLibraryController(repository, {
+      thumbnailRenderer: async () => "data:image/png;base64,dGVzdA==",
+      thumbnailDelayMs: 0,
+    });
+
+    await controller.bootstrapLibrary(initial);
+
+    expect(controller.snapshot).toMatchObject({
+      ready: true,
+      activeDocumentId: initial.id,
+      documents: [{ documentId: initial.id, name: initial.name }],
+      folders: [],
+      versions: [],
+    });
+    expect(loadDocument).not.toHaveBeenCalled();
+    expect(listVersions).not.toHaveBeenCalled();
+
+    const opened = await controller.openDocument(initial.id);
+    expect(opened).toEqual(initial);
+    expect(loadDocument).toHaveBeenCalledTimes(1);
+    expect(listVersions).toHaveBeenCalledTimes(1);
+  });
+
+  it("supports dashboard document operations without an attached session", async () => {
+    const initial = makeDocument("doc-dashboard-initial", "Initial");
+    const repository = deterministicRepository();
+    const controller = new DocumentLibraryController(repository, {
+      thumbnailRenderer: async () => "data:image/png;base64,dGVzdA==",
+      thumbnailDelayMs: 0,
+    });
+    await controller.bootstrapLibrary(initial);
+
+    const created = await controller.createDocument(
+      makeDocument("doc-dashboard-created", "Created"),
+    );
+    const renamed = await controller.renameDocument(created.id, "Renamed");
+    const duplicate = await controller.duplicateDocument(initial.id);
+    const archived = await controller.archiveDocument(created.id);
+
+    expect(renamed).toMatchObject({
+      documentId: created.id,
+      name: "Renamed",
+      revision: 2,
+    });
+    expect(duplicate).toMatchObject({ name: "Initial copy" });
+    expect(archived.archivedSummary).toMatchObject({
+      documentId: created.id,
+      archivedAt: expect.any(Number),
+    });
+    expect(controller.snapshot.documents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ documentId: initial.id }),
+        expect.objectContaining({ documentId: duplicate.id }),
+        expect.objectContaining({
+          documentId: created.id,
+          name: "Renamed",
+          archivedAt: expect.any(Number),
+        }),
+      ]),
+    );
+  });
+
+  it("backfills missing thumbnails without changing revisions or UI operation state", async () => {
+    const initial = makeDocument("doc-backfill", "Legacy thumbnail");
+    const repository = deterministicRepository();
+    const thumbnailRenderer = vi.fn(
+      async () => "data:image/png;base64,YmFja2ZpbGw=",
+    );
+    const controller = new DocumentLibraryController(repository, {
+      thumbnailRenderer,
+    });
+    await controller.bootstrapLibrary(initial);
+
+    await controller.backfillThumbnail(initial.id);
+
+    expect(thumbnailRenderer).toHaveBeenCalledOnce();
+    expect(controller.snapshot.operation).toBeNull();
+    expect(controller.snapshot.documents[0]).toMatchObject({
+      revision: 1,
+      thumbnail: "data:image/png;base64,YmFja2ZpbGw=",
+    });
+    const head = await Effect.runPromise(repository.loadDocument(initial.id));
+    expect(head.revision).toBe(1);
+  });
+
+  it("silently leaves the placeholder when thumbnail backfill fails", async () => {
+    const initial = makeDocument("doc-backfill-failure", "Legacy thumbnail");
+    const repository = deterministicRepository();
+    const controller = new DocumentLibraryController(repository, {
+      thumbnailRenderer: async () => {
+        throw new Error("thumbnail unavailable");
+      },
+    });
+    await controller.bootstrapLibrary(initial);
+
+    await expect(controller.backfillThumbnail(initial.id)).resolves.toBeUndefined();
+
+    expect(controller.snapshot).toMatchObject({
+      operation: null,
+      error: null,
+      documents: [{ thumbnail: null }],
+    });
+  });
+
   it("autosaves with optimistic revisions and a bounded recovery checkpoint", async () => {
     const { controller, repository, session, store, initial } = await setup();
     const edited = { ...initial, name: "Edited" };
@@ -155,6 +276,101 @@ describe("DocumentLibraryController", () => {
     expect(versions.filter((version) => version.kind === "automatic")).toHaveLength(
       1,
     );
+
+    session.dispose();
+  });
+
+  it("debounces thumbnails after committed saves without advancing revisions", async () => {
+    vi.useFakeTimers();
+    const thumbnailRenderer = vi.fn(async (document: LogoDocument) =>
+      `data:image/png;base64,${btoa(document.name)}`,
+    );
+    const { controller, repository, session, store, initial } = await setup(
+      makeDocument("doc-thumbnail", "Initial"),
+      deterministicRepository(),
+      { thumbnailRenderer, thumbnailDelayMs: 2_000 },
+    );
+
+    store.commit({ ...initial, name: "First edit" });
+    await session.flush();
+    store.commit({ ...initial, name: "Latest edit" });
+    await session.flush();
+
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(thumbnailRenderer).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    const documents = await Effect.runPromise(repository.listDocuments());
+    expect(thumbnailRenderer).toHaveBeenCalledTimes(1);
+    expect(thumbnailRenderer).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Latest edit" }),
+    );
+    expect(documents[0]).toMatchObject({
+      revision: 3,
+      thumbnail: `data:image/png;base64,${btoa("Latest edit")}`,
+    });
+    expect(controller.snapshot.documents[0]?.thumbnail).toBe(
+      documents[0]?.thumbnail,
+    );
+    expect(session.state).toBe("saved");
+
+    session.dispose();
+  });
+
+  it("never fails a committed save when thumbnail generation fails", async () => {
+    vi.useFakeTimers();
+    const warning = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    const { repository, session, store, initial } = await setup(
+      makeDocument("doc-thumbnail-failure", "Initial"),
+      deterministicRepository(),
+      {
+        thumbnailRenderer: async () => {
+          throw new Error("thumbnail unavailable");
+        },
+        thumbnailDelayMs: 2_000,
+      },
+    );
+
+    store.commit({ ...initial, name: "Saved anyway" });
+    await session.flush();
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    const head = await Effect.runPromise(repository.loadDocument(initial.id));
+    const documents = await Effect.runPromise(repository.listDocuments());
+    expect(head).toMatchObject({
+      revision: 2,
+      document: { name: "Saved anyway" },
+    });
+    expect(documents[0]).toMatchObject({ revision: 2, thumbnail: null });
+    expect(session.state).toBe("saved");
+    expect(warning).toHaveBeenCalledWith(
+      "Could not update the document thumbnail.",
+      expect.any(Error),
+    );
+
+    session.dispose();
+  });
+
+  it("keeps controller folder state aligned with repository metadata", async () => {
+    const { controller, repository, session, initial } = await setup();
+
+    const folder = await controller.createFolder("Client");
+    await controller.moveDocument(initial.id, folder.folderId);
+    await controller.renameFolder(folder.folderId, "Approved");
+
+    expect(controller.snapshot.folders).toEqual([
+      expect.objectContaining({ folderId: folder.folderId, name: "Approved" }),
+    ]);
+    expect(controller.snapshot.documents[0]?.folderId).toBe(folder.folderId);
+
+    await controller.deleteFolder(folder.folderId);
+    const bootstrap = await Effect.runPromise(repository.bootstrap(initial));
+    expect(controller.snapshot.folders).toEqual([]);
+    expect(controller.snapshot.documents[0]?.folderId).toBeNull();
+    expect(bootstrap.folders).toEqual([]);
+    expect(bootstrap.documents[0]?.folderId).toBeNull();
 
     session.dispose();
   });

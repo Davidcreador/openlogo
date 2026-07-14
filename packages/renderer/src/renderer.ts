@@ -290,6 +290,12 @@ export class SceneRenderer {
     this.frameScheduler.invalidate();
   }
 
+  /** Drop paragraphs bound to old provider faces, then repaint. */
+  invalidateFonts(): void {
+    this.clearFontCaches();
+    this.invalidate();
+  }
+
   /**
    * Swap the theme-tied constants (module-wide — every renderer shares the
    * app theme) and repaint. Artboard labels bake their color into cached
@@ -482,11 +488,18 @@ export class SceneRenderer {
         // See above.
       }
     }
+    this.pathCache.clear();
+    this.clipPathCache.clear();
+    this.clearFontCaches();
+    this.textPathLayouts.clear();
+  }
+
+  private clearFontCaches(): void {
     for (const entry of this.paragraphCache.values()) {
       try {
         entry.paragraph.delete();
       } catch {
-        // See above.
+        // Context loss may already have released the backing object.
       }
     }
     for (const entry of this.labelCache.values()) {
@@ -496,10 +509,7 @@ export class SceneRenderer {
         // See above.
       }
     }
-    this.pathCache.clear();
-    this.clipPathCache.clear();
     this.paragraphCache.clear();
-    this.textPathLayouts.clear();
     this.labelCache.clear();
     this.labelRects.clear();
   }

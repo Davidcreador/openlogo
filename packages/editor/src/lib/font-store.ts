@@ -1,5 +1,9 @@
 import { Data, Effect, Schedule } from "effect";
-import type { FontRegistry, SceneRenderer } from "@openlogo/renderer";
+import type {
+  FontRegistry,
+  KerningFn,
+  SceneRenderer,
+} from "@openlogo/renderer";
 import {
   type FontFamily,
   type FontStyleName,
@@ -28,9 +32,21 @@ export class FontLoadError extends Data.TaggedError("FontLoadError")<{
 }> {}
 
 class FontStore {
-  private registry: FontRegistry | null = null;
-  private renderer: SceneRenderer | null = null;
-  private cache = new Map<string, ArrayBuffer>();
+  private registry: Pick<FontRegistry, "register" | "setKerning"> | null = null;
+  private renderer: Pick<
+    SceneRenderer,
+    "invalidate" | "invalidateFonts"
+  > | null = null;
+  private cache = new Map<
+    string,
+    {
+      family: FontFamily;
+      weight: number;
+      style: FontStyleName;
+      bytes: ArrayBuffer;
+      kerning?: KerningFn;
+    }
+  >();
   /**
    * In-flight loads are shared as promises rather than Effect fibers: each
    * `ensure` call is an independent runtime entry, so memoization has to
@@ -39,9 +55,29 @@ class FontStore {
   private pending = new Map<string, Promise<ArrayBuffer | null>>();
 
   /** Wired by CanvasStage once the renderer exists. */
-  attach(registry: FontRegistry, renderer: SceneRenderer): void {
+  attach(
+    registry: Pick<FontRegistry, "register" | "setKerning">,
+    renderer: Pick<SceneRenderer, "invalidate" | "invalidateFonts">,
+  ): void {
     this.registry = registry;
     this.renderer = renderer;
+    for (const face of this.cache.values()) {
+      registry.register(
+        face.family.name,
+        face.bytes.slice(0),
+        face.weight,
+        face.style,
+      );
+      if (face.kerning) {
+        registry.setKerning(
+          face.family.name,
+          face.weight,
+          face.style,
+          face.kerning,
+        );
+      }
+    }
+    renderer.invalidateFonts();
   }
 
   detach(): void {
@@ -71,11 +107,16 @@ class FontStore {
       Effect.retry({ schedule: Schedule.exponential("300 millis"), times: 2 }),
       Effect.tap((bytes) =>
         Effect.sync(() => {
-          this.cache.set(key, bytes);
+          this.cache.set(key, {
+            family,
+            weight: resolvedWeight,
+            style,
+            bytes,
+          });
           // Registry consumes the buffer; hand it a copy. weight+style key
           // the per-face Typeface used by text-on-a-path glyph layout.
           this.registry?.register(family.name, bytes.slice(0), resolvedWeight, style);
-          this.renderer?.invalidate();
+          this.renderer?.invalidateFonts();
         }),
       ),
       // Metrics kerning: extract the face's kern/GPOS pair values with
@@ -84,7 +125,9 @@ class FontStore {
       // `kern` table plus GPOS pair adjustment (lookup type 2) — what
       // opentype.js getKerningValue reads; contextual/chained
       // positioning is not applied. Non-fatal: layout just stays plain.
-      Effect.tap((bytes) => this.extractKerning(family, resolvedWeight, style, bytes)),
+      Effect.tap((bytes) =>
+        this.extractKerning(family, resolvedWeight, style, key, bytes),
+      ),
       // Also register as a CSS FontFace so DOM surfaces (inline text
       // editor, SVG preview strip) render with the same glyphs.
       // Non-fatal: DOM fallback fonts still work.
@@ -105,13 +148,19 @@ class FontStore {
     family: FontFamily,
     weight: number,
     style: FontStyleName,
+    key: string,
     bytes: ArrayBuffer,
   ): Effect.Effect<void> {
     return opentypeModule.pipe(
       Effect.flatMap((ot) =>
         Effect.sync(() => {
           const font = ot.parse(bytes.slice(0));
-          this.registry?.setKerning(family.name, weight, style, kerningLookup(font));
+          const kerning = kerningLookup(font);
+          const cached = this.cache.get(key);
+          if (cached) {
+            cached.kerning = kerning;
+          }
+          this.registry?.setKerning(family.name, weight, style, kerning);
           this.renderer?.invalidate();
         }),
       ),
@@ -142,7 +191,7 @@ class FontStore {
 
       const cached = this.cache.get(key);
       if (cached) {
-        return Effect.succeed(cached);
+        return Effect.succeed(cached.bytes);
       }
 
       const inFlight = this.pending.get(key);
@@ -186,7 +235,7 @@ class FontStore {
       return null;
     }
     const key = `${family.name}:${nearestWeight(family, weight)}:${nearestStyle(family, style)}`;
-    return this.cache.get(key) ?? null;
+    return this.cache.get(key)?.bytes ?? null;
   }
 }
 

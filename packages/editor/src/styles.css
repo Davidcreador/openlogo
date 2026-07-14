@@ -178,6 +178,20 @@
     height: 100vh;
   }
 
+  /* Editor chrome intentionally keeps a desktop minimum. Dashboard is the
+     responsive entry surface, so release that constraint while it is mounted. */
+  body:has(.dashboard-shell) {
+    min-width: 0;
+    height: auto;
+    min-height: 100vh;
+    overflow: auto;
+  }
+
+  body:has(.dashboard-shell) #root {
+    height: auto;
+    min-height: 100vh;
+  }
+
   button,
   input,
   select,

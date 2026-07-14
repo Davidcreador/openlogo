@@ -6,6 +6,7 @@ import {
   DOCUMENT_HEAD_STORE,
   DOCUMENT_SUMMARY_STORE,
   DOCUMENT_VERSION_STORE,
+  FOLDER_STORE,
   IndexedDbDocumentRepository,
   LEGACY_DOCUMENT_STORE,
   OPENLOGO_DATABASE_VERSION,
@@ -62,6 +63,69 @@ async function seedLegacyDatabase(
     store.put(structuredClone(value), key);
   }
   await transactionDone(transaction);
+  database.close();
+}
+
+async function seedV2Database(
+  databaseName: string,
+  document: LogoDocument,
+): Promise<void> {
+  const artboard = document.artboards[0]!;
+  const database = await openDatabase(databaseName, 2, (upgrading) => {
+    upgrading.createObjectStore(LEGACY_DOCUMENT_STORE);
+    const heads = upgrading.createObjectStore(DOCUMENT_HEAD_STORE, {
+      keyPath: "documentId",
+    });
+    const summaries = upgrading.createObjectStore(DOCUMENT_SUMMARY_STORE, {
+      keyPath: "documentId",
+    });
+    const versions = upgrading.createObjectStore(DOCUMENT_VERSION_STORE, {
+      keyPath: "versionId",
+    });
+    versions.createIndex("by-document-created", ["documentId", "createdAt"]);
+    versions.createIndex("by-document-kind-created", [
+      "documentId",
+      "kind",
+      "createdAt",
+    ]);
+    const workspace = upgrading.createObjectStore(WORKSPACE_STORE, {
+      keyPath: "key",
+    });
+    heads.put({
+      documentId: document.id,
+      document,
+      revision: 4,
+      createdAt: 100,
+      updatedAt: 400,
+    });
+    summaries.put({
+      documentId: document.id,
+      name: document.name,
+      revision: 4,
+      createdAt: 100,
+      updatedAt: 400,
+      lastOpenedAt: 450,
+      archivedAt: null,
+      activeArtboardName: artboard.name,
+      activeArtboardWidth: artboard.width,
+      activeArtboardHeight: artboard.height,
+    });
+    versions.put({
+      versionId: "version-v2",
+      documentId: document.id,
+      kind: "named",
+      label: "v2 milestone",
+      createdAt: 300,
+      sourceRevision: 3,
+      document,
+    });
+    workspace.put({
+      key: "state",
+      activeDocumentId: document.id,
+      legacyMigration: { status: "none" },
+      migrationVersion: 1,
+    });
+  });
   database.close();
 }
 
@@ -237,7 +301,7 @@ describe("IndexedDbDocumentRepository migration", () => {
     expect(versions[0]?.kind).toBe("migration");
   });
 
-  it("upgrades the database to v2 with all repository stores", async () => {
+  it("upgrades the database to v3 with all repository stores", async () => {
     const databaseName = nextDatabaseName();
     const repository = makeRepository(databaseName);
     await Effect.runPromise(
@@ -252,13 +316,124 @@ describe("IndexedDbDocumentRepository migration", () => {
         DOCUMENT_HEAD_STORE,
         DOCUMENT_SUMMARY_STORE,
         DOCUMENT_VERSION_STORE,
+        FOLDER_STORE,
         WORKSPACE_STORE,
       ]),
     );
     database.close();
   });
 
-  it("normalizes pre-archive summaries with no archivedAt field", async () => {
+  it("migrates v2 summaries forward without rewriting heads or versions", async () => {
+    const databaseName = nextDatabaseName();
+    const initial = makeDocument("v2-document", "Version two");
+    await seedV2Database(databaseName, initial);
+    const repository = makeRepository(databaseName);
+
+    await Effect.runPromise(repository.listDocuments());
+
+    const database = await openDatabase(databaseName);
+    const transaction = database.transaction(
+      [DOCUMENT_HEAD_STORE, DOCUMENT_SUMMARY_STORE, DOCUMENT_VERSION_STORE],
+      "readonly",
+    );
+    const [head, summary, version] = await Promise.all([
+      new Promise<unknown>((resolve, reject) => {
+        const request = transaction
+          .objectStore(DOCUMENT_HEAD_STORE)
+          .get(initial.id);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      }),
+      new Promise<unknown>((resolve, reject) => {
+        const request = transaction
+          .objectStore(DOCUMENT_SUMMARY_STORE)
+          .get(initial.id);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      }),
+      new Promise<unknown>((resolve, reject) => {
+        const request = transaction
+          .objectStore(DOCUMENT_VERSION_STORE)
+          .get("version-v2");
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      }),
+      transactionDone(transaction),
+    ]);
+    expect(database.version).toBe(3);
+    expect([...database.objectStoreNames]).toContain(FOLDER_STORE);
+    expect(summary).toMatchObject({ thumbnail: null, folderId: null });
+    expect(head).toMatchObject({
+      documentId: initial.id,
+      revision: 4,
+      document: initial,
+    });
+    expect(version).toMatchObject({
+      versionId: "version-v2",
+      sourceRevision: 3,
+      document: initial,
+    });
+    database.close();
+
+    const bootstrap = await Effect.runPromise(repository.bootstrap(initial));
+    expect(bootstrap).toMatchObject({
+      activeDocumentId: initial.id,
+      documents: [
+        {
+          documentId: initial.id,
+          revision: 4,
+          thumbnail: null,
+          folderId: null,
+        },
+      ],
+      folders: [],
+    });
+    const versions = await Effect.runPromise(
+      repository.listVersions(initial.id),
+    );
+    expect(versions).toEqual([
+      expect.objectContaining({ versionId: "version-v2", sourceRevision: 3 }),
+    ]);
+  });
+
+  it("serializes concurrent dashboard metadata writes without dangling folders", async () => {
+    const databaseName = nextDatabaseName();
+    const initial = makeDocument("dashboard-concurrent", "Initial");
+    const first = makeRepository(databaseName);
+    const second = makeRepository(databaseName);
+    await Effect.runPromise(first.bootstrap(initial));
+    const folder = await Effect.runPromise(first.createFolder("Client"));
+    const thumbnail = "data:image/png;base64,iVBORw0KGgo=";
+
+    await Promise.all([
+      Effect.runPromise(
+        first.commitDocument({
+          documentId: initial.id,
+          expectedRevision: 1,
+          document: { ...initial, name: "Committed" },
+        }),
+      ),
+      Effect.runPromise(second.setThumbnail(initial.id, thumbnail)),
+    ]);
+    await Effect.runPromise(first.moveDocument(initial.id, folder.folderId));
+    await Promise.all([
+      Effect.runPromise(
+        Effect.either(second.moveDocument(initial.id, folder.folderId)),
+      ),
+      Effect.runPromise(first.deleteFolder(folder.folderId)),
+    ]);
+
+    const bootstrap = await Effect.runPromise(second.bootstrap(initial));
+    expect(bootstrap.folders).toEqual([]);
+    expect(bootstrap.documents[0]).toMatchObject({
+      name: "Committed",
+      revision: 2,
+      thumbnail,
+      folderId: null,
+    });
+  });
+
+  it("normalizes summaries missing archive and dashboard metadata", async () => {
     const databaseName = nextDatabaseName();
     const initial = makeDocument("legacy-summary", "Legacy summary");
     const repository = makeRepository(databaseName);
@@ -273,6 +448,8 @@ describe("IndexedDbDocumentRepository migration", () => {
       ...first.documents[0]!,
     } as Partial<(typeof first.documents)[number]>;
     delete legacySummary.archivedAt;
+    delete legacySummary.thumbnail;
+    delete legacySummary.folderId;
     transaction.objectStore(DOCUMENT_SUMMARY_STORE).put(legacySummary);
     await transactionDone(transaction);
     database.close();
@@ -280,7 +457,11 @@ describe("IndexedDbDocumentRepository migration", () => {
     const recovered = await Effect.runPromise(repository.bootstrap(initial));
     const documents = await Effect.runPromise(repository.listDocuments());
     expect(recovered.documents[0]?.archivedAt).toBeNull();
+    expect(recovered.documents[0]?.thumbnail).toBeNull();
+    expect(recovered.documents[0]?.folderId).toBeNull();
     expect(documents[0]?.archivedAt).toBeNull();
+    expect(documents[0]?.thumbnail).toBeNull();
+    expect(documents[0]?.folderId).toBeNull();
   });
 
   it("repairs a workspace pointer that targets an archived head", async () => {

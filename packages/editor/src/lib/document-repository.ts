@@ -22,6 +22,16 @@ export type DocumentSummary = {
   activeArtboardName: string;
   activeArtboardWidth: number;
   activeArtboardHeight: number;
+  /** Derived PNG preview; updating it never advances the document head. */
+  thumbnail: string | null;
+  /** Null means the Document Library root. */
+  folderId: string | null;
+};
+
+export type DocumentFolder = {
+  folderId: string;
+  name: string;
+  createdAt: number;
 };
 
 export type LoadedDocument = {
@@ -47,6 +57,7 @@ export type LegacyMigrationResult =
 export type DocumentRepositoryBootstrap = {
   activeDocumentId: string;
   documents: DocumentSummary[];
+  folders: DocumentFolder[];
   migration: LegacyMigrationResult;
 };
 
@@ -102,6 +113,12 @@ export class DocumentNotFoundError extends Data.TaggedError(
   readonly documentId: string;
 }> {}
 
+export class FolderNotFoundError extends Data.TaggedError(
+  "FolderNotFoundError",
+)<{
+  readonly folderId: string;
+}> {}
+
 export class DocumentAlreadyExistsError extends Data.TaggedError(
   "DocumentAlreadyExistsError",
 )<{
@@ -143,6 +160,7 @@ export class LastUnarchivedDocumentError extends Data.TaggedError(
 export type DocumentRepositoryFailure =
   | DocumentRepositoryError
   | DocumentNotFoundError
+  | FolderNotFoundError
   | DocumentAlreadyExistsError
   | DocumentIdMismatchError
   | DocumentRevisionConflict
@@ -174,6 +192,31 @@ export interface DocumentRepository {
   commitDocument(
     request: CommitDocumentRequest,
   ): Effect.Effect<CommitDocumentResult, DocumentRepositoryFailure>;
+
+  /** Replace derived preview metadata without advancing the head revision. */
+  setThumbnail(
+    documentId: string,
+    dataUrl: string,
+  ): Effect.Effect<DocumentSummary, DocumentRepositoryFailure>;
+
+  createFolder(
+    name: string,
+  ): Effect.Effect<DocumentFolder, DocumentRepositoryFailure>;
+
+  renameFolder(
+    folderId: string,
+    name: string,
+  ): Effect.Effect<DocumentFolder, DocumentRepositoryFailure>;
+
+  /** Delete folder metadata and move its documents back to the root. */
+  deleteFolder(
+    folderId: string,
+  ): Effect.Effect<void, DocumentRepositoryFailure>;
+
+  moveDocument(
+    documentId: string,
+    folderId: string | null,
+  ): Effect.Effect<DocumentSummary, DocumentRepositoryFailure>;
 
   setActiveDocument(
     documentId: string,
@@ -232,6 +275,8 @@ export function documentSummary(
   updatedAt: number,
   lastOpenedAt = updatedAt,
   archivedAt: number | null = null,
+  thumbnail: string | null = null,
+  folderId: string | null = null,
 ): DocumentSummary {
   const activeArtboard =
     document.artboards.find(
@@ -253,14 +298,23 @@ export function documentSummary(
     activeArtboardName: activeArtboard.name,
     activeArtboardWidth: activeArtboard.width,
     activeArtboardHeight: activeArtboard.height,
+    thumbnail,
+    folderId,
   };
 }
 
-/** Backward-compatible read for v2 summaries written before archive support. */
+/** Backward-compatible read for summaries written before archive/dashboard metadata. */
 export function normalizeDocumentSummary(
-  summary: DocumentSummary | (Omit<DocumentSummary, "archivedAt"> & {
-    archivedAt?: unknown;
-  }),
+  summary:
+    | DocumentSummary
+    | (Omit<
+        DocumentSummary,
+        "archivedAt" | "thumbnail" | "folderId"
+      > & {
+        archivedAt?: unknown;
+        thumbnail?: unknown;
+        folderId?: unknown;
+      }),
 ): DocumentSummary {
   return {
     ...structuredClone(summary),
@@ -269,7 +323,27 @@ export function normalizeDocumentSummary(
       Number.isFinite(summary.archivedAt)
         ? summary.archivedAt
         : null,
+    thumbnail:
+      typeof summary.thumbnail === "string" && isPngDataUrl(summary.thumbnail)
+        ? summary.thumbnail
+        : null,
+    folderId: typeof summary.folderId === "string" ? summary.folderId : null,
   } as DocumentSummary;
+}
+
+export function isPngDataUrl(value: string): boolean {
+  return /^data:image\/png(?:;[^,]*)?,/i.test(value);
+}
+
+export function sortDocumentFolders(
+  folders: readonly DocumentFolder[],
+): DocumentFolder[] {
+  return folders
+    .map((folder) => structuredClone(folder))
+    .sort(
+      (a, b) =>
+        a.createdAt - b.createdAt || a.folderId.localeCompare(b.folderId),
+    );
 }
 
 export function sortDocumentSummaries(
@@ -300,6 +374,7 @@ export function isDocumentRepositoryFailure(
   return [
     "DocumentRepositoryError",
     "DocumentNotFoundError",
+    "FolderNotFoundError",
     "DocumentAlreadyExistsError",
     "DocumentIdMismatchError",
     "DocumentRevisionConflict",

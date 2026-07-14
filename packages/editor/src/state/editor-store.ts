@@ -33,12 +33,14 @@ export type DesignMateReviewSnapshot = {
 };
 
 export type DesignMateStatus = "idle" | "reviewing" | "complete" | "error";
+export type EditorView = "dashboard" | "editor";
 export type DesignMateCanvasFocus = DesignMateFocusTarget & {
   readonly findingId: string;
   readonly label: string;
 };
 
 type EditorState = {
+  view: EditorView;
   tool: Tool;
   selectedNodeIds: string[];
   /**
@@ -84,6 +86,7 @@ type EditorState = {
   /** Transient status message (file open errors etc.); null = hidden. */
   toast: string | null;
   setTool: (tool: Tool) => void;
+  setView: (view: EditorView) => void;
   setTransformDialogOpen: (open: boolean) => void;
   setExportDialogOpen: (open: boolean) => void;
   setDocumentLibraryOpen: (open: boolean) => void;
@@ -109,6 +112,7 @@ type EditorState = {
 const initialPrefs = loadPrefs();
 
 export const useEditorStore = create<EditorState>((set) => ({
+  view: "dashboard",
   tool: "select",
   selectedNodeIds: [],
   keyObjectId: null,
@@ -130,6 +134,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   pixelSnap: initialPrefs.pixelSnap,
   theme: initialPrefs.theme,
   toast: null,
+  setView: (view) => set({ view }),
   setTool: (tool) => set({ tool }),
   setTransformDialogOpen: (transformDialogOpen) => set({ transformDialogOpen }),
   setExportDialogOpen: (exportDialogOpen) => set({ exportDialogOpen }),

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { preview } from "vite";
+import { createServer } from "vite";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const expectRemoteConfiguration =
@@ -45,6 +45,8 @@ function runProbe(command) {
 async function browserExecutable() {
   const candidates = [
     process.env.CHROME_BIN,
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
     "google-chrome-stable",
     "google-chrome",
     "chromium",
@@ -190,6 +192,54 @@ async function evaluate(client, expression) {
   return result.result?.value;
 }
 
+async function openDashboardDocument(client, expectedWidth) {
+  const deadline = Date.now() + 25_000;
+  while (Date.now() < deadline) {
+    try {
+      const state = await evaluate(
+        client,
+        `(() => {
+          const body = document.body?.innerText ?? "";
+          const editorOpen = Boolean(
+            document.querySelector('canvas[aria-label="OpenLogo canvas"]'),
+          );
+          if (editorOpen) {
+            return { entered: true, crashed: false, width: window.innerWidth };
+          }
+          const preset = [...document.querySelectorAll("button")].find(
+            (button) => button.textContent?.includes("New blank"),
+          );
+          if (preset instanceof HTMLButtonElement && !preset.disabled) {
+            preset.click();
+            return { entered: true, crashed: false, width: window.innerWidth };
+          }
+          return {
+            entered: false,
+            crashed: body.includes("The editor hit an unexpected error."),
+            width: window.innerWidth,
+          };
+        })()`,
+      );
+      if (state?.crashed) {
+        throw new Error("The dashboard entered a recovery state.");
+      }
+      if (state?.entered && state.width === expectedWidth) {
+        return;
+      }
+    } catch (cause) {
+      if (
+        cause instanceof Error &&
+        cause.message === "The dashboard entered a recovery state."
+      ) {
+        throw cause;
+      }
+      // Navigation can briefly invalidate the page execution context.
+    }
+    await wait(100);
+  }
+  throw new Error(`The dashboard did not open a document at ${expectedWidth}px.`);
+}
+
 async function waitForEditor(client, expectedWidth) {
   const deadline = Date.now() + 25_000;
   while (Date.now() < deadline) {
@@ -256,8 +306,10 @@ async function verifyDesignMatePanel(client) {
         const panel = document.querySelector("#design-mate-companion-panel");
         const text = panel?.textContent ?? "";
         return {
-          loaded: text.includes("Chat with Design Mate"),
-          failed: text.includes("Design Mate failed to load"),
+          loaded: Boolean(
+            panel?.querySelector('[aria-label="Chat with Design Mate"]'),
+          ),
+          failed: text.includes("I hit a snag while getting ready"),
           remoteOff: text.includes("Remote AI is off"),
           closeFocused:
             document.activeElement?.getAttribute("aria-label") ===
@@ -322,15 +374,16 @@ async function stopBrowser(child, exited) {
 }
 
 const profile = await mkdtemp(join(tmpdir(), "openlogo-browser-smoke-"));
-const server = await preview({
+const server = await createServer({
   root: packageRoot,
   logLevel: "error",
-  preview: {
+  server: {
     host: "127.0.0.1",
     port: 0,
     strictPort: true,
   },
 });
+await server.listen();
 const serverAddress = server.httpServer.address();
 if (!serverAddress || typeof serverAddress === "string") {
   await server.close();
@@ -380,6 +433,7 @@ try {
   await client("Page.navigate", {
     url: `http://127.0.0.1:${appPort}/`,
   });
+  await openDashboardDocument(client, 1_440);
   await waitForEditor(client, 1_440);
   await verifyDesignMatePanel(client);
 
@@ -390,9 +444,10 @@ try {
     mobile: false,
   });
   await client("Page.reload", { ignoreCache: true });
+  await openDashboardDocument(client, 390);
   await waitForEditor(client, 390);
   process.stdout.write(
-    "OpenLogo editor and Design Mate browser smoke checks passed.\n",
+    "OpenLogo dashboard, editor, and Design Mate browser smoke checks passed.\n",
   );
 } catch (cause) {
   process.stderr.write(browserOutput);

@@ -228,7 +228,7 @@ class FontCatalogStore {
     BUILTIN_FONTS.map((f) => [f.name.toLowerCase(), f]),
   );
   private listeners = new Set<() => void>();
-  private initStarted = false;
+  private initPromise: Promise<void> | null = null;
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -257,11 +257,13 @@ class FontCatalogStore {
    * Never fails — font availability must not break editing.
    */
   init(): Effect.Effect<void> {
-    if (this.initStarted) {
-      return Effect.void;
-    }
-    this.initStarted = true;
+    return Effect.promise(() => {
+      this.initPromise ??= Effect.runPromise(this.load());
+      return this.initPromise;
+    });
+  }
 
+  private load(): Effect.Effect<void> {
     const store = this;
     return Effect.gen(function* () {
       const cached = yield* readCache.pipe(

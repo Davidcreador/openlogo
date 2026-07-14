@@ -8,12 +8,14 @@ import {
   DocumentNotFoundError,
   DocumentRepositoryError,
   DocumentRevisionConflict,
+  FolderNotFoundError,
   LastUnarchivedDocumentError,
   type ArchiveDocumentResult,
   type CommitDocumentRequest,
   type CommitDocumentResult,
   type CreateDocumentRequest,
   type CreateVersionRequest,
+  type DocumentFolder,
   type DocumentRepository,
   type DocumentRepositoryBootstrap,
   type DocumentRepositoryFailure,
@@ -25,17 +27,20 @@ import {
   decodeRepositoryDocument,
   documentSummary,
   isDocumentRepositoryFailure,
+  isPngDataUrl,
   normalizeDocumentSummary,
+  sortDocumentFolders,
   sortDocumentSummaries,
   sortDocumentVersions,
 } from "./document-repository";
 
 export const OPENLOGO_DATABASE_NAME = "openlogo";
-export const OPENLOGO_DATABASE_VERSION = 2;
+export const OPENLOGO_DATABASE_VERSION = 3;
 export const LEGACY_DOCUMENT_STORE = "documents";
 export const DOCUMENT_HEAD_STORE = "document-heads";
 export const DOCUMENT_SUMMARY_STORE = "document-summaries";
 export const DOCUMENT_VERSION_STORE = "document-versions";
+export const FOLDER_STORE = "folders";
 export const WORKSPACE_STORE = "workspace";
 
 const WORKSPACE_KEY = "state";
@@ -67,7 +72,7 @@ export type IndexedDbDocumentRepositoryOptions = {
   automaticVersionLimit?: number;
 };
 
-/** IndexedDB v2 adapter for the local Document Library. */
+/** IndexedDB v3 adapter for the local Document Library. */
 export class IndexedDbDocumentRepository implements DocumentRepository {
   private readonly databaseName: string;
   private readonly factory: IDBFactory;
@@ -99,28 +104,33 @@ export class IndexedDbDocumentRepository implements DocumentRepository {
         [
           DOCUMENT_HEAD_STORE,
           DOCUMENT_SUMMARY_STORE,
+          FOLDER_STORE,
           WORKSPACE_STORE,
           LEGACY_DOCUMENT_STORE,
         ],
         "readonly",
         async (transaction) => {
-          const [heads, summaries, workspace, legacy] = await Promise.all([
-            requestResult<HeadRecord[]>(
-              transaction.objectStore(DOCUMENT_HEAD_STORE).getAll(),
-            ),
-            requestResult<DocumentSummary[]>(
-              transaction.objectStore(DOCUMENT_SUMMARY_STORE).getAll(),
-            ),
-            requestResult<WorkspaceRecord | undefined>(
-              transaction.objectStore(WORKSPACE_STORE).get(WORKSPACE_KEY),
-            ),
-            requestResult<unknown>(
-              transaction
-                .objectStore(LEGACY_DOCUMENT_STORE)
-                .get(LEGACY_CURRENT_KEY),
-            ),
-          ]);
-          return { heads, summaries, workspace, legacy };
+          const [heads, summaries, folders, workspace, legacy] =
+            await Promise.all([
+              requestResult<HeadRecord[]>(
+                transaction.objectStore(DOCUMENT_HEAD_STORE).getAll(),
+              ),
+              requestResult<DocumentSummary[]>(
+                transaction.objectStore(DOCUMENT_SUMMARY_STORE).getAll(),
+              ),
+              requestResult<DocumentFolder[]>(
+                transaction.objectStore(FOLDER_STORE).getAll(),
+              ),
+              requestResult<WorkspaceRecord | undefined>(
+                transaction.objectStore(WORKSPACE_STORE).get(WORKSPACE_KEY),
+              ),
+              requestResult<unknown>(
+                transaction
+                  .objectStore(LEGACY_DOCUMENT_STORE)
+                  .get(LEGACY_CURRENT_KEY),
+              ),
+            ]);
+          return { heads, summaries, folders, workspace, legacy };
         },
       );
 
@@ -231,6 +241,7 @@ export class IndexedDbDocumentRepository implements DocumentRepository {
       return {
         activeDocumentId: result.workspace.activeDocumentId,
         documents: [structuredClone(result.summary)],
+        folders: sortDocumentFolders(snapshot.folders),
         migration: structuredClone(result.workspace.legacyMigration),
       };
     });
@@ -405,6 +416,9 @@ export class IndexedDbDocumentRepository implements DocumentRepository {
             head.createdAt,
             timestamp,
             previousSummary.lastOpenedAt,
+            previousSummary.archivedAt,
+            previousSummary.thumbnail,
+            previousSummary.folderId,
           );
           headStore.put({
             documentId: request.documentId,
@@ -438,6 +452,161 @@ export class IndexedDbDocumentRepository implements DocumentRepository {
       }
       return outcome.result;
     });
+  }
+
+  setThumbnail(
+    documentId: string,
+    dataUrl: string,
+  ): Effect.Effect<DocumentSummary, DocumentRepositoryFailure> {
+    return this.run("write", (db) => {
+      if (!isPngDataUrl(dataUrl)) {
+        throw new Error("Document thumbnails must be PNG data URLs.");
+      }
+      return runTransaction(
+        db,
+        [DOCUMENT_HEAD_STORE, DOCUMENT_SUMMARY_STORE],
+        "readwrite",
+        async (transaction) => {
+          const [head, storedSummary] = await Promise.all([
+            requestResult<HeadRecord | undefined>(
+              transaction.objectStore(DOCUMENT_HEAD_STORE).get(documentId),
+            ),
+            requestResult<DocumentSummary | undefined>(
+              transaction.objectStore(DOCUMENT_SUMMARY_STORE).get(documentId),
+            ),
+          ]);
+          if (!head || !storedSummary) {
+            throw new DocumentNotFoundError({ documentId });
+          }
+          const summary = {
+            ...normalizeDocumentSummary(storedSummary),
+            thumbnail: dataUrl,
+          };
+          transaction.objectStore(DOCUMENT_SUMMARY_STORE).put(summary);
+          return structuredClone(summary);
+        },
+      );
+    });
+  }
+
+  createFolder(
+    name: string,
+  ): Effect.Effect<DocumentFolder, DocumentRepositoryFailure> {
+    return this.run("write", (db) => {
+      const folder: DocumentFolder = {
+        folderId: this.makeId("folder"),
+        name: normalizeFolderName(name),
+        createdAt: this.now(),
+      };
+      return runTransaction(
+        db,
+        [FOLDER_STORE],
+        "readwrite",
+        async (transaction) => {
+          const store = transaction.objectStore(FOLDER_STORE);
+          const existing = await requestResult<DocumentFolder | undefined>(
+            store.get(folder.folderId),
+          );
+          if (existing) {
+            throw new Error(`Folder ${folder.folderId} already exists.`);
+          }
+          store.add(folder);
+          return structuredClone(folder);
+        },
+      );
+    });
+  }
+
+  renameFolder(
+    folderId: string,
+    name: string,
+  ): Effect.Effect<DocumentFolder, DocumentRepositoryFailure> {
+    return this.run("write", (db) =>
+      runTransaction(db, [FOLDER_STORE], "readwrite", async (transaction) => {
+        const store = transaction.objectStore(FOLDER_STORE);
+        const existing = await requestResult<DocumentFolder | undefined>(
+          store.get(folderId),
+        );
+        if (!existing) {
+          throw new FolderNotFoundError({ folderId });
+        }
+        const folder = { ...existing, name: normalizeFolderName(name) };
+        store.put(folder);
+        return structuredClone(folder);
+      }),
+    );
+  }
+
+  deleteFolder(
+    folderId: string,
+  ): Effect.Effect<void, DocumentRepositoryFailure> {
+    return this.run("write", (db) =>
+      runTransaction(
+        db,
+        [FOLDER_STORE, DOCUMENT_SUMMARY_STORE],
+        "readwrite",
+        async (transaction) => {
+          const folderStore = transaction.objectStore(FOLDER_STORE);
+          const existing = await requestResult<DocumentFolder | undefined>(
+            folderStore.get(folderId),
+          );
+          if (!existing) {
+            throw new FolderNotFoundError({ folderId });
+          }
+          const summaryStore = transaction.objectStore(DOCUMENT_SUMMARY_STORE);
+          const summaries = await requestResult<DocumentSummary[]>(
+            summaryStore.getAll(),
+          );
+          for (const storedSummary of summaries) {
+            const summary = normalizeDocumentSummary(storedSummary);
+            if (summary.folderId === folderId) {
+              summaryStore.put({ ...summary, folderId: null });
+            }
+          }
+          folderStore.delete(folderId);
+        },
+      ),
+    );
+  }
+
+  moveDocument(
+    documentId: string,
+    folderId: string | null,
+  ): Effect.Effect<DocumentSummary, DocumentRepositoryFailure> {
+    return this.run("write", (db) =>
+      runTransaction(
+        db,
+        [DOCUMENT_HEAD_STORE, DOCUMENT_SUMMARY_STORE, FOLDER_STORE],
+        "readwrite",
+        async (transaction) => {
+          const [head, storedSummary, folder] = await Promise.all([
+            requestResult<HeadRecord | undefined>(
+              transaction.objectStore(DOCUMENT_HEAD_STORE).get(documentId),
+            ),
+            requestResult<DocumentSummary | undefined>(
+              transaction.objectStore(DOCUMENT_SUMMARY_STORE).get(documentId),
+            ),
+            folderId === null
+              ? Promise.resolve(undefined)
+              : requestResult<DocumentFolder | undefined>(
+                  transaction.objectStore(FOLDER_STORE).get(folderId),
+                ),
+          ]);
+          if (!head || !storedSummary) {
+            throw new DocumentNotFoundError({ documentId });
+          }
+          if (folderId !== null && !folder) {
+            throw new FolderNotFoundError({ folderId });
+          }
+          const summary = {
+            ...normalizeDocumentSummary(storedSummary),
+            folderId,
+          };
+          transaction.objectStore(DOCUMENT_SUMMARY_STORE).put(summary);
+          return structuredClone(summary);
+        },
+      ),
+    );
   }
 
   setActiveDocument(
@@ -753,6 +922,7 @@ export class IndexedDbDocumentRepository implements DocumentRepository {
         DOCUMENT_HEAD_STORE,
         DOCUMENT_SUMMARY_STORE,
         DOCUMENT_VERSION_STORE,
+        FOLDER_STORE,
         WORKSPACE_STORE,
         LEGACY_DOCUMENT_STORE,
       ],
@@ -763,9 +933,12 @@ export class IndexedDbDocumentRepository implements DocumentRepository {
         const versionStore = transaction.objectStore(DOCUMENT_VERSION_STORE);
         const workspaceStore = transaction.objectStore(WORKSPACE_STORE);
         const legacyStore = transaction.objectStore(LEGACY_DOCUMENT_STORE);
-        const [heads, summaries, workspace] = await Promise.all([
+        const [heads, summaries, folders, workspace] = await Promise.all([
           requestResult<HeadRecord[]>(headStore.getAll()),
           requestResult<DocumentSummary[]>(summaryStore.getAll()),
+          requestResult<DocumentFolder[]>(
+            transaction.objectStore(FOLDER_STORE).getAll(),
+          ),
           requestResult<WorkspaceRecord | undefined>(
             workspaceStore.get(WORKSPACE_KEY),
           ),
@@ -869,17 +1042,22 @@ export class IndexedDbDocumentRepository implements DocumentRepository {
           }
         }
 
-        let canonicalSummaries = validHeads.map(({ head, document }) =>
-          documentSummary(
+        const folderIds = new Set(folders.map((folder) => folder.folderId));
+        let canonicalSummaries = validHeads.map(({ head, document }) => {
+          const existing = existingSummaries.get(head.documentId);
+          return documentSummary(
             document,
             head.revision,
             head.createdAt,
             head.updatedAt,
-            existingSummaries.get(head.documentId)?.lastOpenedAt ??
-              head.updatedAt,
-            existingSummaries.get(head.documentId)?.archivedAt ?? null,
-          ),
-        );
+            existing?.lastOpenedAt ?? head.updatedAt,
+            existing?.archivedAt ?? null,
+            existing?.thumbnail ?? null,
+            existing?.folderId && folderIds.has(existing.folderId)
+              ? existing.folderId
+              : null,
+          );
+        });
         let sorted = sortDocumentSummaries(canonicalSummaries);
         if (!sorted.some((summary) => summary.archivedAt === null)) {
           const fallbackId = sorted[0]!.documentId;
@@ -921,6 +1099,7 @@ export class IndexedDbDocumentRepository implements DocumentRepository {
         return {
           activeDocumentId,
           documents: sorted.map((summary) => structuredClone(summary)),
+          folders: sortDocumentFolders(folders),
           migration: structuredClone(migration),
         };
       },
@@ -993,7 +1172,11 @@ export class IndexedDbDocumentRepository implements DocumentRepository {
   }
 }
 
-function upgradeDatabase(database: IDBDatabase): void {
+function upgradeDatabase(
+  database: IDBDatabase,
+  transaction: IDBTransaction,
+  oldVersion: number,
+): void {
   if (!database.objectStoreNames.contains(LEGACY_DOCUMENT_STORE)) {
     database.createObjectStore(LEGACY_DOCUMENT_STORE);
   }
@@ -1023,6 +1206,34 @@ function upgradeDatabase(database: IDBDatabase): void {
   if (!database.objectStoreNames.contains(WORKSPACE_STORE)) {
     database.createObjectStore(WORKSPACE_STORE, { keyPath: "key" });
   }
+  if (!database.objectStoreNames.contains(FOLDER_STORE)) {
+    database.createObjectStore(FOLDER_STORE, { keyPath: "folderId" });
+  }
+
+  // v3 adds derived dashboard metadata only. Update summaries in place;
+  // authoritative heads and immutable versions are never rewritten.
+  if (oldVersion > 0 && oldVersion < 3) {
+    const summaries = transaction.objectStore(DOCUMENT_SUMMARY_STORE);
+    const request = summaries.openCursor();
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) {
+        return;
+      }
+      const summary = cursor.value as Record<string, unknown>;
+      cursor.update({
+        ...summary,
+        thumbnail:
+          typeof summary.thumbnail === "string" &&
+          isPngDataUrl(summary.thumbnail)
+            ? summary.thumbnail
+            : null,
+        folderId:
+          typeof summary.folderId === "string" ? summary.folderId : null,
+      });
+      cursor.continue();
+    };
+  }
 }
 
 function openDatabase(
@@ -1032,7 +1243,8 @@ function openDatabase(
   return new Promise((resolve, reject) => {
     let settled = false;
     const request = factory.open(databaseName, OPENLOGO_DATABASE_VERSION);
-    request.onupgradeneeded = () => upgradeDatabase(request.result);
+    request.onupgradeneeded = (event) =>
+      upgradeDatabase(request.result, request.transaction!, event.oldVersion);
     request.onsuccess = () => {
       if (settled) {
         request.result.close();
@@ -1059,6 +1271,14 @@ function openDatabase(
       }
     };
   });
+}
+
+function normalizeFolderName(name: string): string {
+  const normalized = name.trim();
+  if (!normalized) {
+    throw new Error("Folder name cannot be empty.");
+  }
+  return normalized;
 }
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {

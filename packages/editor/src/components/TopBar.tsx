@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Effect } from "effect";
 import {
+  ArrowLeft,
   Check,
   ChevronDown,
   ChevronUp,
@@ -47,6 +48,10 @@ import {
   openDocumentFileWithToast,
   saveDocumentFile,
 } from "../lib/document-file";
+import {
+  documentLibrary,
+  documentLibraryErrorMessage,
+} from "../lib/document-library";
 import { exportPack } from "../lib/export-pack";
 import { deleteSelection as deleteSelectedUnits } from "../lib/group-ops";
 import { MAX_SVG_IMPORT_BYTES, importSvg } from "../lib/svg-import";
@@ -647,6 +652,7 @@ export function TopBar() {
   const theme = useEditorStore((state) => state.theme);
   const setTheme = useEditorStore((state) => state.setTheme);
   const setToast = useEditorStore((state) => state.setToast);
+  const setView = useEditorStore((state) => state.setView);
   const setDocumentLibraryOpen = useEditorStore(
     (state) => state.setDocumentLibraryOpen,
   );
@@ -706,6 +712,16 @@ export function TopBar() {
     setSelection([]);
   }
 
+  async function returnToProjects() {
+    try {
+      await documentLibrary.prepareForDashboard();
+      setView("dashboard");
+    } catch (error) {
+      console.warn("Could not return to projects", error);
+      setToast(documentLibraryErrorMessage(error));
+    }
+  }
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const openInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -753,6 +769,15 @@ export function TopBar() {
   return (
     <header className="topbar flex items-center justify-between gap-16 border-b border-[rgb(0_0_0/0.5)] bg-linear-to-b from-[#1a1820] to-chrome pl-10 pr-16 text-chrome-text shadow-[inset_0_-1px_0_var(--color-chrome-hairline)]">
       <div className="flex items-center gap-8">
+        <button
+          type="button"
+          className={ICON_BUTTON}
+          onClick={() => void returnToProjects()}
+          title="Back to projects"
+          aria-label="Back to projects"
+        >
+          <ArrowLeft size={15} aria-hidden="true" />
+        </button>
         {/* Brand mark + wordmark + artboard pill read as one designed cluster. */}
         <div className="flex items-center gap-10 rounded-[11px] border border-chrome-hairline bg-[rgb(255_255_255/0.035)] py-4 pl-5 pr-6">
           <span className="grid h-26 w-26 place-items-center rounded-m bg-[linear-gradient(135deg,#6a82f8,var(--color-accent)_55%,var(--color-accent-deep))] text-[11px] font-extrabold tracking-[-0.05em] text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.28),0_1px_3px_rgb(8_6_12/0.4)]">

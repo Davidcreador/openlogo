@@ -3,6 +3,7 @@ import type { LogoDocument } from "@openlogo/core";
 import {
   type FontStyleName,
   catalogEntry,
+  fontCatalog,
   nearestStyle,
   nearestWeight,
 } from "./font-catalog";
@@ -99,6 +100,7 @@ export const embedDocumentFonts = (
   document: LogoDocument,
 ): Effect.Effect<string, FontEmbedError> =>
   Effect.gen(function* () {
+    yield* fontCatalog.init();
     const requests = collectDocumentFontFaces(document);
     const faces: SvgFontFace[] = [];
     for (const request of requests) {
