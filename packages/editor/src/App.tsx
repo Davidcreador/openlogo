@@ -1,8 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Effect } from "effect";
 import { CanvasStage } from "./canvas/CanvasStage";
-import { DashboardView } from "./components/DashboardView";
-import { Inspector } from "./components/Inspector";
 import { PreviewStrip } from "./components/PreviewStrip";
 import { Toast } from "./components/Toast";
 import { Toolbar } from "./components/Toolbar";
@@ -74,6 +72,19 @@ const DesignMateCompanion = lazy(() =>
     default: module.DesignMateCompanion,
   })),
 );
+const DashboardView = lazy(() =>
+  import("./components/DashboardView").then((module) => ({
+    default: module.DashboardView,
+  })),
+);
+const Inspector = lazy(() =>
+  import("./components/Inspector").then((module) => ({
+    default: module.Inspector,
+  })),
+);
+const EditorTemplatePanel = lazy(
+  () => import("./components/EditorTemplatePanel"),
+);
 
 const TOOL_SHORTCUTS: Record<string, Tool> = {
   v: "select",
@@ -109,6 +120,9 @@ export default function App() {
   const exportDialogOpen = useEditorStore((state) => state.exportDialogOpen);
   const documentLibraryOpen = useEditorStore(
     (state) => state.documentLibraryOpen,
+  );
+  const templatePanelOpen = useEditorStore(
+    (state) => state.templatePanelOpen,
   );
   const [loadedDialogs, setLoadedDialogs] = useState({
     transform: false,
@@ -687,6 +701,7 @@ export default function App() {
     editor.setRendererReady(false);
     editor.setDocumentSessionState("loading");
     editor.setDocumentLibraryOpen(openHistory);
+    editor.setTemplatePanelOpen(false);
     setSessionReady(false);
     editor.setView("editor");
   }
@@ -726,7 +741,17 @@ export default function App() {
       );
     }
     return (
-      <>
+      <Suspense
+        fallback={
+          <main
+            className="grid h-screen place-items-center bg-chrome text-chrome-dim"
+            aria-busy="true"
+            aria-label="Loading project dashboard"
+          >
+            <span className="text-[12px]">Loading dashboard…</span>
+          </main>
+        }
+      >
         <DashboardView
           onEnterDocument={enterDocument}
           onImportSvg={importSvgProject}
@@ -735,7 +760,7 @@ export default function App() {
           }
         />
         <Toast />
-      </>
+      </Suspense>
     );
   }
 
@@ -766,7 +791,9 @@ export default function App() {
       <TopBar />
       {/* The whole workspace shares one textured surface; the GPU canvas
           clears to transparent so panels genuinely sit on the same material. */}
-      <div className="app-main grid min-h-0 grid-cols-[72px_minmax(0,1fr)_336px] bg-surface bg-[radial-gradient(var(--color-canvas-dot)_1px,transparent_1.15px)] bg-[size:20px_20px]">
+      <div
+        className="app-main grid min-h-0 grid-cols-[72px_minmax(0,1fr)_336px] bg-surface bg-[radial-gradient(var(--color-canvas-dot)_1px,transparent_1.15px)] bg-[size:20px_20px]"
+      >
         <Toolbar />
         <section
           className="canvas-area relative min-h-0 min-w-0"
@@ -796,13 +823,36 @@ export default function App() {
           }}
         >
           <CanvasStage />
+          {templatePanelOpen && (
+            <Suspense
+              fallback={
+                <aside
+                  className="absolute bottom-12 left-12 top-12 z-30 w-[280px] rounded-panel border border-panel-hairline bg-panel/70 shadow-[0_18px_48px_rgb(19_16_25/0.28)]"
+                  aria-label="Loading templates"
+                  aria-busy="true"
+                />
+              }
+            >
+              <EditorTemplatePanel />
+            </Suspense>
+          )}
           <ZoomControls />
           <PreviewStrip />
           <Suspense fallback={null}>
             <DesignMateCompanion />
           </Suspense>
         </section>
-        <Inspector />
+        <Suspense
+          fallback={
+            <aside
+              className="border-l border-panel-hairline bg-panel/70"
+              aria-label="Loading inspector"
+              aria-busy="true"
+            />
+          }
+        >
+          <Inspector />
+        </Suspense>
       </div>
       <Suspense fallback={null}>
         {transformDialogOpen || loadedDialogs.transform ? (

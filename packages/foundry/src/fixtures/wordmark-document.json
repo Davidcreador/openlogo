@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 5,
+  "id": "foundry-c299l-wordmark-document",
+  "name": "Northstar Studio — Wordmark",
+  "activeArtboardId": "foundry-c299l-wordmark-artboard",
+  "artboards": [
+    {
+      "id": "foundry-c299l-wordmark-artboard",
+      "name": "Wordmark",
+      "x": 0,
+      "y": 0,
+      "width": 720,
+      "height": 320,
+      "background": "#EEF1F0",
+      "purpose": "wordmark",
+      "nodeIds": [
+        "foundry-c299l-wordmark-node-brand",
+        "foundry-c299l-wordmark-node-rule-left",
+        "foundry-c299l-wordmark-node-rule-mark",
+        "foundry-c299l-wordmark-node-rule-right",
+        "foundry-c299l-wordmark-node-tagline"
+      ]
+    }
+  ],
+  "nodes": {
+    "foundry-c299l-wordmark-node-brand": {
+      "id": "foundry-c299l-wordmark-node-brand",
+      "name": "Brand name",
+      "x": 58,
+      "y": 95,
+      "width": 604,
+      "height": 68.04,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "fill": {
+        "type": "solid",
+        "color": "#222B31"
+      },
+      "type": "text",
+      "content": "Northstar Studio",
+      "fontFamily": "Space Grotesk",
+      "fontSize": 63,
+      "fontWeight": 700,
+      "letterSpacing": 0,
+      "lineHeight": 1.1,
+      "align": "center"
+    },
+    "foundry-c299l-wordmark-node-rule-left": {
+      "id": "foundry-c299l-wordmark-node-rule-left",
+      "name": "Rule",
+      "x": 190,
+      "y": 191,
+      "width": 142,
+      "height": 4,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "fill": {
+        "type": "solid",
+        "color": "#4E6B73"
+      },
+      "type": "rectangle",
+      "cornerRadius": 0
+    },
+    "foundry-c299l-wordmark-node-rule-mark": {
+      "id": "foundry-c299l-wordmark-node-rule-mark",
+      "name": "Diamond",
+      "x": 348,
+      "y": 181,
+      "width": 24,
+      "height": 24,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "fill": {
+        "type": "solid",
+        "color": "#4E6B73"
+      },
+      "type": "path",
+      "d": "M50 4 96 50 50 96 4 50Z",
+      "intrinsicWidth": 100,
+      "intrinsicHeight": 100,
+      "fillRule": "nonzero"
+    },
+    "foundry-c299l-wordmark-node-rule-right": {
+      "id": "foundry-c299l-wordmark-node-rule-right",
+      "name": "Rule",
+      "x": 388,
+      "y": 191,
+      "width": 142,
+      "height": 4,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "fill": {
+        "type": "solid",
+        "color": "#4E6B73"
+      },
+      "type": "rectangle",
+      "cornerRadius": 0
+    },
+    "foundry-c299l-wordmark-node-tagline": {
+      "id": "foundry-c299l-wordmark-node-tagline",
+      "name": "Tagline",
+      "x": 120,
+      "y": 226,
+      "width": 480,
+      "height": 25.299999999999997,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "fill": {
+        "type": "solid",
+        "color": "#222B31"
+      },
+      "type": "text",
+      "content": "IDEAS IN MOTION",
+      "fontFamily": "Inter",
+      "fontSize": 22,
+      "fontWeight": 500,
+      "letterSpacing": 2.2,
+      "lineHeight": 1.1,
+      "align": "center"
+    }
+  },
+  "palettes": [
+    {
+      "id": "foundry-c299l-wordmark-palette",
+      "name": "Ice Slate",
+      "colors": [
+        "#EEF1F0",
+        "#222B31",
+        "#4E6B73"
+      ]
+    }
+  ],
+  "designBrief": {
+    "brandName": "Northstar Studio"
+  }
+}

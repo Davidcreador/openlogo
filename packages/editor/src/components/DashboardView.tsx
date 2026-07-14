@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useEffect,
   useMemo,
   useRef,
@@ -23,7 +25,11 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { createInitialDocument, type LogoDocument } from "@openlogo/core";
+import {
+  createId,
+  createInitialDocument,
+  type LogoDocument,
+} from "@openlogo/core";
 import {
   OPENLOGO_EXTENSION,
   openDocumentFileWithToast,
@@ -49,6 +55,7 @@ const INPUT =
 const DOCUMENT_DRAG_TYPE = "application/x-openlogo-document";
 const THUMBNAIL_BACKFILL_INITIAL_DELAY_MS = 500;
 const THUMBNAIL_BACKFILL_INTERVAL_MS = 750;
+const TemplateGallery = lazy(() => import("./TemplateGallery"));
 
 type DashboardTab = "projects" | "folders" | "archived";
 type DashboardSort = "recent" | "name" | "created";
@@ -467,6 +474,17 @@ export function DashboardView({
     }
   }
 
+  async function createTemplateDocument(document: LogoDocument): Promise<void> {
+    try {
+      const materialized = structuredClone(document);
+      materialized.id = createId("doc");
+      const created = await documentLibrary.createDocument(materialized);
+      onEnterDocument(created);
+    } catch (error) {
+      reportFailure(error);
+    }
+  }
+
   async function openDocument(
     summary: DocumentSummary,
     openHistory = false,
@@ -835,6 +853,31 @@ export function DashboardView({
             </button>
           </div>
         </section>
+
+        <Suspense
+          fallback={
+            <section
+              className="mt-28 rounded-panel border border-panel-hairline bg-panel/72 p-18"
+              aria-label="Loading template gallery"
+              aria-busy="true"
+            >
+              <div className="h-16 w-196 animate-pulse rounded-full bg-ink/8 motion-reduce:animate-none" />
+              <div className="mt-14 grid grid-cols-1 gap-12 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {Array.from({ length: 4 }, (_, index) => (
+                  <div
+                    key={index}
+                    className="aspect-[4/3] animate-pulse rounded-panel bg-ink/6 motion-reduce:animate-none"
+                  />
+                ))}
+              </div>
+            </section>
+          }
+        >
+          <TemplateGallery
+            disabled={busy || !library.ready}
+            onCreateDocument={createTemplateDocument}
+          />
+        </Suspense>
 
         <section className="mt-28" aria-label="Document library">
           <div className="flex flex-wrap items-center gap-8 border-b border-panel-hairline">

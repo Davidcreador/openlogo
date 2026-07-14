@@ -13,8 +13,18 @@ import {
 type PreviewState = "loading" | "loaded" | "failed";
 
 const states = new Map<string, PreviewState>();
+const pending = new Map<string, Promise<boolean>>();
+const defaultKeys = new Map<string, string>();
 const listeners = new Set<() => void>();
 let version = 0;
+
+function faceKey(
+  family: FontFamily,
+  weight: number,
+  style: "normal" | "italic",
+): string {
+  return `${family.name}:${nearestWeight(family, weight)}:${nearestStyle(family, style)}`;
+}
 
 function bump(): void {
   version += 1;
@@ -34,33 +44,68 @@ export function previewsSnapshot(): number {
 }
 
 export function isPreviewReady(name: string): boolean {
-  return states.get(name) === "loaded";
+  const key = defaultKeys.get(name);
+  return key !== undefined && states.get(key) === "loaded";
 }
 
 /** Kick off (once) the woff2 FontFace for a family's preview weight. */
 export function ensurePreview(family: FontFamily): void {
-  if (states.has(family.name)) {
-    return;
-  }
-  states.set(family.name, "loading");
-
   const weight = nearestWeight(family, 400);
   const style = nearestStyle(family, "normal");
-  const url = `https://cdn.jsdelivr.net/fontsource/fonts/${family.id}@latest/latin-${weight}-${style}.woff2`;
+  defaultKeys.set(family.name, faceKey(family, weight, style));
+  void ensurePreviewFace(family, weight, style);
+}
+
+export function isPreviewFaceReady(
+  family: FontFamily,
+  weight: number,
+  style: "normal" | "italic" = "normal",
+): boolean {
+  return states.get(faceKey(family, weight, style)) === "loaded";
+}
+
+/** Load one exact, nearest-available WOFF2 face for DOM and inline-SVG previews. */
+export function ensurePreviewFace(
+  family: FontFamily,
+  weight: number,
+  style: "normal" | "italic" = "normal",
+): Promise<boolean> {
+  const resolvedWeight = nearestWeight(family, weight);
+  const resolvedStyle = nearestStyle(family, style);
+  const key = faceKey(family, resolvedWeight, resolvedStyle);
+  const state = states.get(key);
+  if (state === "loaded") {
+    return Promise.resolve(true);
+  }
+  if (state === "failed") {
+    return Promise.resolve(false);
+  }
+  const inFlight = pending.get(key);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  states.set(key, "loading");
+  const url = `https://cdn.jsdelivr.net/fontsource/fonts/${family.id}@latest/latin-${resolvedWeight}-${resolvedStyle}.woff2`;
   const face = new FontFace(family.name, `url(${url})`, {
-    weight: String(weight),
-    style,
+    weight: String(resolvedWeight),
+    style: resolvedStyle,
   });
 
-  face
+  const load = face
     .load()
     .then(() => {
       document.fonts.add(face);
-      states.set(family.name, "loaded");
+      states.set(key, "loaded");
       bump();
+      return true;
     })
     .catch(() => {
-      // Row simply keeps the UI font; nothing to surface.
-      states.set(family.name, "failed");
-    });
+      states.set(key, "failed");
+      bump();
+      return false;
+    })
+    .finally(() => pending.delete(key));
+  pending.set(key, load);
+  return load;
 }

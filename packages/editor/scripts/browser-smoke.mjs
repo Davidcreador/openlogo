@@ -192,8 +192,41 @@ async function evaluate(client, expression) {
   return result.result?.value;
 }
 
+async function waitForReload(client, previousTimeOrigin, expectedWidth) {
+  const deadline = Date.now() + 30_000;
+  let lastState = null;
+  while (Date.now() < deadline) {
+    try {
+      const state = await evaluate(
+        client,
+        `(() => ({
+          timeOrigin: performance.timeOrigin,
+          readyState: document.readyState,
+          width: window.innerWidth,
+        }))()`,
+      );
+      lastState = state;
+      if (
+        state?.timeOrigin !== previousTimeOrigin &&
+        state?.readyState !== "loading" &&
+        state?.width === expectedWidth
+      ) {
+        return;
+      }
+    } catch {
+      // Reload briefly invalidates the old execution context.
+    }
+    await wait(100);
+  }
+  throw new Error(
+    `The browser did not finish reloading at ${expectedWidth}px: ${JSON.stringify(lastState)}`,
+  );
+}
+
 async function openDashboardDocument(client, expectedWidth) {
-  const deadline = Date.now() + 25_000;
+  const deadline = Date.now() + 60_000;
+  let createRequested = false;
+  let lastState = null;
   while (Date.now() < deadline) {
     try {
       const state = await evaluate(
@@ -209,17 +242,29 @@ async function openDashboardDocument(client, expectedWidth) {
           const preset = [...document.querySelectorAll("button")].find(
             (button) => button.textContent?.includes("New blank"),
           );
-          if (preset instanceof HTMLButtonElement && !preset.disabled) {
+          if (
+            ${!createRequested} &&
+            preset instanceof HTMLButtonElement &&
+            !preset.disabled
+          ) {
             preset.click();
-            return { entered: true, crashed: false, width: window.innerWidth };
+            return {
+              entered: false,
+              createRequested: true,
+              crashed: false,
+              width: window.innerWidth,
+            };
           }
           return {
             entered: false,
+            createRequested: false,
             crashed: body.includes("The editor hit an unexpected error."),
             width: window.innerWidth,
           };
         })()`,
       );
+      lastState = state;
+      createRequested ||= state?.createRequested === true;
       if (state?.crashed) {
         throw new Error("The dashboard entered a recovery state.");
       }
@@ -237,11 +282,16 @@ async function openDashboardDocument(client, expectedWidth) {
     }
     await wait(100);
   }
-  throw new Error(`The dashboard did not open a document at ${expectedWidth}px.`);
+  throw new Error(
+    `The dashboard did not open a document at ${expectedWidth}px: ${JSON.stringify(lastState)}`,
+  );
 }
 
 async function waitForEditor(client, expectedWidth) {
-  const deadline = Date.now() + 25_000;
+  // A fresh profile plus a cold Vite transform can delay the lazy editor
+  // chrome after CanvasKit is ready, especially at the second viewport.
+  const deadline = Date.now() + 90_000;
+  let lastState = null;
   while (Date.now() < deadline) {
     try {
       const state = await evaluate(
@@ -258,6 +308,7 @@ async function waitForEditor(client, expectedWidth) {
           };
         })()`,
       );
+      lastState = state;
       if (state?.crashed || state?.rendererFailed) {
         throw new Error("The editor entered a recovery state.");
       }
@@ -280,7 +331,9 @@ async function waitForEditor(client, expectedWidth) {
     }
     await wait(100);
   }
-  throw new Error(`The editor did not become ready at ${expectedWidth}px.`);
+  throw new Error(
+    `The editor did not become ready at ${expectedWidth}px: ${JSON.stringify(lastState)}`,
+  );
 }
 
 async function verifyDesignMatePanel(client) {
@@ -437,6 +490,7 @@ try {
   await waitForEditor(client, 1_440);
   await verifyDesignMatePanel(client);
 
+  const desktopTimeOrigin = await evaluate(client, "performance.timeOrigin");
   await client("Emulation.setDeviceMetricsOverride", {
     width: 390,
     height: 844,
@@ -444,6 +498,7 @@ try {
     mobile: false,
   });
   await client("Page.reload", { ignoreCache: true });
+  await waitForReload(client, desktopTimeOrigin, 390);
   await openDashboardDocument(client, 390);
   await waitForEditor(client, 390);
   process.stdout.write(

@@ -4,6 +4,7 @@ import {
   Circle,
   Combine,
   Hexagon,
+  LayoutTemplate,
   MousePointer2,
   MoveUpRight,
   PenTool,
@@ -252,6 +253,10 @@ export function Toolbar() {
   const tool = useEditorStore((state) => state.tool);
   const setTool = useEditorStore((state) => state.setTool);
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
+  const templatePanelOpen = useEditorStore((state) => state.templatePanelOpen);
+  const setTemplatePanelOpen = useEditorStore(
+    (state) => state.setTemplatePanelOpen,
+  );
 
   const renderButton = (item: ToolSpec) => {
     const Icon = item.icon;
@@ -295,6 +300,21 @@ export function Toolbar() {
       {AFTER_SHAPES.slice(0, 4).map(renderButton)}
       <span className="my-3 h-px w-20 bg-chrome-border" aria-hidden="true" />
       {AFTER_SHAPES.slice(4).map(renderButton)}
+      <span className="my-3 h-px w-20 bg-chrome-border" aria-hidden="true" />
+      <button
+        type="button"
+        className={`${TOOL_BUTTON} ${
+          templatePanelOpen ? `active ${TOOL_BUTTON_ACTIVE}` : TOOL_BUTTON_IDLE
+        }`}
+        onClick={() => setTemplatePanelOpen(!templatePanelOpen)}
+        title="Templates"
+        aria-label="Templates"
+        aria-pressed={templatePanelOpen}
+        aria-expanded={templatePanelOpen}
+        aria-controls="editor-template-panel"
+      >
+        <LayoutTemplate size={18} strokeWidth={1.75} />
+      </button>
     </nav>
   );
 }

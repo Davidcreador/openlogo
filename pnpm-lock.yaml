@@ -77,6 +77,9 @@ importers:
       '@openlogo/design-mate':
         specifier: workspace:*
         version: link:../design-mate
+      '@openlogo/foundry':
+        specifier: workspace:*
+        version: link:../foundry
       '@openlogo/renderer':
         specifier: workspace:*
         version: link:../renderer
@@ -129,6 +132,22 @@ importers:
       vite:
         specifier: ^8.1.3
         version: 8.1.3(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)
+      vitest:
+        specifier: ^4.0.17
+        version: 4.1.10(@types/node@26.1.1)(vite@8.1.3(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0))
+
+  packages/foundry:
+    dependencies:
+      '@openlogo/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^26.1.1
+        version: 26.1.1
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
       vitest:
         specifier: ^4.0.17
         version: 4.1.10(@types/node@26.1.1)(vite@8.1.3(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0))

@@ -75,6 +75,8 @@ type EditorState = {
   exportDialogOpen: boolean;
   /** Local multi-project library and version history visibility. */
   documentLibraryOpen: boolean;
+  /** Foundry template browser beside the tool rail. */
+  templatePanelOpen: boolean;
   /** Round committed positions/dimensions to whole pixels (persisted). */
   pixelSnap: boolean;
   /**
@@ -90,6 +92,7 @@ type EditorState = {
   setTransformDialogOpen: (open: boolean) => void;
   setExportDialogOpen: (open: boolean) => void;
   setDocumentLibraryOpen: (open: boolean) => void;
+  setTemplatePanelOpen: (open: boolean) => void;
   setPixelSnap: (on: boolean) => void;
   setTheme: (theme: ThemeName) => void;
   setToast: (message: string | null) => void;
@@ -131,6 +134,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   transformDialogOpen: false,
   exportDialogOpen: false,
   documentLibraryOpen: false,
+  templatePanelOpen: false,
   pixelSnap: initialPrefs.pixelSnap,
   theme: initialPrefs.theme,
   toast: null,
@@ -140,6 +144,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   setExportDialogOpen: (exportDialogOpen) => set({ exportDialogOpen }),
   setDocumentLibraryOpen: (documentLibraryOpen) =>
     set({ documentLibraryOpen }),
+  setTemplatePanelOpen: (templatePanelOpen) => set({ templatePanelOpen }),
   setPixelSnap: (pixelSnap) => {
     savePrefs({ ...loadPrefs(), pixelSnap });
     set({ pixelSnap });

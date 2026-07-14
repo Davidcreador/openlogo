@@ -15,6 +15,7 @@
   "dependencies": {
     "@openlogo/core": "workspace:*",
     "@openlogo/design-mate": "workspace:*",
+    "@openlogo/foundry": "workspace:*",
     "@openlogo/renderer": "workspace:*",
     "canvaskit-wasm": "^0.40.0",
     "effect": "^3.21.4",

@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1680" height="1792" viewBox="0 0 1680 1792">
+<g transform="translate(64 24)"><title>Northstar Studio — Wordmark</title><rect width="720" height="320" fill="#EEF1F0"/><defs></defs><text x="360" y="158" fill="#222B31" text-anchor="middle" style="font-family:Space Grotesk;font-size:63px;font-weight:700;font-style:normal;letter-spacing:0px">Northstar Studio</text>
+<rect x="190" y="193" width="142" height="4" rx="0" fill="#4E6B73"/>
+<path id="foundry-uk-wordmark-node-rule-mark" d="M50 4 96 50 50 96 4 50Z" fill="#4E6B73" transform="translate(348 183) scale(0.24 0.24)"/>
+<rect x="388" y="193" width="142" height="4" rx="0" fill="#4E6B73"/>
+<text x="360" y="248" fill="#222B31" text-anchor="middle" style="font-family:Inter;font-size:22px;font-weight:500;font-style:normal;letter-spacing:2.2px">IDEAS IN MOTION</text></g>
+<g transform="translate(956 24)"><title>Northstar Studio — Stacked Badge</title><rect width="600" height="600" fill="#F8EDD4"/><defs></defs><rect x="45" y="45" width="510" height="510" rx="18" fill="#F8EDD4" stroke="#5A2029" stroke-width="5"/>
+<rect x="59" y="59" width="482" height="482" rx="10" fill="#F8EDD4" stroke="#A8753E" stroke-width="5"/>
+<rect x="114" y="167" width="162" height="4" rx="0" fill="#A8753E"/>
+<path id="foundry-ul-stacked-badge-node-divider-mark" d="M50 4 96 50 50 96 4 50Z" fill="#A8753E" transform="translate(288 157) scale(0.24 0.24)"/>
+<rect x="324" y="167" width="162" height="4" rx="0" fill="#A8753E"/>
+<text x="300" y="275" fill="#5A2029" text-anchor="middle" style="font-family:Lora;font-size:34px;font-weight:700;font-style:normal;letter-spacing:3.4px">NORTHSTAR STUDIO</text>
+<text x="300" y="362" fill="#5A2029" text-anchor="middle" style="font-family:Work Sans;font-size:12px;font-weight:500;font-style:normal;letter-spacing:1.2px">IDEAS IN MOTION</text>
+<rect x="180" y="416" width="240" height="4" rx="0" fill="#A8753E"/></g>
+<g transform="translate(124 656)"><title>Northstar Studio — Circular Seal</title><rect width="600" height="600" fill="#EFE2CF"/><defs><path id="foundry-um-circular-seal-node-top-arc" d="M 136 240 A 182 182 0 0 1 464 240" fill="none" transform="translate(0 0) scale(1 1)"/><path id="foundry-um-circular-seal-node-bottom-arc" d="M 136 360 A 182 182 0 0 0 464 360" fill="none" transform="translate(0 0) scale(1 1)"/></defs><ellipse cx="300" cy="300" rx="250" ry="250" fill="#EFE2CF" stroke="#33231C" stroke-width="6"/>
+<ellipse cx="300" cy="300" rx="228" ry="228" fill="#EFE2CF" stroke="#9B5036" stroke-width="6"/>
+<text fill="#33231C" style="font-family:Work Sans;font-size:25px;font-weight:500;font-style:normal;letter-spacing:2.5px"><textPath href="#foundry-um-circular-seal-node-top-arc" startOffset="57.25">NORTHSTAR STUDIO</textPath></text>
+<text fill="#33231C" style="font-family:Work Sans;font-size:25px;font-weight:500;font-style:normal;letter-spacing:2.5px"><textPath href="#foundry-um-circular-seal-node-bottom-arc" startOffset="77.13">IDEAS IN MOTION</textPath></text>
+<path id="foundry-um-circular-seal-node-separator" d="M50 4 96 50 50 96 4 50Z" fill="#9B5036" transform="translate(96 292) scale(0.16 0.16)"/>
+<path id="foundry-um-circular-seal-node-separator-2" d="M50 4 96 50 50 96 4 50Z" fill="#9B5036" transform="translate(488 292) scale(0.16 0.16)"/>
+<text x="300" y="354" fill="#9B5036" text-anchor="middle" style="font-family:Lora;font-size:107px;font-weight:700;font-style:normal;letter-spacing:6.42px">NS</text></g>
+<g transform="translate(1006 656)"><title>Northstar Studio — Monogram</title><rect width="500" height="600" fill="#ECEBE8"/><defs></defs><path id="foundry-un-monogram-node-frame" d="M12 8H88V48C88 72 72 88 50 96 28 88 12 72 12 48Z" fill="#ECEBE8" stroke="#191919" stroke-width="6" transform="translate(84 60) scale(3.32 3.32)"/>
+<text x="250" y="294" fill="#9D3E34" text-anchor="middle" style="font-family:Bebas Neue;font-size:116px;font-weight:400;font-style:normal;letter-spacing:6.96px">NS</text>
+<text x="250" y="466" fill="#191919" text-anchor="middle" style="font-family:Work Sans;font-size:28px;font-weight:600;font-style:normal;letter-spacing:3.36px">NORTHSTAR STUDIO</text>
+<text x="250" y="524" fill="#9D3E34" text-anchor="middle" style="font-family:Work Sans;font-size:28px;font-weight:400;font-style:normal;letter-spacing:0px">Ideas in motion</text></g>
+<g transform="translate(64 1288)"><title>Northstar Studio — Cartouche</title><rect width="720" height="480" fill="#F8EDD4"/><defs></defs><rect x="51" y="52" width="618" height="376" rx="34" fill="#F8EDD4" stroke="#5A2029" stroke-width="5"/>
+<rect x="63" y="64" width="594" height="352" rx="24" fill="#F8EDD4" stroke="#A8753E" stroke-width="5"/>
+<path id="foundry-uo-cartouche-node-header-ornament" d="M10 28 30 48 50 12 70 48 90 28 82 82H18ZM22 88H78V96H22Z" fill="#A8753E" transform="translate(339 86) scale(0.42 0.42)"/>
+<text x="360" y="228" fill="#5A2029" text-anchor="middle" style="font-family:Playfair Display;font-size:46px;font-weight:700;font-style:normal;letter-spacing:0px">Northstar Studio</text>
+<path id="foundry-uo-cartouche-node-tagline-banner" d="M4 20H24V12H76V20H96L84 42 96 64H76V76H24V64H4L16 42ZM24 24V62H76V24Z" fill="#A8753E" transform="translate(160 282) scale(4 0.96)"/>
+<text x="360" y="327" fill="#5A2029" text-anchor="middle" style="font-family:Montserrat;font-size:17px;font-weight:500;font-style:normal;letter-spacing:1.36px">IDEAS IN MOTION</text></g>
+<g transform="translate(856 1288)"><title>Northstar Studio — Lockup</title><rect width="800" height="400" fill="#E8EFF0"/><defs></defs><rect x="58" y="128" width="144" height="144" rx="20" fill="#E8EFF0" stroke="#19384C" stroke-width="5"/>
+<path id="foundry-up-lockup-node-mark-motif" d="M50 4 96 50 50 96 4 50Z" fill="#A94F40" transform="translate(110.5 180.5) scale(0.39 0.39)"/>
+<text x="242" y="205" fill="#19384C" text-anchor="start" style="font-family:Raleway;font-size:53px;font-weight:800;font-style:normal;letter-spacing:0px">Northstar Studio</text>
+<text x="242" y="245" fill="#19384C" text-anchor="start" style="font-family:Lora;font-size:19px;font-weight:500;font-style:normal;letter-spacing:1.9px">IDEAS IN MOTION</text></g>
+</svg>
