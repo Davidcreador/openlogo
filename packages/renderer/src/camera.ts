@@ -65,10 +65,11 @@ export function fitBounds(
   viewportWidth: number,
   viewportHeight: number,
   padding = 48,
+  maxZoom = MAX_ZOOM,
 ): Camera {
   const zoomX = (viewportWidth - padding * 2) / bounds.width;
   const zoomY = (viewportHeight - padding * 2) / bounds.height;
-  const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.min(zoomX, zoomY)));
+  const zoom = Math.min(maxZoom, Math.max(MIN_ZOOM, Math.min(zoomX, zoomY)));
 
   return {
     zoom,

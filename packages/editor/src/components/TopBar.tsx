@@ -149,8 +149,9 @@ function fitCameraTo(artboardId: string) {
     (item) => item.id === artboardId,
   );
   if (target && state.viewport.width > 0) {
+    // Automatic view change: fit without magnifying past actual size.
     state.setCamera(
-      fitBounds(target, state.viewport.width, state.viewport.height),
+      fitBounds(target, state.viewport.width, state.viewport.height, 48, 1),
     );
   }
 }

@@ -834,9 +834,12 @@ export function CanvasStage() {
         if (!cameraFittedRef.current && rect.width > 0) {
           cameraFittedRef.current = true;
           const artboard = getActiveArtboard(documentStore.document);
+          // Initial view: fit, but never auto-magnify past actual size —
+          // opening a small artboard at 198% looks blown up. Explicit
+          // ⌘0 / fit keeps true Illustrator-style uncapped fit.
           useEditorStore
             .getState()
-            .setCamera(fitBounds(artboard, rect.width, rect.height));
+            .setCamera(fitBounds(artboard, rect.width, rect.height, 48, 1));
         }
         syncScene();
       };

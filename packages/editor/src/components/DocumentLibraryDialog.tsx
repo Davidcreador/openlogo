@@ -101,11 +101,14 @@ function resetEditorContext(document: LogoDocument): void {
   editor.setDesignMateError(null);
   const activeArtboard = getActiveArtboard(document);
   if (editor.viewport.width > 0 && editor.viewport.height > 0) {
+    // Automatic view change: fit without magnifying past actual size.
     editor.setCamera(
       fitBounds(
         activeArtboard,
         editor.viewport.width,
         editor.viewport.height,
+        48,
+        1,
       ),
     );
   }
