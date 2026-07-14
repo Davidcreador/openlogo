@@ -69,7 +69,7 @@ export class DocumentTransitionBlockedError extends Error {
   }
 }
 
-export class DocumentLibraryBusyError extends Error {
+class DocumentLibraryBusyError extends Error {
   constructor(operation: Exclude<DocumentLibraryOperation, null>) {
     super(`A document ${operation} operation is already running.`);
     this.name = "DocumentLibraryBusyError";

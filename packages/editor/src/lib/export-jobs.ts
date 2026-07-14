@@ -30,7 +30,6 @@ export type RasterExportFormat = "png" | "jpeg" | "webp";
 export type ExportFormat = "svg" | RasterExportFormat | "ico";
 export type RasterScale = 1 | 2 | 3 | "custom";
 
-export { MAX_RASTER_QUALITY, MIN_RASTER_QUALITY } from "./export";
 export const DEFAULT_JPEG_QUALITY = 0.9;
 export const DEFAULT_WEBP_QUALITY = 0.85;
 export const DEFAULT_RASTER_BACKGROUND = "#ffffff";
@@ -141,7 +140,7 @@ export function uniqueSlugs(artboards: readonly Artboard[]): string[] {
   });
 }
 
-export class ExportSelectionError {
+class ExportSelectionError {
   readonly _tag = "ExportSelectionError";
   readonly reason = "Nothing exportable in the selection.";
 }

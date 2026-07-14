@@ -253,13 +253,6 @@ export function designMateChatModeLabel(mode: DesignMateChatMode): string {
     ? "AI + local fallback"
     : "Local guidance";
 }
-
-export function designMateChatHeaderLabel(
-  endpoint: string | null,
-): "AI + local" | "Local expert" {
-  return endpoint ? "AI + local" : "Local expert";
-}
-
 export type DesignMateTranscriptScrollMetrics = {
   readonly scrollHeight: number;
   readonly scrollTop: number;
@@ -287,7 +280,7 @@ export function isDesignMateTranscriptNearBottom(
   return distance <= threshold;
 }
 
-export function designMateChatErrorLabel(
+function designMateChatErrorLabel(
   error: DesignMateProviderError,
 ): string {
   switch (error.code) {
@@ -737,7 +730,7 @@ export function reduceDesignMateChatTranscript(
   return state;
 }
 
-export function designMateDocumentIdentitiesEqual(
+function designMateDocumentIdentitiesEqual(
   left: DocumentIdentity,
   right: DocumentIdentity,
 ): boolean {

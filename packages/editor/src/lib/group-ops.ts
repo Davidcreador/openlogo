@@ -46,14 +46,6 @@ export function resolveUnit(
   const scopeIndex = scope ? path.indexOf(scope) : -1;
   return { unitId: path[scopeIndex + 1]!, scopeId: scope };
 }
-
-/** Leaf ids under the selected units (locked leaves included; callers filter). */
-export function selectionLeafIds(
-  selectedNodeIds: readonly string[],
-): string[] {
-  return collectLeafNodeIds(documentStore.document, selectedNodeIds);
-}
-
 /**
  * ⌘G: wrap the selected units in a new group. Units must share one
  * container (guaranteed by scope-based selection; mixed deep-selections

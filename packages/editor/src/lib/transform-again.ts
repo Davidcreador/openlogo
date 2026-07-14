@@ -13,11 +13,6 @@ let recorded: RecordedTransform | null = null;
 export function recordTransform(transform: RecordedTransform): void {
   recorded = transform;
 }
-
-export function getRecordedTransform(): RecordedTransform | null {
-  return recorded;
-}
-
 /**
  * Repeat the recorded transform on the selection. Returns the ids to
  * select afterwards (the new copies when the transform duplicated), or

@@ -20,7 +20,7 @@ import { combinableNodes } from "./boolean-ops";
 import { getCanvasKit } from "./canvaskit";
 
 /** Region count is 2^n − 1; eight operands keeps that comfortably small. */
-export const SHAPE_BUILDER_MAX_NODES = 8;
+const SHAPE_BUILDER_MAX_NODES = 8;
 
 export type ShapeBuilderRegion = {
   id: number;

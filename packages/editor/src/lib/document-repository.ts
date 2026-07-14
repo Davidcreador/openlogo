@@ -253,21 +253,6 @@ export function decodeRepositoryDocument(data: unknown): LogoDocument {
     throw new DocumentRepositoryError({ operation: "decode", cause });
   }
 }
-
-export function assertDocumentId(
-  documentId: string,
-  document: LogoDocument,
-): Effect.Effect<void, DocumentIdMismatchError> {
-  return document.id === documentId
-    ? Effect.void
-    : Effect.fail(
-        new DocumentIdMismatchError({
-          documentId,
-          payloadDocumentId: document.id,
-        }),
-      );
-}
-
 export function documentSummary(
   document: LogoDocument,
   revision: number,

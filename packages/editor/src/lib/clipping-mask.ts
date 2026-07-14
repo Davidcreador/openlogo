@@ -78,7 +78,7 @@ function hasTextPathIdentity(
   );
 }
 
-export function inspectClippingMaskSelection(
+function inspectClippingMaskSelection(
   document: LogoDocument,
   selectedNodeIds: readonly string[],
 ): ClippingMaskAvailability {

@@ -4,7 +4,7 @@ import { documentStore, useDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
 
 /** Ruler thickness in CSS px. Guide-drag scripts press inside this band. */
-export const RULER_SIZE = 20;
+const RULER_SIZE = 20;
 
 // Canvas 2D can't resolve CSS custom properties; these mirror styles.css
 // tokens per theme (guide mark = --accent = renderer selection color).

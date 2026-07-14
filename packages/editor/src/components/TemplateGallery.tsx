@@ -1,3 +1,4 @@
+import { FIELD_INPUT } from "./field-styles";
 import { useState } from "react";
 import type { LogoDocument } from "@openlogo/core";
 import { VIBES, type Vibe } from "@openlogo/foundry";
@@ -9,8 +10,6 @@ import {
 import type { TemplateProposal } from "../lib/template-proposals";
 import { TemplateCard } from "./TemplateCard";
 
-const INPUT =
-  "h-36 min-w-0 rounded-field border border-field-border bg-field px-10 text-[12.5px] text-ink outline-none transition-[border-color,box-shadow] duration-140 ease-studio placeholder:text-ink-faint focus:border-accent focus:bg-card focus:shadow-ring";
 const VIBE_LABELS: Record<Vibe, string> = {
   minimal: "Minimal",
   classic: "Classic",
@@ -69,7 +68,7 @@ export default function TemplateGallery({
             <label className="grid gap-4 text-[10.5px] font-semibold text-ink-dim">
               Brand name
               <input
-                className={INPUT}
+                className={FIELD_INPUT}
                 value={gallery.brandName}
                 onChange={(event) => gallery.setBrandName(event.target.value)}
                 maxLength={120}
@@ -80,7 +79,7 @@ export default function TemplateGallery({
             <label className="grid gap-4 text-[10.5px] font-semibold text-ink-dim">
               Tagline <span className="sr-only">optional</span>
               <input
-                className={INPUT}
+                className={FIELD_INPUT}
                 value={gallery.tagline}
                 onChange={(event) => gallery.setTagline(event.target.value)}
                 maxLength={160}

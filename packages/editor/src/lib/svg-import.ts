@@ -46,8 +46,8 @@ type Mat = SvgTransformMatrix;
 
 const IDENTITY: Mat = [1, 0, 0, 1, 0, 0];
 export const MAX_SVG_IMPORT_BYTES = 5 * 1024 * 1024;
-export const MAX_SVG_IMPORT_ELEMENTS = 2_000;
-export const MAX_SVG_IMPORT_PATH_CHARS = 1_000_000;
+const MAX_SVG_IMPORT_ELEMENTS = 2_000;
+const MAX_SVG_IMPORT_PATH_CHARS = 1_000_000;
 const MAX_SVG_IMPORT_DEPTH = 128;
 
 export class SvgImportError extends Data.TaggedError("SvgImportError")<{

@@ -26,7 +26,7 @@ function fontUrl(family: FontFamily, weight: number, style: FontStyleName): stri
 }
 
 /** CDN fetch failure for one family@weight/style, after retries. */
-export class FontLoadError extends Data.TaggedError("FontLoadError")<{
+class FontLoadError extends Data.TaggedError("FontLoadError")<{
   readonly key: string;
   readonly cause: unknown;
 }> {}

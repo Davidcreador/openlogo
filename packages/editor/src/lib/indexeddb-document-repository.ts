@@ -34,7 +34,7 @@ import {
   sortDocumentVersions,
 } from "./document-repository";
 
-export const OPENLOGO_DATABASE_NAME = "openlogo";
+const OPENLOGO_DATABASE_NAME = "openlogo";
 export const OPENLOGO_DATABASE_VERSION = 3;
 export const LEGACY_DOCUMENT_STORE = "documents";
 export const DOCUMENT_HEAD_STORE = "document-heads";

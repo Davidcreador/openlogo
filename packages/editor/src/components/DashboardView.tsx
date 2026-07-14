@@ -1,3 +1,4 @@
+import { FIELD_INPUT } from "./field-styles";
 import {
   lazy,
   Suspense,
@@ -51,8 +52,6 @@ const SECONDARY_BUTTON =
   "inline-flex h-34 items-center justify-center gap-7 rounded-field border border-field-border bg-card px-12 text-[12px] text-ink transition-[border-color,color,background-color] duration-140 ease-studio hover:enabled:border-accent hover:enabled:text-accent disabled:cursor-default disabled:opacity-40";
 const PRIMARY_BUTTON =
   "inline-flex h-34 items-center justify-center gap-7 rounded-field bg-accent px-13 text-[12px] font-semibold text-white transition-[filter] duration-140 ease-studio hover:enabled:brightness-[1.08] disabled:cursor-default disabled:opacity-45";
-const INPUT =
-  "h-36 min-w-0 rounded-field border border-field-border bg-field px-10 text-[12.5px] text-ink outline-none transition-[border-color,box-shadow] duration-140 ease-studio placeholder:text-ink-faint focus:border-accent focus:bg-card focus:shadow-ring";
 const DOCUMENT_DRAG_TYPE = "application/x-openlogo-document";
 const THUMBNAIL_BACKFILL_INITIAL_DELAY_MS = 500;
 const THUMBNAIL_BACKFILL_INTERVAL_MS = 750;
@@ -707,7 +706,7 @@ export function DashboardView({
             />
             <input
               type="search"
-              className={`${INPUT} w-full pl-34`}
+              className={`${FIELD_INPUT} w-full pl-34`}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search projects"
@@ -728,7 +727,7 @@ export function DashboardView({
           <label className="hidden items-center gap-7 text-[11px] text-ink-dim sm:flex">
             Sort
             <select
-              className={`${INPUT} w-112 pr-7`}
+              className={`${FIELD_INPUT} w-112 pr-7`}
               value={sort}
               onChange={(event) => setSort(event.target.value as DashboardSort)}
               aria-label="Sort projects"
@@ -997,7 +996,7 @@ export function DashboardView({
                 }}
               >
                 <input
-                  className={`${INPUT} flex-1`}
+                  className={`${FIELD_INPUT} flex-1`}
                   value={folderDraft}
                   onChange={(event) => setFolderDraft(event.target.value)}
                   placeholder="New folder name"
@@ -1270,7 +1269,7 @@ export function DashboardView({
                 Width
                 <input
                   ref={customFocusRef}
-                  className={INPUT}
+                  className={FIELD_INPUT}
                   type="number"
                   min={1}
                   max={16_384}
@@ -1282,7 +1281,7 @@ export function DashboardView({
               <label className="grid gap-5 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-ink-faint">
                 Height
                 <input
-                  className={INPUT}
+                  className={FIELD_INPUT}
                   type="number"
                   min={1}
                   max={16_384}
@@ -1331,7 +1330,7 @@ export function DashboardView({
             </h2>
             <input
               ref={renameFocusRef}
-              className={`${INPUT} mt-14 w-full`}
+              className={`${FIELD_INPUT} mt-14 w-full`}
               value={renameDraft}
               onChange={(event) => setRenameDraft(event.target.value)}
               maxLength={renameTarget.kind === "document" ? 120 : 80}

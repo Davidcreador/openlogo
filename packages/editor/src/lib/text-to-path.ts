@@ -344,12 +344,6 @@ export function ensureDocumentFonts(): void {
     }
   }
 }
-
-/** Text-node helper so UI can gate the outline button. */
-export function isConvertibleText(node: TextNode): boolean {
-  return node.content.length > 0;
-}
-
 /**
  * A copy of the document with every plain text node replaced by its
  * glyph-outline path (same node id, so containers and z-order hold).

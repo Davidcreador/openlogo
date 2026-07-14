@@ -41,7 +41,7 @@ const openError = (message: string): OpenDocumentError => ({
  * Parse and adopt a .openlogo file: validated (zod), migrated and
  * sanitized by parseDocument; the editor state resets around it.
  */
-export const openDocumentFile = (
+const openDocumentFile = (
   file: File,
 ): Effect.Effect<void, OpenDocumentError> =>
   Effect.gen(function* () {

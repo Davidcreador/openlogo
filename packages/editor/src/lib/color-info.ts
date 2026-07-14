@@ -14,7 +14,7 @@ export type Cmyk = { c: number; m: number; y: number; k: number };
 
 const HEX = /^#([0-9a-f]{6})$/i;
 
-export function hexToRgb(hex: string): Rgb | null {
+function hexToRgb(hex: string): Rgb | null {
   const match = HEX.exec(hex.trim());
   if (!match) {
     return null;
@@ -24,7 +24,7 @@ export function hexToRgb(hex: string): Rgb | null {
 }
 
 /** Naive device conversion (no ICC profile) — the standard formula. */
-export function rgbToCmyk(rgb: Rgb): Cmyk {
+function rgbToCmyk(rgb: Rgb): Cmyk {
   const r = rgb.r / 255;
   const g = rgb.g / 255;
   const b = rgb.b / 255;
@@ -40,7 +40,7 @@ export function rgbToCmyk(rgb: Rgb): Cmyk {
   };
 }
 
-export function cmykLabel(cmyk: Cmyk): string {
+function cmykLabel(cmyk: Cmyk): string {
   const pct = (v: number) => Math.round(v * 100);
   return `C${pct(cmyk.c)} M${pct(cmyk.m)} Y${pct(cmyk.y)} K${pct(cmyk.k)}`;
 }
@@ -179,7 +179,7 @@ const lut: Array<{ name: string; hex: string; lab: Lab }> = PMS_APPROX.map(
   }),
 );
 
-export function nearestSpotReference(hex: string): SpotReference | null {
+function nearestSpotReference(hex: string): SpotReference | null {
   const rgb = hexToRgb(hex);
   if (!rgb) {
     return null;
@@ -201,7 +201,7 @@ export function nearestSpotReference(hex: string): SpotReference | null {
  * and neon-bright anything — sit outside typical coated-CMYK gamuts and
  * print duller than they preview. Returns a short warning or null.
  */
-export function printGamutHint(hex: string): string | null {
+function printGamutHint(hex: string): string | null {
   const rgb = hexToRgb(hex);
   if (!rgb) {
     return null;

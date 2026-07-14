@@ -990,7 +990,7 @@ export function validateRasterSize(
  * pixels. The object URL is an acquired resource: it is revoked on every
  * exit path, including the image failing to load.
  */
-export const rasterizeSvg = (
+const rasterizeSvg = (
   svg: string,
   width: number,
   height: number,

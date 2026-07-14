@@ -208,17 +208,6 @@ export function jitter(random: Prng, value: number, radius = 2): number {
   return value + random.int(-radius, radius);
 }
 
-export function estimateTextWidth(
-  content: string,
-  fontSize: number,
-  letterSpacing: number,
-  widthFactor = 0.58,
-): number {
-  const glyphs = Math.max(1, Array.from(content).length);
-  return glyphs * fontSize * widthFactor
-    + Math.max(0, glyphs - 1) * letterSpacing;
-}
-
 export function balancedLineBreak(content: string, threshold = 16): string {
   if (Array.from(content).length <= threshold) {
     return content;

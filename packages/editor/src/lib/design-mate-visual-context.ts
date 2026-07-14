@@ -20,7 +20,7 @@ import { documentToSvg, svgToPngBytes } from "./export";
 import { resolveEffectiveDesignMateScope } from "./design-mate-review";
 import { embedDocumentFonts } from "./svg-fonts";
 
-export const DESIGN_MATE_VISUAL_MAX_EDGES = [512, 384, 256] as const;
+const DESIGN_MATE_VISUAL_MAX_EDGES = [512, 384, 256] as const;
 
 type VisualBounds = {
   readonly x: number;
@@ -610,20 +610,4 @@ export async function captureDesignMateVisualContext(
     attemptedTargets: plan.targets.length,
     failedTargets,
   };
-}
-
-export async function buildDesignMateVisualAttachments(
-  document: LogoDocument,
-  selection: DesignMateSelection,
-  options: DesignMateVisualCaptureOptions,
-  dependencies?: DesignMateVisualCaptureDependencies,
-): Promise<readonly DesignMateVisualAttachment[]> {
-  return (
-    await captureDesignMateVisualContext(
-      document,
-      selection,
-      options,
-      dependencies ?? DEFAULT_CAPTURE_DEPENDENCIES,
-    )
-  ).attachments;
 }
