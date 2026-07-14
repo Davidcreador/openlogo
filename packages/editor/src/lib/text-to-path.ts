@@ -7,6 +7,7 @@ import {
   type PathNode,
   type TextNode,
   commandsToGeometry,
+  createGroup,
   createId,
   findContainerId,
   getActiveArtboard,
@@ -15,6 +16,7 @@ import {
   kernToPx,
   pathGeometryBounds,
   pathGeometryToSvg,
+  rotatePoint,
   translatePathGeometry,
 } from "@openlogo/core";
 import { documentStore } from "../state/document";
@@ -114,17 +116,19 @@ export const convertTextToPath = (
  * table, which Fontsource TTFs don't carry. Trade-off: no ligatures —
  * unchanged from v1, which never shaped them either.
  */
-function buildOutlinePathNode(
-  ot: typeof opentype,
-  bytes: ArrayBuffer,
-  node: TextNode,
-): PathNode | null {
-  const font = ot.parse(bytes);
+/** One placed glyph: its source character and outline commands. */
+type PlacedGlyph = { char: string; commands: PathCommand[] };
 
+/**
+ * Place every glyph of the text node (kerning, manual kerning map,
+ * letter spacing, per-line alignment) and return each glyph's outline
+ * commands in artboard space.
+ */
+function placeGlyphs(font: opentype.Font, node: TextNode): PlacedGlyph[] {
   const scale = node.fontSize / font.unitsPerEm;
   const ascent = font.ascender * scale;
   const kern = kerningLookup(font);
-  const commands: PathCommand[] = [];
+  const placed: PlacedGlyph[] = [];
 
   let contentOffset = 0;
   node.content.split("\n").forEach((line, lineIndex) => {
@@ -155,14 +159,25 @@ function buildOutlinePathNode(
       lineIndex * node.fontSize * node.lineHeight;
     let penX = node.x + alignOffset;
     glyphs.forEach((glyph, index) => {
-      commands.push(
-        ...(glyph.getPath(penX, baseY, node.fontSize).commands as PathCommand[]),
-      );
+      placed.push({
+        char: chars[index]!,
+        commands: glyph.getPath(penX, baseY, node.fontSize)
+          .commands as PathCommand[],
+      });
       penX += advances[index]!;
     });
     // +1 accounts for the newline in the original content/kerning indices.
     contentOffset += chars.length + 1;
   });
+  return placed;
+}
+
+/** PathNode from outline commands, normalized to its own bounds. */
+function pathNodeFromCommands(
+  commands: PathCommand[],
+  name: string,
+  node: TextNode,
+): PathNode | null {
   const geometry = commandsToGeometry(commands);
   const bounds = pathGeometryBounds(geometry);
   if (!bounds) {
@@ -173,7 +188,7 @@ function buildOutlinePathNode(
   return {
     id: createId("node"),
     type: "path",
-    name: `${node.content} outlines`,
+    name,
     x: bounds.x,
     y: bounds.y,
     width: bounds.width,
@@ -192,16 +207,101 @@ function buildOutlinePathNode(
   };
 }
 
-/** Build the outline and swap it in for the text node, one batch command. */
+function buildOutlinePathNode(
+  ot: typeof opentype,
+  bytes: ArrayBuffer,
+  node: TextNode,
+): PathNode | null {
+  const font = ot.parse(bytes);
+  const commands = placeGlyphs(font, node).flatMap((glyph) => glyph.commands);
+  return pathNodeFromCommands(commands, `${node.content} outlines`, node);
+}
+
+/**
+ * Per-letter outline nodes (empty glyphs like spaces skipped), ready to
+ * live inside a group so ungroup hands back individual letters.
+ * Exported for tests.
+ */
+export function buildOutlineLetterNodes(
+  font: opentype.Font,
+  node: TextNode,
+): PathNode[] {
+  const letters: PathNode[] = [];
+  for (const glyph of placeGlyphs(font, node)) {
+    if (glyph.commands.length === 0) {
+      continue;
+    }
+    const letter = pathNodeFromCommands(glyph.commands, glyph.char, node);
+    if (letter) {
+      letters.push(letter);
+    }
+  }
+  if (node.rotation !== 0) {
+    // Each letter keeps the text's rotation but must orbit the TEXT box
+    // centre, not its own: rotate the letter centre around the text
+    // centre, then let the node's own rotation spin it in place.
+    const centre = {
+      x: node.x + node.width / 2,
+      y: node.y + node.height / 2,
+    };
+    for (const letter of letters) {
+      const rotated = rotatePoint(
+        { x: letter.x + letter.width / 2, y: letter.y + letter.height / 2 },
+        centre,
+        node.rotation,
+      );
+      letter.x = rotated.x - letter.width / 2;
+      letter.y = rotated.y - letter.height / 2;
+    }
+  }
+  return letters;
+}
+
+/**
+ * Build per-letter outlines and swap them in for the text node as one
+ * batch command. Multiple letters arrive grouped (named after the text)
+ * so the whole word still moves as one unit — ungroup for individual
+ * letters. Single letters insert directly.
+ */
 function outlineNode(
   ot: typeof opentype,
   bytes: ArrayBuffer,
   node: TextNode,
 ): string | null {
   const document = documentStore.document;
-  const pathNode = buildOutlinePathNode(ot, bytes, node);
-  if (!pathNode) {
+  const letters = buildOutlineLetterNodes(ot.parse(bytes), node);
+  if (letters.length === 0) {
     return null;
+  }
+
+  let rootId: string;
+  let nodes: LogoNode[];
+  if (letters.length === 1) {
+    letters[0]!.name = `${node.content} outlines`;
+    rootId = letters[0]!.id;
+    nodes = letters;
+  } else {
+    const union = letters.reduce(
+      (acc, letter) => ({
+        x: Math.min(acc.x, letter.x),
+        y: Math.min(acc.y, letter.y),
+        right: Math.max(acc.right, letter.x + letter.width),
+        bottom: Math.max(acc.bottom, letter.y + letter.height),
+      }),
+      { x: Infinity, y: Infinity, right: -Infinity, bottom: -Infinity },
+    );
+    const group = createGroup(
+      letters.map((letter) => letter.id),
+      {
+        x: union.x,
+        y: union.y,
+        width: union.right - union.x,
+        height: union.bottom - union.y,
+      },
+    );
+    group.name = `${node.content} outlines`;
+    rootId = group.id;
+    nodes = [group, ...letters];
   }
 
   // The outline replaces the text in its own container (group-aware).
@@ -219,13 +319,13 @@ function outlineNode(
         type: "insert-nodes",
         artboardId: artboard.id,
         ...(containerId !== artboard.id ? { containerId } : {}),
-        nodes: [pathNode],
+        nodes,
         ...(insertIndex !== undefined ? { index: insertIndex } : {}),
       },
     ],
   });
 
-  return pathNode.id;
+  return rootId;
 }
 
 /** Preload every catalog font referenced by the document's text nodes. */

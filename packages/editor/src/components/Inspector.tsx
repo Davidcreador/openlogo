@@ -76,6 +76,7 @@ import { fontStore } from "../lib/font-store";
 import { FontPicker } from "./FontPicker";
 import { PaintEditor, paintPreviewBackground } from "./PaintEditor";
 import {
+  groupSelection,
   moveUnitToContainer,
   rotateUnitBy,
   setUnitBounds,
@@ -2652,6 +2653,19 @@ function MultiDesignSection({
       <PanelSection title="Layout" meta={`${nodes.length} selected`}>
         <AlignPanel nodeIds={nodes.map((node) => node.id)} />
         <ArrangeRow nodeIds={nodes.map((node) => node.id)} />
+        <button
+          type="button"
+          className={OUTLINE_BUTTON}
+          title="Group the selection into one movable unit"
+          onClick={() => {
+            const groupId = groupSelection(nodes.map((node) => node.id));
+            if (groupId) {
+              setSelection([groupId]);
+            }
+          }}
+        >
+          Group (⌘G)
+        </button>
         {textPathPair && (
           <button
             type="button"
