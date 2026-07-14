@@ -54,6 +54,7 @@ import {
 } from "../lib/document-library";
 import { exportPack } from "../lib/export-pack";
 import { deleteSelection as deleteSelectedUnits } from "../lib/group-ops";
+import { clearEditingSession } from "../lib/session-resume";
 import { MAX_SVG_IMPORT_BYTES, importSvg } from "../lib/svg-import";
 import { documentStore, useDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
@@ -715,6 +716,7 @@ export function TopBar() {
   async function returnToProjects() {
     try {
       await documentLibrary.prepareForDashboard();
+      clearEditingSession();
       setView("dashboard");
     } catch (error) {
       console.warn("Could not return to projects", error);

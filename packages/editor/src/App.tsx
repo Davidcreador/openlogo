@@ -39,6 +39,11 @@ import {
   ungroupSelection,
 } from "./lib/group-ops";
 import { arrangeNodes } from "./lib/object-ops";
+import {
+  clearEditingSession,
+  editingSessionDocumentId,
+  markEditingSession,
+} from "./lib/session-resume";
 import { fontCatalog } from "./lib/font-catalog";
 import { DocumentSession } from "./lib/document-session";
 import { documentLibrary } from "./lib/document-library";
@@ -155,7 +160,35 @@ export default function App() {
     setBootstrapLoading(true);
     void documentLibrary
       .bootstrapLibrary(documentStore.document)
-      .then(() => {
+      .then(async () => {
+        if (disposed) {
+          return;
+        }
+        // A reload while editing resumes that document instead of the
+        // dashboard. Tab-scoped: fresh visits keep the dashboard-first
+        // cold boot.
+        const resumeId = editingSessionDocumentId();
+        if (
+          resumeId &&
+          useEditorStore.getState().view === "dashboard" &&
+          documentLibrary.snapshot.documents.some(
+            (summary) => summary.documentId === resumeId,
+          )
+        ) {
+          try {
+            const document = await documentLibrary.openDocument(resumeId);
+            if (!disposed) {
+              setBootstrapLoading(false);
+              enterDocument(document);
+              return;
+            }
+          } catch (error) {
+            console.warn("Could not resume the editing session", error);
+            clearEditingSession();
+          }
+        } else if (resumeId) {
+          clearEditingSession();
+        }
         if (disposed) {
           return;
         }
@@ -701,6 +734,7 @@ export default function App() {
     editor.setDocumentLibraryOpen(openHistory);
     editor.setTemplatePanelOpen(false);
     setSessionReady(false);
+    markEditingSession(documentStore.document.id);
     editor.setView("editor");
   }
 

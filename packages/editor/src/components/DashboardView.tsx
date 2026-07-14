@@ -21,6 +21,7 @@ import {
   Pencil,
   RotateCcw,
   Search,
+  Sparkles,
   Trash2,
   Upload,
   X,
@@ -353,6 +354,9 @@ export function DashboardView({
   const [renameDraft, setRenameDraft] = useState("");
   const customDialogRef = useRef<HTMLDivElement>(null);
   const customFocusRef = useRef<HTMLInputElement>(null);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const templatesDialogRef = useRef<HTMLDivElement>(null);
+  const templatesFocusRef = useRef<HTMLButtonElement>(null);
   const renameDialogRef = useRef<HTMLDivElement>(null);
   const renameFocusRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -369,6 +373,12 @@ export function DashboardView({
     onClose: () => setRenameTarget(null),
     dialogRef: renameDialogRef,
     initialFocusRef: renameFocusRef,
+  });
+  useModalDialog({
+    open: templatesOpen,
+    onClose: () => setTemplatesOpen(false),
+    dialogRef: templatesDialogRef,
+    initialFocusRef: templatesFocusRef,
   });
 
   useEffect(() => {
@@ -705,6 +715,16 @@ export function DashboardView({
             />
           </label>
 
+          <button
+            type="button"
+            className="inline-flex h-36 items-center gap-6 rounded-field border border-field-border bg-card px-12 text-[12px] font-[620] text-ink transition-colors hover:border-accent/55 hover:text-accent"
+            onClick={() => setTemplatesOpen(true)}
+            aria-haspopup="dialog"
+          >
+            <Sparkles size={13} className="text-accent" aria-hidden="true" />
+            Templates
+          </button>
+
           <label className="hidden items-center gap-7 text-[11px] text-ink-dim sm:flex">
             Sort
             <select
@@ -853,31 +873,6 @@ export function DashboardView({
             </button>
           </div>
         </section>
-
-        <Suspense
-          fallback={
-            <section
-              className="mt-28 rounded-panel border border-panel-hairline bg-panel/72 p-18"
-              aria-label="Loading template gallery"
-              aria-busy="true"
-            >
-              <div className="h-16 w-196 animate-pulse rounded-full bg-ink/8 motion-reduce:animate-none" />
-              <div className="mt-14 grid grid-cols-1 gap-12 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {Array.from({ length: 4 }, (_, index) => (
-                  <div
-                    key={index}
-                    className="aspect-[4/3] animate-pulse rounded-panel bg-ink/6 motion-reduce:animate-none"
-                  />
-                ))}
-              </div>
-            </section>
-          }
-        >
-          <TemplateGallery
-            disabled={busy || !library.ready}
-            onCreateDocument={createTemplateDocument}
-          />
-        </Suspense>
 
         <section className="mt-28" aria-label="Document library">
           <div className="flex flex-wrap items-center gap-8 border-b border-panel-hairline">
@@ -1151,6 +1146,68 @@ export function DashboardView({
             <span className="mt-4 block text-[11.5px] text-ink-dim">
               .openlogo or SVG
             </span>
+          </div>
+        </div>
+      )}
+
+      {templatesOpen && (
+        <div
+          ref={templatesDialogRef}
+          className="overlay-in fixed inset-0 z-50 grid place-items-center bg-[rgb(16_14_20/0.68)] p-20 backdrop-blur-[2px]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="templates-dialog-title"
+          tabIndex={-1}
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setTemplatesOpen(false);
+            }
+          }}
+        >
+          <div className="dialog-in flex max-h-[calc(100vh-56px)] w-[min(1160px,calc(100vw-40px))] flex-col overflow-hidden rounded-panel border border-panel-hairline bg-panel shadow-[0_28px_90px_rgb(0_0_0/0.42)]">
+            <div className="flex items-center justify-between gap-12 border-b border-panel-hairline px-18 py-12">
+              <h2
+                id="templates-dialog-title"
+                className="m-0 text-[15px] font-[680] text-ink"
+              >
+                Templates
+              </h2>
+              <button
+                ref={templatesFocusRef}
+                type="button"
+                className="grid h-28 w-28 place-items-center rounded-field text-ink-dim hover:bg-field hover:text-ink"
+                onClick={() => setTemplatesOpen(false)}
+                aria-label="Close templates"
+              >
+                <X size={15} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="min-h-0 overflow-y-auto px-18 pb-18">
+              <Suspense
+                fallback={
+                  <section
+                    className="mt-16 rounded-panel border border-panel-hairline bg-panel/72 p-18"
+                    aria-label="Loading template gallery"
+                    aria-busy="true"
+                  >
+                    <div className="h-16 w-196 animate-pulse rounded-full bg-ink/8 motion-reduce:animate-none" />
+                    <div className="mt-14 grid grid-cols-1 gap-12 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                      {Array.from({ length: 4 }, (_, index) => (
+                        <div
+                          key={index}
+                          className="aspect-[4/3] animate-pulse rounded-panel bg-ink/6 motion-reduce:animate-none"
+                        />
+                      ))}
+                    </div>
+                  </section>
+                }
+              >
+                <TemplateGallery
+                  disabled={busy || !library.ready}
+                  onCreateDocument={createTemplateDocument}
+                />
+              </Suspense>
+            </div>
           </div>
         </div>
       )}
