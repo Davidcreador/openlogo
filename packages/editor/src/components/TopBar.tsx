@@ -742,6 +742,11 @@ export function TopBar() {
       const ids = await Effect.runPromise(importSvg(await file.text()));
       if (ids.length > 0) {
         setSelection(ids);
+        if (ids.warnings.length > 0) {
+          setToast(`Imported with warnings: ${ids.warnings.join(" ")}`);
+        }
+      } else if (ids.warnings.length > 0) {
+        setToast(ids.warnings.join(" "));
       } else {
         setToast("This SVG contains no supported editable shapes.");
       }

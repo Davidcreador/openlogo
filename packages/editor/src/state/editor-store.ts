@@ -25,6 +25,8 @@ export type Tool =
   | "gradient"
   | "shapeBuilder";
 
+export type GradientTarget = "fill" | "stroke";
+
 export type DesignMateReviewSnapshot = {
   review: DesignReview;
   identity: DocumentIdentity;
@@ -42,6 +44,7 @@ export type DesignMateCanvasFocus = DesignMateFocusTarget & {
 type EditorState = {
   view: EditorView;
   tool: Tool;
+  gradientTarget: GradientTarget;
   selectedNodeIds: string[];
   /**
    * Key object for align/distribute (Illustrator): one member of a
@@ -88,6 +91,7 @@ type EditorState = {
   /** Transient status message (file open errors etc.); null = hidden. */
   toast: string | null;
   setTool: (tool: Tool) => void;
+  setGradientTarget: (target: GradientTarget) => void;
   setView: (view: EditorView) => void;
   setTransformDialogOpen: (open: boolean) => void;
   setExportDialogOpen: (open: boolean) => void;
@@ -117,6 +121,7 @@ const initialPrefs = loadPrefs();
 export const useEditorStore = create<EditorState>((set) => ({
   view: "dashboard",
   tool: "select",
+  gradientTarget: "fill",
   selectedNodeIds: [],
   keyObjectId: null,
   camera: createCamera(),
@@ -140,6 +145,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   toast: null,
   setView: (view) => set({ view }),
   setTool: (tool) => set({ tool }),
+  setGradientTarget: (gradientTarget) => set({ gradientTarget }),
   setTransformDialogOpen: (transformDialogOpen) => set({ transformDialogOpen }),
   setExportDialogOpen: (exportDialogOpen) => set({ exportDialogOpen }),
   setDocumentLibraryOpen: (documentLibraryOpen) =>

@@ -13,7 +13,9 @@ import {
   kernAt,
   kernToPx,
   linearGradientPoints,
+  normalizeTextPathContent,
   paintBounds,
+  pathGeometryLength,
   pathGeometryToSvg,
   reversePathGeometry,
 } from "@openlogo/core";
@@ -30,6 +32,7 @@ let gradientCounter = 0;
 let filterCounter = 0;
 let textPathCounter = 0;
 let clippingPathCounter = 0;
+let strokeAlignmentCounter = 0;
 
 /**
  * Layer effects → an SVG <filter>. Faithful pieces: drop shadow and glow
@@ -41,7 +44,11 @@ let clippingPathCounter = 0;
  * and feMorphology's square kernel rounds corners slightly differently
  * from Skia's dilate.
  */
-function effectsAttr(node: LogoNode, defs: string[]): string {
+function effectsAttr(
+  document: LogoDocument,
+  node: LogoNode,
+  defs: string[],
+): string {
   const effects = node.effects?.filter((effect) => effect.enabled) ?? [];
   if (effects.length === 0) {
     return "";
@@ -49,7 +56,14 @@ function effectsAttr(node: LogoNode, defs: string[]): string {
 
   filterCounter += 1;
   const id = `fx-${filterCounter}`;
-  const region = `x="-60%" y="-60%" width="220%" height="220%"`;
+  const bounds = paintBounds(document, node.id);
+  if (!bounds || bounds.width <= 0 || bounds.height <= 0) {
+    return "";
+  }
+  const region = `filterUnits="userSpaceOnUse" x="${bounds.x}" y="${bounds.y}" width="${bounds.width}" height="${bounds.height}"`;
+  const typeMarker = `data-openlogo-effect-types="${effects
+    .map((effect) => effect.type)
+    .join(" ")}"`;
 
   // Single drop shadow / glow: the native primitive, nothing else.
   if (
@@ -60,7 +74,7 @@ function effectsAttr(node: LogoNode, defs: string[]): string {
     const dx = effect.type === "drop-shadow" ? effect.dx : 0;
     const dy = effect.type === "drop-shadow" ? effect.dy : 0;
     defs.push(
-      `<filter id="${id}" ${region}><feDropShadow dx="${dx}" dy="${dy}" stdDeviation="${
+      `<filter id="${id}" ${region} ${typeMarker}><feDropShadow dx="${dx}" dy="${dy}" stdDeviation="${
         effect.blur / 2
       }" flood-color="${escapeXml(effect.color)}" flood-opacity="${effect.opacity}" /></filter>`,
     );
@@ -128,7 +142,9 @@ function effectsAttr(node: LogoNode, defs: string[]): string {
     ...over.map((result) => `<feMergeNode in="${result}" />`),
   ].join("");
   primitives.push(`<feMerge>${merge}</feMerge>`);
-  defs.push(`<filter id="${id}" ${region}>${primitives.join("")}</filter>`);
+  defs.push(
+    `<filter id="${id}" ${region} ${typeMarker}>${primitives.join("")}</filter>`,
+  );
   return ` filter="url(#${id})"`;
 }
 
@@ -202,16 +218,34 @@ function textOnPathMarkup(
     path.width / path.intrinsicWidth
   } ${path.height / path.intrinsicHeight})`;
   defs.push(
-    `<path id="${id}" d="${escapeXml(d)}" transform="${transform}" fill="none" />`,
+    `<path id="${id}" data-openlogo-path-source-id="${escapeXml(
+      path.id,
+    )}" d="${escapeXml(d)}" transform="${transform}" fill="none" />`,
   );
 
-  return `<text ${base} font-family="${escapeXml(node.fontFamily)}" font-size="${
+  const pathLength = path.geometry
+    ? pathGeometryLength(
+        path.geometry,
+        path.width / path.intrinsicWidth,
+        path.height / path.intrinsicHeight,
+      )
+    : 2 * (path.width + path.height);
+  const anchor =
+    node.align === "center" ? "middle" : node.align === "right" ? "end" : "start";
+  const alignedOffset =
+    node.align === "center"
+      ? attachment.startOffset + (pathLength - attachment.startOffset) / 2
+      : node.align === "right"
+        ? pathLength
+        : attachment.startOffset;
+
+  return `<text ${base} text-anchor="${anchor}" font-family="${escapeXml(node.fontFamily)}" font-size="${
     node.fontSize
   }" font-weight="${node.fontWeight}"${textTypographyAttrs(node)} letter-spacing="${
     node.letterSpacing
   }"><textPath href="#${id}"${side} startOffset="${
-    attachment.startOffset
-  }">${escapeXml(node.content)}</textPath></text>`;
+    Math.round(alignedOffset * 1000) / 1000
+  }">${escapeXml(normalizeTextPathContent(node.content))}</textPath></text>`;
 }
 
 function gradientStops(paint: LinearGradientPaint | RadialGradientPaint): string {
@@ -251,7 +285,7 @@ function paintAttr(paint: Paint, defs: string[], box: Bounds): string {
 
   if (paint.start && paint.end) {
     defs.push(
-      `<linearGradient id="${id}" x1="${paint.start.x}" y1="${paint.start.y}" x2="${paint.end.x}" y2="${paint.end.y}">${stops}</linearGradient>`,
+      `<linearGradient id="${id}" data-openlogo-angle="${paint.angle}" x1="${paint.start.x}" y1="${paint.start.y}" x2="${paint.end.x}" y2="${paint.end.y}">${stops}</linearGradient>`,
     );
     return `url(#${id})`;
   }
@@ -267,7 +301,7 @@ function paintAttr(paint: Paint, defs: string[], box: Bounds): string {
   const x2 = (points.end.x - box.x) / width;
   const y2 = (points.end.y - box.y) / height;
   defs.push(
-    `<linearGradient id="${id}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}">${stops}</linearGradient>`,
+    `<linearGradient id="${id}" data-openlogo-angle="${paint.angle}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}">${stops}</linearGradient>`,
   );
   return `url(#${id})`;
 }
@@ -284,10 +318,156 @@ function nodePaintBox(node: Exclude<LogoNode, { type: "group" }>): Bounds {
     : { x: node.x, y: node.y, width: node.width, height: node.height };
 }
 
+/** Editor-only metadata needed to reconstruct leaf semantics on re-import. */
+function openLogoNodeAttrs(node: Exclude<LogoNode, { type: "group" }>): string {
+  const attrs = [
+    `data-openlogo-source-id="${escapeXml(node.id)}"`,
+    `data-openlogo-node-type="${node.type}"`,
+    `data-openlogo-name="${escapeXml(node.name)}"`,
+    `data-openlogo-x="${node.x}"`,
+    `data-openlogo-y="${node.y}"`,
+    `data-openlogo-width="${node.width}"`,
+    `data-openlogo-height="${node.height}"`,
+    `data-openlogo-rotation="${node.rotation}"`,
+  ];
+  if (!node.visible) {
+    attrs.push('data-openlogo-visible="false"');
+  }
+  if (node.stroke) {
+    attrs.push(
+      `data-openlogo-stroke-color="${escapeXml(node.stroke.color)}"`,
+    );
+  }
+  if (node.type === "rectangle") {
+    attrs.push(`data-openlogo-corner-radius="${node.cornerRadius}"`);
+  } else if (node.type === "path") {
+    attrs.push(
+      `data-openlogo-intrinsic-width="${node.intrinsicWidth}"`,
+      `data-openlogo-intrinsic-height="${node.intrinsicHeight}"`,
+    );
+  } else if (node.type === "text") {
+    if (node.kerning && Object.keys(node.kerning).length > 0) {
+      attrs.push(
+        `data-openlogo-kerning="${escapeXml(JSON.stringify(node.kerning))}"`,
+      );
+    }
+    if (node.onPath) {
+      attrs.push(
+        `data-openlogo-path-source-id="${escapeXml(node.onPath.pathId)}"`,
+        `data-openlogo-path-flip="${node.onPath.flip}"`,
+        `data-openlogo-path-start-offset="${node.onPath.startOffset}"`,
+      );
+    }
+  }
+  return ` ${attrs.join(" ")}`;
+}
+
+/** Paint-free leaf geometry, reusable by aligned-stroke clips and masks. */
+function leafGeometryMarkup(
+  document: LogoDocument,
+  node: Exclude<LogoNode, { type: "group" }>,
+  attrs: string,
+  defs: string[],
+): string {
+  const rotate =
+    node.rotation === 0
+      ? ""
+      : ` transform="rotate(${node.rotation} ${node.x + node.width / 2} ${
+          node.y + node.height / 2
+        })"`;
+
+  if (node.type === "rectangle") {
+    return `<rect ${attrs}${rotate} x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" rx="${node.cornerRadius}" />`;
+  }
+
+  if (node.type === "ellipse") {
+    return `<ellipse ${attrs}${rotate} cx="${node.x + node.width / 2}" cy="${
+      node.y + node.height / 2
+    }" rx="${node.width / 2}" ry="${node.height / 2}" />`;
+  }
+
+  if (node.type === "text") {
+    const pathTarget = node.onPath
+      ? document.nodes[node.onPath.pathId]
+      : undefined;
+    if (node.onPath && pathTarget?.type === "path") {
+      return textOnPathMarkup(node, pathTarget, attrs, defs);
+    }
+
+    const anchor =
+      node.align === "center"
+        ? ' text-anchor="middle"'
+        : node.align === "right"
+          ? ' text-anchor="end"'
+          : "";
+    const anchorX =
+      node.align === "center"
+        ? node.x + node.width / 2
+        : node.align === "right"
+          ? node.x + node.width
+          : node.x;
+    const lines = node.content.split("\n");
+    const content =
+      lines.length === 1
+        ? escapeXml(node.content)
+        : lines
+            .map(
+              (line, index) =>
+                `<tspan x="${anchorX}" y="${
+                  node.y + index * node.fontSize * node.lineHeight
+                }">${escapeXml(line)}</tspan>`,
+            )
+            .join("");
+
+    return `<text ${attrs}${rotate}${anchor} x="${anchorX}" y="${node.y}" dominant-baseline="text-before-edge" font-family="${escapeXml(node.fontFamily)}" font-size="${
+      node.fontSize
+    }" font-weight="${node.fontWeight}"${textTypographyAttrs(node)} letter-spacing="${
+      node.letterSpacing
+    }">${content}</text>`;
+  }
+
+  const transform = `translate(${node.x} ${node.y}) scale(${
+    node.width / node.intrinsicWidth
+  } ${node.height / node.intrinsicHeight})`;
+  const pathRotate =
+    node.rotation === 0
+      ? ""
+      : `rotate(${node.rotation} ${node.x + node.width / 2} ${
+          node.y + node.height / 2
+        }) `;
+  return `<path ${attrs} fill-rule="${node.fillRule}" clip-rule="${node.fillRule}" transform="${pathRotate}${transform}" d="${escapeXml(
+    node.d,
+  )}" />`;
+}
+
+function strokeMaskBounds(
+  document: LogoDocument,
+  node: Exclude<LogoNode, { type: "group" }>,
+): Bounds {
+  const target =
+    node.type === "text" && node.onPath
+      ? document.nodes[node.onPath.pathId]
+      : node;
+  const source =
+    target && target.type !== "group"
+      ? { x: target.x, y: target.y, width: target.width, height: target.height }
+      : { x: node.x, y: node.y, width: node.width, height: node.height };
+  const pad =
+    Math.max(source.width, source.height, node.stroke?.width ?? 0) +
+    (node.type === "text" ? node.fontSize * 2 : 0);
+  return {
+    x: source.x - pad,
+    y: source.y - pad,
+    width: source.width + pad * 2,
+    height: source.height + pad * 2,
+  };
+}
+
 function renderNode(
   document: LogoDocument,
   node: LogoNode,
   defs: string[],
+  inheritedOpacity: number,
 ): string {
   if (node.type === "group") {
     return ""; // handled by renderTree
@@ -301,15 +481,17 @@ function renderNode(
         })"`;
   const paintBox = nodePaintBox(node);
   const fill = paintAttr(node.fill, defs, paintBox);
+  const strokePaint = node.stroke
+    ? node.stroke.paint
+      ? paintAttr(node.stroke.paint, defs, paintBox)
+      : escapeXml(node.stroke.color)
+    : null;
   const stroke = node.stroke
-    ? ` stroke="${
-        node.stroke.paint
-          ? paintAttr(node.stroke.paint, defs, paintBox)
-          : escapeXml(node.stroke.color)
-      }" stroke-width="${node.stroke.width}"`
+    ? ` stroke="${strokePaint}" stroke-width="${node.stroke.width}"`
     : "";
   const styleDecls = [
     node.blendMode ? `mix-blend-mode:${node.blendMode}` : null,
+    !node.visible ? "display:none" : null,
     node.type === "text" ? fontFeatureDecl(node) : null,
     node.type === "text" ? `line-height:${node.lineHeight}` : null,
     node.type === "text" ? "white-space:pre-wrap" : null,
@@ -319,8 +501,94 @@ function renderNode(
     styleDecls.length > 0
       ? ` style="${escapeXml(styleDecls.join(";"))}"`
       : "";
-  const filter = effectsAttr(node, defs);
-  const base = `opacity="${node.opacity}" fill="${fill}"${stroke}${blend}${filter}${rotate}`;
+  const filter = effectsAttr(document, node, defs);
+  const metadata = openLogoNodeAttrs(node);
+  const opacity = node.opacity * inheritedOpacity;
+
+  if (
+    node.stroke &&
+    strokePaint &&
+    node.stroke.width > 0 &&
+    node.stroke.align !== "center"
+  ) {
+    // Repeating editable text inside the clip/mask keeps glyph alpha faithful
+    // in browser SVG renderers without outlining it. Font availability still
+    // affects those glyphs exactly as it does for ordinary exported text;
+    // CanvasKit remains the editor's source of truth.
+    strokeAlignmentCounter += 1;
+    const id = `stroke-align-${strokeAlignmentCounter}`;
+    const textStyleDecls =
+      node.type === "text"
+        ? [
+            fontFeatureDecl(node),
+            `line-height:${node.lineHeight}`,
+            "white-space:pre-wrap",
+            `inline-size:${node.width}px`,
+          ].filter(Boolean)
+        : [];
+    const textStyle =
+      textStyleDecls.length > 0
+        ? ` style="${escapeXml(textStyleDecls.join(";"))}"`
+        : "";
+    const alignedGroupStyles = [
+      node.blendMode ? `mix-blend-mode:${node.blendMode}` : null,
+      !node.visible ? "display:none" : null,
+    ].filter(Boolean);
+    const groupBlend =
+      alignedGroupStyles.length > 0
+        ? ` style="${escapeXml(alignedGroupStyles.join(";"))}"`
+        : "";
+    const groupAttrs = `opacity="${opacity}"${groupBlend}${filter}`;
+    const marker = `data-openlogo-stroke-align="${node.stroke.align}"`;
+    const doubledStroke = `stroke="${strokePaint}" stroke-width="${
+      node.stroke.width * 2
+    }"`;
+
+    if (node.stroke.align === "inside") {
+      const clipGeometry = leafGeometryMarkup(
+        document,
+        node,
+        `fill="black"${textStyle}`,
+        defs,
+      );
+      defs.push(
+        `<clipPath id="${id}" clipPathUnits="userSpaceOnUse">${clipGeometry}</clipPath>`,
+      );
+      const painted = leafGeometryMarkup(
+        document,
+        node,
+        `fill="${fill}" ${doubledStroke}${textStyle} ${marker}${metadata} clip-path="url(#${id})"`,
+        defs,
+      );
+      return `<g ${groupAttrs}>${painted}</g>`;
+    }
+
+    const bounds = strokeMaskBounds(document, node);
+    const maskGeometry = leafGeometryMarkup(
+      document,
+      node,
+      `fill="black"${textStyle}`,
+      defs,
+    );
+    defs.push(
+      `<mask id="${id}" maskUnits="userSpaceOnUse" x="${bounds.x}" y="${bounds.y}" width="${bounds.width}" height="${bounds.height}"><rect x="${bounds.x}" y="${bounds.y}" width="${bounds.width}" height="${bounds.height}" fill="white" />${maskGeometry}</mask>`,
+    );
+    const fillGeometry = leafGeometryMarkup(
+      document,
+      node,
+      `fill="${fill}"${textStyle} ${marker}${metadata} data-openlogo-stroke-width="${node.stroke.width}"`,
+      defs,
+    );
+    const strokeGeometry = leafGeometryMarkup(
+      document,
+      node,
+      `fill="none" ${doubledStroke}${textStyle} data-openlogo-stroke-decoration="true" mask="url(#${id})"`,
+      defs,
+    );
+    return `<g ${groupAttrs}>${fillGeometry}${strokeGeometry}</g>`;
+  }
+
+  const base = `opacity="${opacity}" fill="${fill}"${stroke}${blend}${filter}${rotate}${metadata}`;
 
   if (node.type === "rectangle") {
     return `<rect ${base} x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" rx="${node.cornerRadius}" />`;
@@ -384,7 +652,7 @@ function renderNode(
           node.y + node.height / 2
         }) `;
 
-  return `<g opacity="${node.opacity}" fill="${fill}"${stroke}${blend}${filter} transform="${pathRotate}${transform}"><path fill-rule="${node.fillRule}" d="${escapeXml(
+  return `<g opacity="${opacity}" fill="${fill}"${stroke}${blend}${filter} transform="${pathRotate}${transform}"><path${metadata} fill-rule="${node.fillRule}" d="${escapeXml(
     node.d,
   )}" /></g>`;
 }
@@ -428,9 +696,10 @@ function renderTree(
   document: LogoDocument,
   nodeId: string,
   defs: string[],
+  inheritedOpacity = 1,
 ): string {
   const node = document.nodes[nodeId];
-  if (!node || !node.visible) {
+  if (!node) {
     return "";
   }
 
@@ -452,23 +721,33 @@ function renderTree(
       childIds = node.children.filter((id) => id !== node.clippingMaskId);
     }
     const inner = childIds
-      .map((childId) => renderTree(document, childId, defs))
+      .map((childId) =>
+        renderTree(document, childId, defs, inheritedOpacity * node.opacity),
+      )
       .filter(Boolean)
       .join("\n  ");
     if (!inner) {
       return "";
     }
-    const opacity = node.opacity !== 1 ? ` opacity="${node.opacity}"` : "";
     // mix-blend-mode on a <g> blends the group as one unit against the
     // backdrop — same semantics as the renderer's saveLayer.
-    const blend = node.blendMode
-      ? ` style="mix-blend-mode:${node.blendMode}"`
-      : "";
-    const filter = effectsAttr(node, defs);
-    return `<g${opacity}${blend}${filter}${clipping} data-name="${escapeXml(node.name)}">\n  ${inner}\n  </g>`;
+    const groupStyles = [
+      node.blendMode ? `mix-blend-mode:${node.blendMode}` : null,
+      !node.visible ? "display:none" : null,
+    ].filter(Boolean);
+    const blend =
+      groupStyles.length > 0
+        ? ` style="${escapeXml(groupStyles.join(";"))}"`
+        : "";
+    const filter = effectsAttr(document, node, defs);
+    const visible = !node.visible ? ' data-openlogo-visible="false"' : "";
+    const content = clipping
+      ? `<g${clipping}>\n  ${inner}\n  </g>`
+      : inner;
+    return `<g${blend}${filter} data-name="${escapeXml(node.name)}" data-openlogo-name="${escapeXml(node.name)}"${visible}>\n  ${content}\n  </g>`;
   }
 
-  return renderNode(document, node, defs);
+  return renderNode(document, node, defs, inheritedOpacity);
 }
 
 export type SvgExportOptions = {
@@ -491,7 +770,7 @@ export function documentToSvg(
     ? ""
     : `\n  <rect width="100%" height="100%" fill="${escapeXml(artboard.background)}" />`;
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${artboard.width}" height="${artboard.height}" viewBox="0 0 ${artboard.width} ${artboard.height}" role="img" aria-label="${escapeXml(
+  return `<svg xmlns="http://www.w3.org/2000/svg" data-openlogo-version="1" width="${artboard.width}" height="${artboard.height}" viewBox="0 0 ${artboard.width} ${artboard.height}" role="img" aria-label="${escapeXml(
     artboard.name,
   )}">${defsBlock}${background}
   ${body}

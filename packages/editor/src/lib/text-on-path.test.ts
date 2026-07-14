@@ -35,4 +35,22 @@ describe("text on path", () => {
       expect(attached.onPath?.pathId).toBe(path.id);
     }
   });
+
+  it("normalizes multiline content into one path-text stream", () => {
+    vi.spyOn(fontStore, "ensure").mockResolvedValue(null);
+    const document = createInitialDocument();
+    const path = createPath({ x: 10, y: 20 });
+    const text = createText({ x: 0, y: 0, content: "Open\n\nLogo" });
+    document.nodes = { [path.id]: path, [text.id]: text };
+    document.artboards[0] = {
+      ...document.artboards[0]!,
+      nodeIds: [path.id, text.id],
+    };
+    documentStore.reset(document);
+
+    attachTextToPath(text.id, path.id);
+
+    const attached = documentStore.committedDocument.nodes[text.id];
+    expect(attached?.type === "text" ? attached.content : null).toBe("Open Logo");
+  });
 });

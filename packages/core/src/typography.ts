@@ -12,6 +12,11 @@ export const KERN_STEP = 20;
 /** ⇧⌥←/⇧⌥→ step. */
 export const KERN_STEP_LARGE = 100;
 
+/** Attached text is one stream: collapse every line break into one space. */
+export function normalizeTextPathContent(content: string): string {
+  return content.replace(/\s*[\r\n]+\s*/g, " ");
+}
+
 /** Adjustment for the gap after content[index], 1/1000 em. */
 export function kernAt(
   kerning: Record<number, number> | undefined,

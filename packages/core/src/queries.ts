@@ -257,12 +257,17 @@ export function expandDeletionSet(
 }
 
 export function nodeBounds(node: LogoNode): Bounds {
+  const textBounds = textLayoutBounds.get(node);
+  if (textBounds) {
+    return textBounds;
+  }
   return rotatedBounds(
     { x: node.x, y: node.y, width: node.width, height: node.height },
     node.rotation,
   );
 }
 
+const textLayoutBounds = new WeakMap<LogoNode, Bounds>();
 const visualBoundsCache = new WeakMap<
   LogoDocument,
   Map<string, Bounds | null>
@@ -271,6 +276,25 @@ const paintBoundsCache = new WeakMap<
   LogoDocument,
   Map<string, Bounds | null>
 >();
+
+/** Register a renderer-derived text AABB without changing the document schema. */
+export function setTextLayoutBounds(
+  document: LogoDocument,
+  nodeId: string,
+  bounds: Bounds | null,
+): void {
+  const node = document.nodes[nodeId];
+  if (!node || node.type !== "text") {
+    return;
+  }
+  if (bounds) {
+    textLayoutBounds.set(node, { ...bounds });
+  } else {
+    textLayoutBounds.delete(node);
+  }
+  visualBoundsCache.delete(document);
+  paintBoundsCache.delete(document);
+}
 
 /**
  * Selection-unit bounds: a leaf's unrotated box (matching the editor's
@@ -287,7 +311,9 @@ export function unitBounds(
   }
   return node.type === "group"
     ? visualBounds(document, nodeId)
-    : { x: node.x, y: node.y, width: node.width, height: node.height };
+    : node.type === "text" && textLayoutBounds.has(node)
+      ? nodeBounds(node)
+      : { x: node.x, y: node.y, width: node.width, height: node.height };
 }
 
 /**
@@ -328,13 +354,18 @@ function visualBoundsGuarded(
   visiting.add(nodeId);
   const contentBounds = boundsUnion(
     node.children
-      .filter((childId) => childId !== node.clippingMaskId)
+      .filter(
+        (childId) =>
+          childId !== node.clippingMaskId &&
+          document.nodes[childId]?.visible !== false,
+      )
       .map((childId) => visualBoundsGuarded(document, childId, visiting))
       .filter((item): item is Bounds => item !== null),
   );
-  const maskBounds = node.clippingMaskId
-    ? visualBoundsGuarded(document, node.clippingMaskId, visiting)
-    : null;
+  const mask = node.clippingMaskId
+    ? document.nodes[node.clippingMaskId]
+    : undefined;
+  const maskBounds = mask && mask.type !== "group" ? nodeBounds(mask) : null;
   const bounds =
     node.clippingMaskId && maskBounds && contentBounds
       ? intersectBounds(maskBounds, contentBounds)
@@ -388,13 +419,18 @@ function paintBoundsGuarded(
     visiting.add(nodeId);
     const contentBounds = boundsUnion(
       node.children
-        .filter((childId) => childId !== node.clippingMaskId)
+        .filter(
+          (childId) =>
+            childId !== node.clippingMaskId &&
+            document.nodes[childId]?.visible !== false,
+        )
         .map((childId) => paintBoundsGuarded(document, childId, visiting))
         .filter((item): item is Bounds => item !== null),
     );
-    const maskBounds = node.clippingMaskId
-      ? visualBounds(document, node.clippingMaskId)
-      : null;
+    const mask = node.clippingMaskId
+      ? document.nodes[node.clippingMaskId]
+      : undefined;
+    const maskBounds = mask && mask.type !== "group" ? nodeBounds(mask) : null;
     const clippedBounds =
       node.clippingMaskId && maskBounds && contentBounds
         ? intersectBounds(maskBounds, contentBounds)
@@ -415,14 +451,24 @@ function strokeOutset(node: LogoNode): number {
   if (!node.stroke || node.stroke.width <= 0) {
     return 0;
   }
+  const alignFactor =
+    node.stroke.align === "inside"
+      ? 0
+      : node.stroke.align === "outside"
+        ? 1
+        : 0.5;
   if (node.type !== "path") {
-    return node.stroke.width / 2;
+    return node.stroke.width * alignFactor;
   }
 
   const scaleX = Math.abs(node.width / node.intrinsicWidth);
   const scaleY = Math.abs(node.height / node.intrinsicHeight);
   const scale = Math.max(scaleX, scaleY);
-  return (node.stroke.width * (Number.isFinite(scale) ? scale : 1)) / 2;
+  return (
+    node.stroke.width *
+    (Number.isFinite(scale) ? scale : 1) *
+    alignFactor
+  );
 }
 
 function expandBounds(bounds: Bounds, amount: number): Bounds {
@@ -564,10 +610,17 @@ export type SelectionFrame = {
 export function selectionFrame(
   document: LogoDocument,
   selectedNodeIds: readonly string[],
+  interactionBounds: ReadonlyMap<string, Bounds> = new Map(),
 ): SelectionFrame | null {
   if (selectedNodeIds.length === 1) {
     const node = document.nodes[selectedNodeIds[0]!];
-    if (node && node.type !== "group" && node.rotation !== 0) {
+    if (
+      node &&
+      node.type !== "group" &&
+      node.rotation !== 0 &&
+      !textLayoutBounds.has(node) &&
+      !interactionBounds.has(node.id)
+    ) {
       return {
         bounds: {
           x: node.x,
@@ -586,8 +639,12 @@ export function selectionFrame(
     if (!node) {
       continue;
     }
-    const bounds =
-      node.type === "group" ? unitBounds(document, nodeId) : nodeBounds(node);
+    const live = interactionBounds.get(nodeId);
+    const bounds = live
+      ? live
+      : node.type === "group"
+        ? unitBounds(document, nodeId)
+        : nodeBounds(node);
     if (bounds) {
       parts.push(bounds);
     }

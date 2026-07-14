@@ -2,6 +2,7 @@ import {
   type LogoDocument,
   type PathNode,
   type TextNode,
+  normalizeTextPathContent,
   pathGeometryLength,
 } from "@openlogo/core";
 import { documentStore } from "../state/document";
@@ -63,6 +64,7 @@ export function attachTextToPath(textId: string, pathId: string): void {
         nodeId: textId,
         patch: {
           onPath: { pathId, startOffset: 0, flip: false },
+          content: normalizeTextPathContent(text.content),
           x: path.x,
           y: path.y,
           width: Math.max(1, path.width),

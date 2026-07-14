@@ -11,6 +11,10 @@ import {
 } from "@openlogo/core";
 import { Plus, Trash2 } from "lucide-react";
 import { ColorInfoChip } from "./ColorInfo";
+import {
+  type GradientTarget,
+  useEditorStore,
+} from "../state/editor-store";
 
 /**
  * Paint editor shared by fill and stroke: solid / linear / radial
@@ -192,6 +196,7 @@ export function PaintEditor({
   onCommit,
   onPreview,
   onCancelPreview,
+  target,
 }: {
   paint: Paint;
   /** Aria prefix, e.g. "Fill" / "Stroke". */
@@ -202,6 +207,7 @@ export function PaintEditor({
   onPreview: (paint: Paint) => void;
   /** Restore the committed paint when a pointer gesture is interrupted. */
   onCancelPreview: () => void;
+  target: GradientTarget;
 }) {
   const [selectedStop, setSelectedStop] = useState(0);
   const [previewPaint, setPreviewPaint] = useState<Paint | null>(null);
@@ -212,6 +218,8 @@ export function PaintEditor({
     paint: Paint;
     moved: boolean;
   } | null>(null);
+  const setGradientTarget = useEditorStore((state) => state.setGradientTarget);
+  const setTool = useEditorStore((state) => state.setTool);
 
   // Keep the moving chip/ramp local to this small subtree. The document
   // preview updates CanvasKit directly; no inspector-wide live subscription.
@@ -257,8 +265,18 @@ export function PaintEditor({
     onCommit(added.paint);
   };
 
+  const editOnCanvas = () => {
+    setGradientTarget(target);
+    setTool("gradient");
+  };
+
   return (
-    <div className="paint-editor">
+    <div
+      className="paint-editor"
+      data-gradient-target={target}
+      onFocusCapture={() => setGradientTarget(target)}
+      onPointerDownCapture={() => setGradientTarget(target)}
+    >
       <div
         className="mb-12 flex gap-2 rounded-m border border-field-border bg-field p-2"
         role="group"
@@ -515,31 +533,44 @@ export function PaintEditor({
                   onCommit({ ...rest, angle });
                 }}
               />
-              <span className="text-[10.5px] leading-[1.35] text-ink-dim">
-                Press <kbd>G</kbd> to edit on canvas
-              </span>
+              <button
+                type="button"
+                className="text-left text-[10.5px] leading-[1.35] text-ink-dim hover:text-accent"
+                onClick={editOnCanvas}
+              >
+                Edit {target} on canvas <kbd>G</kbd>
+              </button>
             </div>
           ) : (
-            <label className="flex cursor-pointer items-center gap-6 text-[11.5px] text-ink-dim">
-              <input
-                type="checkbox"
-                checked={gradient.fx !== undefined}
-                aria-label="Focal point"
-                onChange={(event) => {
-                  if (event.target.checked) {
-                    onCommit({
-                      ...gradient,
-                      fx: gradient.cx - gradient.r / 2,
-                      fy: gradient.cy,
-                    });
-                  } else {
-                    const { fx: _fx, fy: _fy, ...rest } = gradient;
-                    onCommit(rest);
-                  }
-                }}
-              />
-              Focal point · press G to edit on canvas
-            </label>
+            <div className="flex items-center justify-between gap-6">
+              <label className="flex cursor-pointer items-center gap-6 text-[11.5px] text-ink-dim">
+                <input
+                  type="checkbox"
+                  checked={gradient.fx !== undefined}
+                  aria-label="Focal point"
+                  onChange={(event) => {
+                    if (event.target.checked) {
+                      onCommit({
+                        ...gradient,
+                        fx: gradient.cx - gradient.r / 2,
+                        fy: gradient.cy,
+                      });
+                    } else {
+                      const { fx: _fx, fy: _fy, ...rest } = gradient;
+                      onCommit(rest);
+                    }
+                  }}
+                />
+                Focal point
+              </label>
+              <button
+                type="button"
+                className="text-left text-[10.5px] leading-[1.35] text-ink-dim hover:text-accent"
+                onClick={editOnCanvas}
+              >
+                Edit {target} on canvas <kbd>G</kbd>
+              </button>
+            </div>
           )}
         </div>
       ) : (

@@ -58,6 +58,7 @@ import {
   getClippingMaskOwnerId,
   getContainerChildIds,
   kernedPairCount,
+  normalizeTextPathContent,
   shapeDisplayName,
   shapeParamsPatch,
   unitBounds,
@@ -205,6 +206,8 @@ function NumberField({
   onCommit,
   step = 1,
   unit,
+  disabled = false,
+  disabledTitle,
 }: {
   label: string;
   ariaLabel?: string;
@@ -212,6 +215,8 @@ function NumberField({
   onCommit: (value: number) => void;
   step?: number;
   unit?: string;
+  disabled?: boolean;
+  disabledTitle?: string;
 }) {
   const [draft, setDraft] = useState(String(Math.round(value * 100) / 100));
   const scrubRef = useRef<{ startX: number; active: boolean } | null>(null);
@@ -236,11 +241,14 @@ function NumberField({
   }
 
   return (
-    <label className="number-field">
+    <label className="number-field" title={disabled ? disabledTitle : undefined}>
       <span
         className="nf-label"
-        title="Drag to adjust"
+        title={disabled ? disabledTitle : "Drag to adjust"}
         onPointerDown={(event) => {
+          if (disabled) {
+            return;
+          }
           event.preventDefault();
           event.currentTarget.setPointerCapture(event.pointerId);
           scrubRef.current = { startX: event.clientX, active: false };
@@ -276,6 +284,7 @@ function NumberField({
         autoComplete="off"
         spellCheck={false}
         value={draft}
+        disabled={disabled}
         aria-label={ariaLabel ?? label}
         onChange={(event) => setDraft(event.target.value)}
         onBlur={() => commitNumber(Number(draft.replace(",", ".")))}
@@ -440,11 +449,13 @@ function TextContentField({
   onPreview,
   onCommit,
   onCancel,
+  singleLine = false,
 }: {
   value: string;
   onPreview: (value: string) => void;
   onCommit: (value: string) => void;
   onCancel: () => void;
+  singleLine?: boolean;
 }) {
   const [draft, setDraft] = useState(value);
   const activeRef = useRef(false);
@@ -489,7 +500,9 @@ function TextContentField({
         activeRef.current = true;
       }}
       onChange={(event) => {
-        const next = event.target.value;
+        const next = singleLine
+          ? normalizeTextPathContent(event.target.value)
+          : event.target.value;
         activeRef.current = true;
         draftRef.current = next;
         setDraft(next);
@@ -666,6 +679,7 @@ function FillEditor({
       <PaintEditor
         paint={node.fill}
         label="Fill"
+        target="fill"
         onCommit={(fill) => patchSelection({ fill })}
         onPreview={(fill) => previewSelection({ fill })}
         onCancelPreview={cancelPreview}
@@ -813,6 +827,7 @@ function StrokeEditor({
               <PaintEditor
                 paint={strokePaint}
                 label="Stroke"
+                target="stroke"
                 onCommit={commitStrokePaint}
                 onPreview={(paint) =>
                   previewSelection({ stroke: strokeWithPaint(paint) })
@@ -881,6 +896,8 @@ function DesignSection({
             label="H"
             unit="px"
             value={node.height}
+            disabled={node.type === "text"}
+            disabledTitle="Text height is derived from its rendered paragraph"
             onCommit={(height) =>
               patchSelection({ height: Math.max(1, height) })
             }
@@ -1124,7 +1141,13 @@ function DesignSection({
               onPreview={(content) => previewSelection({ content })}
               onCommit={(content) => patchSelection({ content })}
               onCancel={cancelPreview}
+              singleLine={Boolean(node.onPath)}
             />
+            {node.onPath && (
+              <span className="text-[10.5px] leading-[1.35] text-ink-dim" role="status">
+                Single-line path text: line breaks become spaces.
+              </span>
+            )}
           </label>
 
           <div className={FIELD_ROW}>
@@ -1214,6 +1237,8 @@ function DesignSection({
               label="Line"
               value={node.lineHeight}
               step={0.05}
+              disabled={Boolean(node.onPath)}
+              disabledTitle="Line height is unavailable for single-line path text"
               onCommit={(lineHeight) =>
                 patchSelection({ lineHeight: Math.max(0.5, lineHeight) })
               }
@@ -2604,6 +2629,7 @@ function MultiDesignSection({
         <PaintEditor
           paint={first.fill}
           label="Fill"
+          target="fill"
           onCommit={(fill) => patchSelection({ fill })}
           onPreview={(fill) => previewSelection({ fill })}
           onCancelPreview={cancelPreview}

@@ -2,6 +2,7 @@ import {
   type Bounds,
   type LogoNode,
   type Paint,
+  type Stroke,
   type Vec2,
   angleFromPoints,
   defaultLinearGradient,
@@ -9,6 +10,7 @@ import {
   linearGradientPoints,
   rotatePoint,
 } from "@openlogo/core";
+import type { GradientTarget } from "../state/editor-store";
 
 /**
  * Geometry + drag math for the on-canvas gradient annotator (G tool).
@@ -64,11 +66,52 @@ export function localToFraction(node: LogoNode, local: Vec2): Vec2 {
 }
 
 /** Annotator handle positions for a node, artboard-local. */
-export function gradientHandlePoints(node: LogoNode): GradientHandle[] {
-  if (node.type === "group" || !isGradient(node.fill)) {
+export function gradientTargetPaint(
+  node: LogoNode,
+  target: GradientTarget,
+): Paint | null {
+  if (node.type === "group") {
+    return null;
+  }
+  if (target === "fill") {
+    return node.fill;
+  }
+  return (
+    node.stroke?.paint ??
+    (node.stroke ? { type: "solid", color: node.stroke.color } : null)
+  );
+}
+
+export function gradientTargetPatch(
+  node: LogoNode,
+  target: GradientTarget,
+  paint: Paint,
+): { fill?: Paint; stroke?: Stroke } {
+  if (target === "fill") {
+    return { fill: paint };
+  }
+  if (node.type === "group" || !node.stroke) {
+    return {};
+  }
+  return {
+    stroke: {
+      ...node.stroke,
+      color:
+        paint.type === "solid"
+          ? paint.color
+          : (paint.stops[0]?.color ?? node.stroke.color),
+      paint,
+    },
+  };
+}
+
+export function gradientHandlePoints(
+  node: LogoNode,
+  paint: Paint = node.fill,
+): GradientHandle[] {
+  if (node.type === "group" || !isGradient(paint)) {
     return [];
   }
-  const paint = node.fill;
   if (paint.type === "linear-gradient") {
     const box = shaderBox(node);
     const { start, end } = linearGradientPoints(paint, box);

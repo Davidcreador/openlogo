@@ -239,7 +239,13 @@ export default function App() {
                 useEditorStore.getState().setSelection(ids);
                 useEditorStore
                   .getState()
-                  .setToast(`Imported “${pendingSvg.name}”.`);
+                  .setToast(
+                    ids.warnings.length > 0
+                      ? `Imported “${pendingSvg.name}” with warnings: ${ids.warnings.join(" ")}`
+                      : `Imported “${pendingSvg.name}”.`,
+                  );
+              } else if (ids.warnings.length > 0) {
+                useEditorStore.getState().setToast(ids.warnings.join(" "));
               } else {
                 useEditorStore
                   .getState()

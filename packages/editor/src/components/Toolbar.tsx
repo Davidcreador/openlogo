@@ -252,6 +252,7 @@ const AFTER_SHAPES: ToolSpec[] = [
 export function Toolbar() {
   const tool = useEditorStore((state) => state.tool);
   const setTool = useEditorStore((state) => state.setTool);
+  const setGradientTarget = useEditorStore((state) => state.setGradientTarget);
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   const templatePanelOpen = useEditorStore((state) => state.templatePanelOpen);
   const setTemplatePanelOpen = useEditorStore(
@@ -271,6 +272,9 @@ export function Toolbar() {
         }`}
         onClick={() => {
           if (!unavailable) {
+            if (item.id === "gradient") {
+              setGradientTarget("fill");
+            }
             setTool(item.id);
           }
         }}

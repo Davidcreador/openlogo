@@ -133,6 +133,33 @@ export class DocumentStore {
     this.emit("preview");
   }
 
+  /** Persist renderer-derived text height without creating an undo step. */
+  syncTextHeight(nodeId: string, height: number): void {
+    if (
+      this.current !== this.committed ||
+      !Number.isFinite(height) ||
+      height <= 0
+    ) {
+      return;
+    }
+    const node = this.committed.nodes[nodeId];
+    if (
+      node?.type !== "text" ||
+      Math.abs(node.height - height) < 0.01
+    ) {
+      return;
+    }
+    const nextNode = { ...node, height };
+    const next = {
+      ...this.committed,
+      nodes: { ...this.committed.nodes, [nodeId]: nextNode },
+    };
+    this.committed = next;
+    this.current = next;
+    this.revision += 1;
+    this.emit("committed");
+  }
+
   cancelPreview(): void {
     if (this.current !== this.committed) {
       this.current = this.committed;

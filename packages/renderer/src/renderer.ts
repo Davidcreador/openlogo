@@ -8,6 +8,7 @@ import type {
   Paragraph,
   Path,
   Surface,
+  TextStyle,
 } from "canvaskit-wasm";
 import type {
   Artboard,
@@ -32,10 +33,12 @@ import {
   kernAt,
   kernToPx,
   linearGradientPoints,
+  normalizeTextPathContent,
   pathGeometryToSvg,
   rotatePoint,
   selectionFrame,
   selectionFrameCenter,
+  setTextLayoutBounds,
   unitBounds,
 } from "@openlogo/core";
 import type { Camera } from "./camera";
@@ -86,6 +89,8 @@ export type Scene = {
   } | null;
 };
 
+export type TextMetrics = { width: number; height: number };
+
 /**
  * Chrome-matched colors the GPU canvas cannot take from CSS custom
  * properties. Values mirror styles.css: selection follows --color-accent,
@@ -128,11 +133,115 @@ type ParagraphCacheEntry = {
 
 /** One placed glyph of a text-on-path layout (artboard-local baseline). */
 export type TextPathGlyph = {
+  /** Centre of the glyph advance on the path. */
   x: number;
   y: number;
   /** Baseline direction at the glyph, degrees. */
   angle: number;
+  /** Baseline origin after arc placement. */
+  originX: number;
+  originY: number;
+  advance: number;
+  /** Vertical glyph-run bounds relative to the baseline. */
+  top: number;
+  bottom: number;
 };
+
+function textPathGlyphPoint(
+  glyph: TextPathGlyph,
+  along: number,
+  vertical: number,
+): Vec2 {
+  const radians = (glyph.angle * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  return {
+    x: glyph.originX + cos * along - sin * vertical,
+    y: glyph.originY + sin * along + cos * vertical,
+  };
+}
+
+/** AABB of the actual placed glyph run, used by selection and gradients. */
+export function textPathLayoutBounds(
+  layout: readonly TextPathGlyph[],
+): Bounds | null {
+  if (layout.length === 0) {
+    return null;
+  }
+  const points = layout.flatMap((glyph) => [
+    textPathGlyphPoint(glyph, 0, glyph.top),
+    textPathGlyphPoint(glyph, glyph.advance, glyph.top),
+    textPathGlyphPoint(glyph, glyph.advance, glyph.bottom),
+    textPathGlyphPoint(glyph, 0, glyph.bottom),
+  ]);
+  const minX = Math.min(...points.map((point) => point.x));
+  const minY = Math.min(...points.map((point) => point.y));
+  const maxX = Math.max(...points.map((point) => point.x));
+  const maxY = Math.max(...points.map((point) => point.y));
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+function textPathGlyphContains(glyph: TextPathGlyph, point: Vec2): boolean {
+  const radians = (-glyph.angle * Math.PI) / 180;
+  const dx = point.x - glyph.originX;
+  const dy = point.y - glyph.originY;
+  const along = dx * Math.cos(radians) - dy * Math.sin(radians);
+  const vertical = dx * Math.sin(radians) + dy * Math.cos(radians);
+  return (
+    along >= 0 &&
+    along <= glyph.advance &&
+    vertical >= glyph.top &&
+    vertical <= glyph.bottom
+  );
+}
+
+function roundedRectContains(point: Vec2, bounds: Bounds, radius: number): boolean {
+  if (
+    point.x < bounds.x ||
+    point.x > bounds.x + bounds.width ||
+    point.y < bounds.y ||
+    point.y > bounds.y + bounds.height
+  ) {
+    return false;
+  }
+  const r = Math.max(0, Math.min(radius, bounds.width / 2, bounds.height / 2));
+  if (r === 0) {
+    return true;
+  }
+  const nearestX = Math.max(
+    bounds.x + r,
+    Math.min(point.x, bounds.x + bounds.width - r),
+  );
+  const nearestY = Math.max(
+    bounds.y + r,
+    Math.min(point.y, bounds.y + bounds.height - r),
+  );
+  const dx = point.x - nearestX;
+  const dy = point.y - nearestY;
+  return dx * dx + dy * dy <= r * r;
+}
+
+function rotateBoundsAround(bounds: Bounds, pivot: Vec2, degrees: number): Bounds {
+  if (degrees % 360 === 0) {
+    return bounds;
+  }
+  const corners = [
+    { x: bounds.x, y: bounds.y },
+    { x: bounds.x + bounds.width, y: bounds.y },
+    { x: bounds.x + bounds.width, y: bounds.y + bounds.height },
+    { x: bounds.x, y: bounds.y + bounds.height },
+  ].map((point) => rotatePoint(point, pivot, degrees));
+  const xs = corners.map((point) => point.x);
+  const ys = corners.map((point) => point.y);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  return {
+    x: minX,
+    y: minY,
+    width: Math.max(...xs) - minX,
+    height: Math.max(...ys) - minY,
+  };
+}
 
 /** CSS-ish blur radius → Skia gaussian sigma. */
 function blurSigma(blur: number): number {
@@ -182,8 +291,16 @@ export class SceneRenderer {
   private pathCache = new Map<string, Path>();
   private clipPathCache = new Map<string, { key: string; path: Path }>();
   private paragraphCache = new Map<string, ParagraphCacheEntry>();
+  /** Stroked-glyph paragraphs for text nodes with a stroke. */
+  private strokeParagraphCache = new Map<string, ParagraphCacheEntry>();
+  /** Opaque glyph-alpha paragraphs used to mask aligned text strokes. */
+  private maskParagraphCache = new Map<string, ParagraphCacheEntry>();
   /** Last computed text-on-path layout per text node (debug/automation). */
   private textPathLayouts = new Map<string, TextPathGlyph[]>();
+  /** Live AABBs derived from those placed glyph runs. */
+  private textPathBounds = new Map<string, Bounds>();
+  /** Rendered paragraph or path-text AABBs used by interaction queries. */
+  private textInteractionBounds = new Map<string, Bounds>();
 
   /** Floating artboard name labels, keyed by artboard id. */
   private labelCache = new Map<string, ParagraphCacheEntry>();
@@ -209,6 +326,7 @@ export class SceneRenderer {
     private readonly canvasKit: CanvasKit,
     private readonly canvas: HTMLCanvasElement,
     readonly fonts: FontRegistry,
+    private readonly onTextMetrics?: (nodeId: string, metrics: TextMetrics) => void,
   ) {
     this.frameScheduler = new InvalidationScheduler(() => {
       const scene = this.scene;
@@ -247,15 +365,27 @@ export class SceneRenderer {
     if (documentChanged) {
       // Evict paragraphs whose text node no longer exists — the cache is
       // keyed by node id and would otherwise grow for the whole session.
-      for (const [nodeId, entry] of this.paragraphCache) {
-        if (!scene.document.nodes[nodeId]) {
-          entry.paragraph.delete();
-          this.paragraphCache.delete(nodeId);
+      for (const cache of [
+        this.paragraphCache,
+        this.strokeParagraphCache,
+        this.maskParagraphCache,
+      ]) {
+        for (const [nodeId, entry] of cache) {
+          if (!scene.document.nodes[nodeId]) {
+            entry.paragraph.delete();
+            cache.delete(nodeId);
+          }
         }
       }
       for (const nodeId of this.textPathLayouts.keys()) {
         if (!scene.document.nodes[nodeId]) {
           this.textPathLayouts.delete(nodeId);
+          this.textPathBounds.delete(nodeId);
+        }
+      }
+      for (const nodeId of this.textInteractionBounds.keys()) {
+        if (!scene.document.nodes[nodeId]) {
+          this.textInteractionBounds.delete(nodeId);
         }
       }
       const clippingMaskIds = new Set(
@@ -409,26 +539,82 @@ export class SceneRenderer {
       return false; // hit-testing walks leaves only
     }
 
+    if (node.type === "text" && node.onPath) {
+      const layout = this.textPathLayouts.get(node.id);
+      return layout?.some((glyph) => textPathGlyphContains(glyph, worldPoint)) ?? false;
+    }
+
+    if (node.type === "text") {
+      const bounds = this.textInteractionBounds.get(node.id);
+      if (bounds) {
+        const outset = node.stroke
+          ? node.stroke.width *
+            (node.stroke.align === "outside"
+              ? 1
+              : node.stroke.align === "center"
+                ? 0.5
+                : 0)
+          : 0;
+        return (
+          worldPoint.x >= bounds.x - outset &&
+          worldPoint.x <= bounds.x + bounds.width + outset &&
+          worldPoint.y >= bounds.y - outset &&
+          worldPoint.y <= bounds.y + bounds.height + outset
+        );
+      }
+    }
+
     // Undo the node's rotation, then test in its local axis-aligned space.
     const center = {
       x: node.x + node.width / 2,
       y: node.y + node.height / 2,
     };
     const local = rotatePoint(worldPoint, center, -node.rotation);
+    const strokeOutset = node.stroke
+      ? node.stroke.width *
+        (node.stroke.align === "outside"
+          ? 1
+          : node.stroke.align === "center"
+            ? 0.5
+            : 0)
+      : 0;
+    const scale =
+      node.type === "path"
+        ? Math.max(
+            Math.abs(node.width / node.intrinsicWidth),
+            Math.abs(node.height / node.intrinsicHeight),
+          )
+        : 1;
+    const boxOutset = strokeOutset * (Number.isFinite(scale) ? scale : 1);
+    const hitTolerance = node.type === "path" && node.stroke ? 6 : 0;
+    const coarseOutset = boxOutset + hitTolerance;
     const inBox =
-      local.x >= node.x &&
-      local.x <= node.x + node.width &&
-      local.y >= node.y &&
-      local.y <= node.y + node.height;
+      local.x >= node.x - coarseOutset &&
+      local.x <= node.x + node.width + coarseOutset &&
+      local.y >= node.y - coarseOutset &&
+      local.y <= node.y + node.height + coarseOutset;
 
     if (!inBox) {
       return false;
     }
 
     if (node.type === "ellipse") {
-      const dx = (local.x - center.x) / (node.width / 2);
-      const dy = (local.y - center.y) / (node.height / 2);
+      const dx = (local.x - center.x) / (node.width / 2 + boxOutset);
+      const dy = (local.y - center.y) / (node.height / 2 + boxOutset);
       return dx * dx + dy * dy <= 1;
+    }
+
+    if (node.type === "rectangle") {
+      return roundedRectContains(
+        local,
+        {
+          x: node.x - boxOutset,
+          y: node.y - boxOutset,
+          width: node.width + boxOutset * 2,
+          height: node.height + boxOutset * 2,
+        },
+        node.cornerRadius + boxOutset,
+      );
     }
 
     if (node.type === "path") {
@@ -447,8 +633,17 @@ export class SceneRenderer {
       // the stroke outline with a small tolerance instead.
       if (node.stroke && node.stroke.width > 0) {
         const stroked = path.copy();
+        const alignedWidth =
+          node.stroke.align === "center"
+            ? node.stroke.width
+            : node.stroke.width * 2;
+        const scaleX = Math.abs(node.width / node.intrinsicWidth);
+        const scaleY = Math.abs(node.height / node.intrinsicHeight);
+        const minScale = Math.min(scaleX, scaleY);
+        const toleranceWidth =
+          Number.isFinite(minScale) && minScale > 0 ? 6 / minScale : 6;
         const ok = stroked.stroke({
-          width: Math.max(node.stroke.width, 6),
+          width: Math.max(alignedWidth, toleranceWidth),
           cap: this.canvasKit.StrokeCap.Round,
           join: this.canvasKit.StrokeJoin.Round,
         });
@@ -459,7 +654,7 @@ export class SceneRenderer {
       return false;
     }
 
-    // Rectangles and text: box test is enough.
+    // Text without live paragraph metrics falls back to its stored box.
     return true;
   }
 
@@ -492,24 +687,26 @@ export class SceneRenderer {
     this.clipPathCache.clear();
     this.clearFontCaches();
     this.textPathLayouts.clear();
+    this.textPathBounds.clear();
+    this.textInteractionBounds.clear();
   }
 
   private clearFontCaches(): void {
-    for (const entry of this.paragraphCache.values()) {
+    for (const entry of [
+      ...this.paragraphCache.values(),
+      ...this.strokeParagraphCache.values(),
+      ...this.maskParagraphCache.values(),
+      ...this.labelCache.values(),
+    ]) {
       try {
         entry.paragraph.delete();
       } catch {
         // Context loss may already have released the backing object.
       }
     }
-    for (const entry of this.labelCache.values()) {
-      try {
-        entry.paragraph.delete();
-      } catch {
-        // See above.
-      }
-    }
     this.paragraphCache.clear();
+    this.strokeParagraphCache.clear();
+    this.maskParagraphCache.clear();
     this.labelCache.clear();
     this.labelRects.clear();
   }
@@ -1021,7 +1218,9 @@ export class SceneRenderer {
    * canvas before drawPath), the artboard-space box for everything else.
    */
   private paintBox(node: LogoNode): Bounds {
-    return node.type === "path"
+    return node.type === "text" && this.textInteractionBounds.has(node.id)
+      ? this.textInteractionBounds.get(node.id)!
+      : node.type === "path"
       ? { x: 0, y: 0, width: node.intrinsicWidth, height: node.intrinsicHeight }
       : { x: node.x, y: node.y, width: node.width, height: node.height };
   }
@@ -1051,11 +1250,26 @@ export class SceneRenderer {
         node.cornerRadius,
       );
       canvas.drawRRect(rrect, fill);
-      this.strokeNode(canvas, node, (paint) => canvas.drawRRect(rrect, paint));
+      this.strokeNode(
+        canvas,
+        node,
+        (paint) => canvas.drawRRect(rrect, paint),
+        (op) => canvas.clipRRect(rrect, op, true),
+      );
     } else if (node.type === "ellipse") {
       const rect = ck.XYWHRect(node.x, node.y, node.width, node.height);
       canvas.drawOval(rect, fill);
-      this.strokeNode(canvas, node, (paint) => canvas.drawOval(rect, paint));
+      this.strokeNode(
+        canvas,
+        node,
+        (paint) => canvas.drawOval(rect, paint),
+        (op) => {
+          const oval = new ck.Path();
+          oval.addOval(rect);
+          canvas.clipPath(oval, op, true);
+          oval.delete();
+        },
+      );
     } else if (node.type === "path") {
       const path = this.getPath(node.d, node.fillRule);
       if (path) {
@@ -1066,7 +1280,12 @@ export class SceneRenderer {
           node.height / node.intrinsicHeight,
         );
         canvas.drawPath(path, fill);
-        this.strokeNode(canvas, node, (paint) => canvas.drawPath(path, paint));
+        this.strokeNode(
+          canvas,
+          node,
+          (paint) => canvas.drawPath(path, paint),
+          (op) => canvas.clipPath(path, op, true),
+        );
         canvas.restore();
       }
     } else if (node.type === "text") {
@@ -1081,32 +1300,56 @@ export class SceneRenderer {
     canvas: Canvas,
     node: LogoNode,
     drawShape: (paint: SkPaint) => void,
+    clipShape: (op: EmbindEnumEntity) => void,
   ): void {
-    if (!node.stroke || node.stroke.width <= 0) {
+    const paint = this.makeStrokePaint(node);
+    if (!paint) {
       return;
+    }
+    if (node.stroke?.align === "center") {
+      drawShape(paint);
+    } else {
+      canvas.save();
+      clipShape(
+        node.stroke?.align === "outside"
+          ? this.canvasKit.ClipOp.Difference
+          : this.canvasKit.ClipOp.Intersect,
+      );
+      drawShape(paint);
+      canvas.restore();
+    }
+    paint.delete();
+  }
+
+  /**
+   * Canvas paint for a node's stroke (center-aligned, like the shape
+   * renderer draws it). Null when the node has no drawable stroke.
+   */
+  private makeStrokePaint(node: LogoNode): SkPaint | null {
+    const stroke = node.stroke;
+    if (!stroke || stroke.width <= 0) {
+      return null;
     }
 
     const ck = this.canvasKit;
     // Gradient strokes ride the same shader path as fills.
     const paint =
-      node.stroke.paint && isGradient(node.stroke.paint)
-        ? this.makePaint(node.stroke.paint, this.paintBox(node), node.opacity)
+      stroke.paint && isGradient(stroke.paint)
+        ? this.makePaint(stroke.paint, this.paintBox(node), node.opacity)
         : new ck.Paint();
     paint.setStyle(ck.PaintStyle.Stroke);
-    paint.setStrokeWidth(node.stroke.width);
-    if (!node.stroke.paint || !isGradient(node.stroke.paint)) {
+    paint.setStrokeWidth(
+      stroke.align === "center" ? stroke.width : stroke.width * 2,
+    );
+    if (!stroke.paint || !isGradient(stroke.paint)) {
       const color = ck.parseColorString(
-        node.stroke.paint?.type === "solid"
-          ? node.stroke.paint.color
-          : node.stroke.color,
+        stroke.paint?.type === "solid" ? stroke.paint.color : stroke.color,
       );
       color[3] = (color[3] ?? 1) * node.opacity;
       paint.setColor(color);
     }
     paint.setAntiAlias(true);
-    drawShape(paint);
-    paint.delete();
-    void canvas;
+    return paint;
   }
 
   private drawText(canvas: Canvas, node: TextNode): void {
@@ -1116,9 +1359,30 @@ export class SceneRenderer {
     // Not on a path (or fell back): drop any stale layout so the probe
     // reflects what is actually drawn.
     this.textPathLayouts.delete(node.id);
+    this.textPathBounds.delete(node.id);
 
     const paragraph = this.getParagraph(node);
     if (paragraph) {
+      const width = paragraph.getLongestLine();
+      const height = paragraph.getHeight();
+      const x =
+        node.align === "center"
+          ? node.x + (node.width - width) / 2
+          : node.align === "right"
+            ? node.x + node.width - width
+            : node.x;
+      const bounds = rotateBoundsAround(
+        { x, y: node.y, width, height },
+        { x: node.x + node.width / 2, y: node.y + node.height / 2 },
+        node.rotation,
+      );
+      this.textInteractionBounds.set(node.id, bounds);
+      if (this.scene) {
+        setTextLayoutBounds(this.scene.document, node.id, bounds);
+      }
+      if (Math.abs(node.height - height) >= 0.01) {
+        this.onTextMetrics?.(node.id, { width, height });
+      }
       if (isGradient(node.fill)) {
         // Skia's TextStyle has no shader slot, so gradient text renders
         // the glyphs opaque into a layer and stamps the gradient over
@@ -1148,9 +1412,36 @@ export class SceneRenderer {
         gradient.delete();
         canvas.restore();
         layerPaint.delete();
-        return;
+      } else {
+        canvas.drawParagraph(paragraph, node.x, node.y);
       }
-      canvas.drawParagraph(paragraph, node.x, node.y);
+      // Stroke pass over the fill, matching SVG paint order (fill, then
+      // stroke) so canvas and export agree.
+      const strokeParagraph = this.getParagraph(node, "stroke");
+      if (strokeParagraph) {
+        if (node.stroke?.align === "center") {
+          canvas.drawParagraph(strokeParagraph, node.x, node.y);
+        } else {
+          const maskParagraph = this.getParagraph(node, "mask");
+          if (maskParagraph) {
+            const strokeLayer = new this.canvasKit.Paint();
+            canvas.saveLayer(strokeLayer);
+            canvas.drawParagraph(strokeParagraph, node.x, node.y);
+            const maskLayer = new this.canvasKit.Paint();
+            maskLayer.setBlendMode(
+              node.stroke?.align === "outside"
+                ? this.canvasKit.BlendMode.DstOut
+                : this.canvasKit.BlendMode.DstIn,
+            );
+            canvas.saveLayer(maskLayer);
+            canvas.drawParagraph(maskParagraph, node.x, node.y);
+            canvas.restore();
+            maskLayer.delete();
+            canvas.restore();
+            strokeLayer.delete();
+          }
+        }
+      }
       return;
     }
 
@@ -1165,6 +1456,16 @@ export class SceneRenderer {
       paint,
     );
     paint.delete();
+    const fallback = {
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: node.height,
+    };
+    this.textInteractionBounds.set(node.id, fallback);
+    if (this.scene) {
+      setTextLayoutBounds(this.scene.document, node.id, fallback);
+    }
   }
 
   /**
@@ -1179,10 +1480,96 @@ export class SceneRenderer {
    * `flip` walks the path from its end with glyphs rotated 180° — the
    * layout you would get on the reversed path, matching the SVG export.
    *
-   * Limitations (v1): no kerning/shaping (plain advances), node.align is
-   * ignored (use the offset), glyphs past the path's end are hidden like
-   * SVG <textPath> overflow.
+   * Glyphs past the path's end are hidden like SVG <textPath> overflow.
    */
+  private shapeTextOnPath(node: TextNode): {
+    glyphs: number[];
+    advances: number[];
+    top: number;
+    bottom: number;
+  } | null {
+    const ck = this.canvasKit;
+    const slant = node.fontStyle ?? "normal";
+    const family = this.fonts.resolveProviderFamily(node.fontFamily, slant);
+    if (!family) {
+      return null;
+    }
+    const content = normalizeTextPathContent(node.content);
+    const fontFeatures = node.otFeatures
+      ? Object.entries(node.otFeatures)
+          .filter(([name]) => /^[A-Za-z0-9]{4}$/.test(name))
+          .map(([name, on]) => ({ name, value: on ? 1 : 0 }))
+      : undefined;
+    const baseTextStyle = {
+      color: ck.parseColorString("#000000"),
+      fontFamilies: [family],
+      fontSize: node.fontSize,
+      letterSpacing: node.letterSpacing,
+      fontStyle: {
+        weight: { value: node.fontWeight },
+        ...(slant === "italic" ? { slant: ck.FontSlant.Italic } : {}),
+      },
+      fontVariations: [{ axis: "wght", value: node.fontWeight }],
+      ...(fontFeatures && fontFeatures.length > 0 ? { fontFeatures } : {}),
+    };
+    const style = new ck.ParagraphStyle({ textStyle: baseTextStyle });
+    const builder = ck.ParagraphBuilder.MakeFromFontProvider(
+      style,
+      this.fonts.provider,
+    );
+    const pushRun = (text: string, letterSpacing: number) => {
+      builder.pushStyle(
+        new ck.TextStyle({ ...baseTextStyle, letterSpacing }),
+      );
+      builder.addText(text);
+      builder.pop();
+    };
+    if (node.kerning && Object.keys(node.kerning).length > 0) {
+      let runStart = 0;
+      let spacing =
+        node.letterSpacing + kernToPx(kernAt(node.kerning, 0), node.fontSize);
+      for (let index = 1; index < content.length; index += 1) {
+        const next =
+          node.letterSpacing +
+          kernToPx(kernAt(node.kerning, index), node.fontSize);
+        if (next !== spacing) {
+          pushRun(content.slice(runStart, index), spacing);
+          runStart = index;
+          spacing = next;
+        }
+      }
+      pushRun(content.slice(runStart), spacing);
+    } else {
+      pushRun(content, node.letterSpacing);
+    }
+    const paragraph = builder.build();
+    paragraph.layout(1_000_000);
+    builder.delete();
+    const line = paragraph.getShapedLines()[0];
+    if (!line) {
+      paragraph.delete();
+      return null;
+    }
+    const glyphs: number[] = [];
+    const advances: number[] = [];
+    for (const run of line.runs) {
+      for (let index = 0; index < run.glyphs.length; index += 1) {
+        glyphs.push(run.glyphs[index]!);
+        const current = run.positions[index * 2] ?? 0;
+        const next = run.positions[(index + 1) * 2] ?? current;
+        advances.push(Math.max(0, next - current));
+      }
+    }
+    const shaped = {
+      glyphs,
+      advances,
+      top: line.top - line.baseline,
+      bottom: line.bottom - line.baseline,
+    };
+    paragraph.delete();
+    return shaped;
+  }
+
   private drawTextOnPath(canvas: Canvas, node: TextNode): boolean {
     const attachment = node.onPath;
     const document = this.scene?.document;
@@ -1250,36 +1637,27 @@ export class SceneRenderer {
       return false;
     }
 
-    const font = new ck.Font(typeface, node.fontSize);
-    const glyphs = font.getGlyphIDs(node.content);
-    const widths = font.getGlyphWidths(glyphs);
-
-    // Metrics kerning (font kern/GPOS pairs, extracted editor-side) plus
-    // the node's manual per-pair map. Both adjust the gap AFTER glyph i.
-    const metricsKern = this.fonts.getKerning(
-      node.fontFamily,
-      node.fontWeight,
-      node.fontStyle ?? "normal",
-    );
-    const gapAfter = (i: number): number => {
-      let gap = node.letterSpacing;
-      if (metricsKern && i + 1 < node.content.length) {
-        gap +=
-          metricsKern(node.content[i]!, node.content[i + 1]!) * node.fontSize;
+    const shaped = this.shapeTextOnPath(node);
+    if (!shaped) {
+      for (const contour of contours) {
+        contour.measure.delete();
       }
-      gap += kernToPx(kernAt(node.kerning, i), node.fontSize);
-      return gap;
-    };
+      return false;
+    }
+    const font = new ck.Font(typeface, node.fontSize);
+    const runLength = shaped.advances.reduce((sum, advance) => sum + advance, 0);
+    const alignFactor = node.align === "center" ? 0.5 : node.align === "right" ? 1 : 0;
+    const remaining = Math.max(0, total - attachment.startOffset - runLength);
 
     const placedGlyphs: number[] = [];
     const xforms: number[] = [];
     const layout: TextPathGlyph[] = [];
-    let pen = attachment.startOffset;
+    let pen = attachment.startOffset + remaining * alignFactor;
 
-    for (let i = 0; i < glyphs.length; i += 1) {
-      const width = widths[i] ?? 0;
+    for (let i = 0; i < shaped.glyphs.length; i += 1) {
+      const width = shaped.advances[i] ?? 0;
       const mid = pen + width / 2;
-      pen += width + gapAfter(i);
+      pen += width;
       if (mid < 0) {
         continue;
       }
@@ -1298,16 +1676,37 @@ export class SceneRenderer {
       const cos = attachment.flip ? -tx! : tx!;
       const sin = attachment.flip ? -ty! : ty!;
 
-      placedGlyphs.push(glyphs[i]!);
-      xforms.push(cos, sin, px! - cos * (width / 2), py! - sin * (width / 2));
+      const originX = px! - cos * (width / 2);
+      const originY = py! - sin * (width / 2);
+      placedGlyphs.push(shaped.glyphs[i]!);
+      xforms.push(cos, sin, originX, originY);
       layout.push({
         x: px!,
         y: py!,
         angle: (Math.atan2(sin, cos) * 180) / Math.PI,
+        originX,
+        originY,
+        advance: width,
+        top: shaped.top,
+        bottom: shaped.bottom,
       });
     }
 
     this.textPathLayouts.set(node.id, layout);
+    const liveBounds = textPathLayoutBounds(layout);
+    if (liveBounds) {
+      this.textPathBounds.set(node.id, liveBounds);
+      this.textInteractionBounds.set(node.id, liveBounds);
+      if (this.scene) {
+        setTextLayoutBounds(this.scene.document, node.id, liveBounds);
+      }
+    } else {
+      this.textPathBounds.delete(node.id);
+      this.textInteractionBounds.delete(node.id);
+      if (this.scene) {
+        setTextLayoutBounds(this.scene.document, node.id, null);
+      }
+    }
 
     if (placedGlyphs.length > 0) {
       const blob = ck.TextBlob.MakeFromRSXformGlyphs(
@@ -1319,6 +1718,29 @@ export class SceneRenderer {
         const paint = this.makePaint(node.fill, this.paintBox(node), node.opacity);
         canvas.drawTextBlob(blob, 0, 0, paint);
         paint.delete();
+        // Stroke pass over the fill, same paint order as SVG export.
+        const strokePaint = this.makeStrokePaint(node);
+        if (strokePaint) {
+          if (node.stroke?.align === "center") {
+            canvas.drawTextBlob(blob, 0, 0, strokePaint);
+          } else {
+            const strokeLayer = new ck.Paint();
+            canvas.saveLayer(strokeLayer);
+            canvas.drawTextBlob(blob, 0, 0, strokePaint);
+            const maskPaint = new ck.Paint();
+            maskPaint.setColor(ck.parseColorString("#000000"));
+            maskPaint.setBlendMode(
+              node.stroke?.align === "outside"
+                ? ck.BlendMode.DstOut
+                : ck.BlendMode.DstIn,
+            );
+            canvas.drawTextBlob(blob, 0, 0, maskPaint);
+            maskPaint.delete();
+            canvas.restore();
+            strokeLayer.delete();
+          }
+          strokePaint.delete();
+        }
         blob.delete();
       }
     }
@@ -1338,8 +1760,24 @@ export class SceneRenderer {
     return this.textPathLayouts.get(nodeId) ?? null;
   }
 
-  private getParagraph(node: TextNode): Paragraph | null {
+  /** Live glyph-run AABBs for core selection-frame queries. */
+  getTextPathInteractionBounds(): ReadonlyMap<string, Bounds> {
+    return this.textInteractionBounds;
+  }
+
+  /** Live paragraph and path-text AABBs for hit-testing and selection. */
+  getTextInteractionBounds(): ReadonlyMap<string, Bounds> {
+    return this.textInteractionBounds;
+  }
+
+  private getParagraph(
+    node: TextNode,
+    variant: "fill" | "stroke" | "mask" = "fill",
+  ): Paragraph | null {
     if (this.fonts.isEmpty) {
+      return null;
+    }
+    if (variant === "stroke" && (!node.stroke || node.stroke.width <= 0)) {
       return null;
     }
 
@@ -1363,9 +1801,17 @@ export class SceneRenderer {
       node.opacity,
       node.kerning ? JSON.stringify(node.kerning) : "",
       node.otFeatures ? JSON.stringify(node.otFeatures) : "",
+      variant === "stroke" ? `stroke:${JSON.stringify(node.stroke)}` : "",
+      variant,
     ].join("|");
 
-    const cached = this.paragraphCache.get(node.id);
+    const cache =
+      variant === "stroke"
+        ? this.strokeParagraphCache
+        : variant === "mask"
+          ? this.maskParagraphCache
+          : this.paragraphCache;
+    const cached = cache.get(node.id);
     if (cached && cached.key === key) {
       return cached.paragraph;
     }
@@ -1374,10 +1820,11 @@ export class SceneRenderer {
     const ck = this.canvasKit;
     // Gradient fills paint the glyphs opaque; drawText overlays the
     // gradient with SrcIn, which multiplies alphas.
-    const color = isGradient(node.fill)
-      ? ck.parseColorString("#000000")
-      : ck.parseColorString(node.fill.color);
-    if (!isGradient(node.fill)) {
+    const color =
+      variant === "mask" || isGradient(node.fill)
+        ? ck.parseColorString("#000000")
+        : ck.parseColorString(node.fill.color);
+    if (variant !== "mask" && !isGradient(node.fill)) {
       color[3] = (color[3] ?? 1) * node.opacity;
     }
 
@@ -1418,6 +1865,20 @@ export class SceneRenderer {
       this.fonts.provider,
     );
 
+    // Stroke variant: glyphs draw with a stroked foreground paint pushed
+    // through the paragraph API (TextStyle.color has no stroke slot).
+    const foreground =
+      variant === "stroke" ? this.makeStrokePaint(node) : null;
+    const background = foreground ? new ck.Paint() : null;
+    background?.setColor(ck.TRANSPARENT);
+    const pushRun = (textStyle: TextStyle) => {
+      if (foreground && background) {
+        builder.pushPaintStyle(textStyle, foreground, background);
+      } else {
+        builder.pushStyle(textStyle);
+      }
+    };
+
     const kerning = node.kerning;
     if (kerning && Object.keys(kerning).length > 0) {
       // Per-pair kerning through the paragraph API: letterSpacing is
@@ -1431,7 +1892,7 @@ export class SceneRenderer {
         if (end <= runStart) {
           return;
         }
-        builder.pushStyle(
+        pushRun(
           new ck.TextStyle({ ...baseTextStyle, letterSpacing: runSpacing }),
         );
         builder.addText(node.content.slice(runStart, end));
@@ -1447,6 +1908,10 @@ export class SceneRenderer {
         }
       }
       flush(node.content.length);
+    } else if (foreground) {
+      pushRun(new ck.TextStyle(baseTextStyle));
+      builder.addText(node.content);
+      builder.pop();
     } else {
       builder.addText(node.content);
     }
@@ -1454,8 +1919,10 @@ export class SceneRenderer {
     const paragraph = builder.build();
     paragraph.layout(Math.max(node.width, 1));
     builder.delete();
+    foreground?.delete();
+    background?.delete();
 
-    this.paragraphCache.set(node.id, { key, paragraph });
+    cache.set(node.id, { key, paragraph });
     return paragraph;
   }
 
@@ -1464,7 +1931,7 @@ export class SceneRenderer {
    * probe: kerning/feature changes move `width`). Null until the node
    * has rendered as a paragraph.
    */
-  getTextMetrics(nodeId: string): { width: number; height: number } | null {
+  getTextMetrics(nodeId: string): TextMetrics | null {
     const entry = this.paragraphCache.get(nodeId);
     return entry
       ? {
@@ -1653,9 +2120,13 @@ export class SceneRenderer {
       return;
     }
 
-    // Groups outline their derived bounds; leaves their (rotated) box.
+    // Groups outline their derived bounds; attached text uses its live glyph run.
     const bounds =
-      node.type === "group" ? unitBounds(scene.document, node.id) : null;
+      node.type === "group"
+        ? unitBounds(scene.document, node.id)
+        : node.type === "text" && node.onPath
+          ? this.textPathBounds.get(node.id) ?? null
+          : null;
     if (node.type === "group" && !bounds) {
       return;
     }
@@ -1663,7 +2134,7 @@ export class SceneRenderer {
     const ck = this.canvasKit;
     this.withActiveArtboard(canvas, scene, () => {
       canvas.save();
-      if (node.type !== "group" && node.rotation !== 0) {
+      if (node.type !== "group" && !bounds && node.rotation !== 0) {
         canvas.rotate(
           node.rotation,
           node.x + node.width / 2,
@@ -1701,7 +2172,11 @@ export class SceneRenderer {
       return;
     }
 
-    const frame = selectionFrame(document, selectedNodeIds);
+    const frame = selectionFrame(
+      document,
+      selectedNodeIds,
+      this.textInteractionBounds,
+    );
     if (!frame) {
       return;
     }

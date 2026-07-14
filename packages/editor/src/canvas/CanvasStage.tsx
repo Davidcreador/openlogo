@@ -14,7 +14,6 @@ import {
   withKernAdjusted,
   type AnchorRef,
   type Bounds,
-  type LogoDocument,
   type LogoNode,
   type MeasureSegment,
   type NodePatch,
@@ -46,6 +45,7 @@ import {
   measureDistances,
   nodeBounds,
   normalizeAngle,
+  normalizeTextPathContent,
   pathNodeLocalGeometry,
   pixelSnapPatch,
   removeAnchor,
@@ -79,6 +79,8 @@ import {
   gradientDefinePaint,
   gradientDragPaint,
   gradientHandlePoints,
+  gradientTargetPaint,
+  gradientTargetPatch,
   localToFraction,
 } from "./gradient-annotator";
 import { GradientAnnotator } from "./GradientAnnotator";
@@ -97,7 +99,11 @@ import {
   hitShapeBuilderRegion,
 } from "../lib/shape-builder";
 import { documentStore, useDocument } from "../state/document";
-import { type Tool, useEditorStore } from "../state/editor-store";
+import {
+  type GradientTarget,
+  type Tool,
+  useEditorStore,
+} from "../state/editor-store";
 import { CanvasRulers } from "./Rulers";
 
 const HANDLE_HIT_RADIUS = 7;
@@ -232,6 +238,7 @@ type DragState =
       part: GradientHandlePart | "define";
       /** Paint being edited, updated per move (previewed, committed on up). */
       paint: Paint;
+      target: GradientTarget;
       /** Press point as a fraction of the node box (unrotated). */
       startFrac: Vec2;
       moved: boolean;
@@ -368,32 +375,6 @@ function collectSnapTargets(excludedIds: ReadonlySet<string>): Bounds[] {
   return targets;
 }
 
-/** Union of derived unit bounds over a selection. */
-function selectionUnitBounds(
-  document: LogoDocument,
-  nodeIds: readonly string[],
-): Bounds | null {
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-
-  for (const nodeId of nodeIds) {
-    const bounds = unitBounds(document, nodeId);
-    if (!bounds) {
-      continue;
-    }
-    minX = Math.min(minX, bounds.x);
-    minY = Math.min(minY, bounds.y);
-    maxX = Math.max(maxX, bounds.x + bounds.width);
-    maxY = Math.max(maxY, bounds.y + bounds.height);
-  }
-
-  return Number.isFinite(minX)
-    ? { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
-    : null;
-}
-
 /** Rotate a vector (not a point) by `degrees`. */
 function rotateVec(v: Vec2, degrees: number): Vec2 {
   return rotatePoint(v, { x: 0, y: 0 }, degrees);
@@ -447,7 +428,13 @@ function TextEditOverlay({
       ref={inputRef}
       className="text-edit-overlay absolute z-20 m-0 resize-none overflow-hidden whitespace-nowrap border border-dashed border-accent bg-transparent p-0 outline-none"
       value={draft}
-      onChange={(event) => setDraft(event.target.value.replace(/\n/g, ""))}
+      onChange={(event) =>
+        setDraft(
+          node.onPath
+            ? normalizeTextPathContent(event.target.value)
+            : event.target.value.replace(/\n/g, ""),
+        )
+      }
       onBlur={() => onDone(nodeId, draft, true)}
       onKeyDown={(event) => {
         if (event.key === "Enter") {
@@ -813,7 +800,12 @@ export function CanvasStage() {
         return;
       }
 
-      const renderer = new SceneRenderer(canvasKit, canvas, fonts);
+      const renderer = new SceneRenderer(
+        canvasKit,
+        canvas,
+        fonts,
+        (nodeId, metrics) => documentStore.syncTextHeight(nodeId, metrics.height),
+      );
       // The theme may have been toggled while CanvasKit compiled; the
       // theme effect below only fires on later changes.
       renderer.setTheme(useEditorStore.getState().theme);
@@ -1314,13 +1306,23 @@ export function CanvasStage() {
     return { x: world.x - artboard.x, y: world.y - artboard.y };
   }, []);
 
+  const currentSelectionFrame = useCallback(
+    (nodeIds: readonly string[]) =>
+      selectionFrame(
+        documentStore.document,
+        nodeIds,
+        rendererRef.current?.getTextPathInteractionBounds(),
+      ),
+    [],
+  );
+
   const hitHandle = useCallback(
     (screen: Vec2): HandleId | null => {
       const state = useEditorStore.getState();
       if (state.selectedNodeIds.length === 0) {
         return null;
       }
-      const frame = selectionFrame(documentStore.document, state.selectedNodeIds);
+      const frame = currentSelectionFrame(state.selectedNodeIds);
       if (!frame) {
         return null;
       }
@@ -1346,7 +1348,7 @@ export function CanvasStage() {
       }
       return null;
     },
-    [],
+    [currentSelectionFrame],
   );
 
   /** True when the pointer is over the selection frame's rotate knob. */
@@ -1355,7 +1357,7 @@ export function CanvasStage() {
     if (state.selectedNodeIds.length === 0) {
       return false;
     }
-    const frame = selectionFrame(documentStore.document, state.selectedNodeIds);
+    const frame = currentSelectionFrame(state.selectedNodeIds);
     if (!frame) {
       return false;
     }
@@ -1369,7 +1371,7 @@ export function CanvasStage() {
       Math.abs(knobScreen.x - screen.x) <= HANDLE_HIT_RADIUS &&
       Math.abs(knobScreen.y - screen.y) <= HANDLE_HIT_RADIUS
     );
-  }, []);
+  }, [currentSelectionFrame]);
 
   function finalizePen(closed: boolean) {
     const pen = penRef.current;
@@ -2065,7 +2067,11 @@ export function CanvasStage() {
         node = hit;
       }
       const artboard = getActiveArtboard(doc);
-      for (const handle of gradientHandlePoints(node)) {
+      const paint = gradientTargetPaint(node, state.gradientTarget);
+      if (!paint) {
+        return;
+      }
+      for (const handle of gradientHandlePoints(node, paint)) {
         const handleScreen = worldToScreen(state.camera, {
           x: handle.x + artboard.x,
           y: handle.y + artboard.y,
@@ -2078,7 +2084,8 @@ export function CanvasStage() {
             kind: "gradient",
             nodeId: node.id,
             part: handle.part,
-            paint: node.fill,
+            paint,
+            target: state.gradientTarget,
             startFrac: localToFraction(node, toArtboardLocal(screen)),
             moved: false,
           };
@@ -2089,7 +2096,8 @@ export function CanvasStage() {
         kind: "gradient",
         nodeId: node.id,
         part: "define",
-        paint: node.fill,
+        paint,
+        target: state.gradientTarget,
         startFrac: localToFraction(node, toArtboardLocal(screen)),
         moved: false,
       };
@@ -2149,10 +2157,7 @@ export function CanvasStage() {
 
     // Rotate handle — outside the frame, checked before everything else.
     if (hitRotateHandle(screen)) {
-      const frame = selectionFrame(
-        documentStore.document,
-        state.selectedNodeIds,
-      );
+      const frame = currentSelectionFrame(state.selectedNodeIds);
       if (frame) {
         const pivot = selectionFrameCenter(frame);
         const snapshots = snapshotNodes(state.selectedNodeIds);
@@ -2173,10 +2178,7 @@ export function CanvasStage() {
     // Resize handle next — takes priority over node hits.
     const handle = hitHandle(screen);
     if (handle) {
-      const frame = selectionFrame(
-        documentStore.document,
-        state.selectedNodeIds,
-      );
+      const frame = currentSelectionFrame(state.selectedNodeIds);
       const snapshots = snapshotNodes(state.selectedNodeIds);
       if (frame) {
         dragRef.current = {
@@ -2512,12 +2514,8 @@ export function CanvasStage() {
           state.selectedNodeIds.length > 0 &&
           !state.selectedNodeIds.includes(nextId)
         ) {
-          const document = documentStore.document;
-          const selection = selectionUnitBounds(
-            document,
-            state.selectedNodeIds,
-          );
-          const hovered = unitBounds(document, nextId);
+          const selection = currentSelectionFrame(state.selectedNodeIds)?.bounds;
+          const hovered = currentSelectionFrame([nextId])?.bounds;
           if (selection && hovered) {
             nextMeasure = measureDistances(selection, [hovered]);
           }
@@ -2614,7 +2612,10 @@ export function CanvasStage() {
           : gradientDragPaint(node, drag.paint, drag.part, frac);
       drag.moved = true;
       documentStore.preview([
-        { nodeId: node.id, patch: { fill: drag.paint } },
+        {
+          nodeId: node.id,
+          patch: gradientTargetPatch(node, drag.target, drag.paint),
+        },
       ]);
       syncScene();
       return;
@@ -2976,12 +2977,20 @@ export function CanvasStage() {
 
     if (drag.kind === "gradient") {
       if (drag.moved) {
-        // One history entry per annotator gesture; the fill patch's
-        // inverse restores the previous paint exactly.
-        documentStore.apply({
-          type: "update-nodes",
-          updates: [{ nodeId: drag.nodeId, patch: { fill: drag.paint } }],
-        });
+        const node = documentStore.document.nodes[drag.nodeId];
+        if (node && node.type !== "group") {
+          // One history entry per annotator gesture; inverse restores the
+          // targeted paint exactly.
+          documentStore.apply({
+            type: "update-nodes",
+            updates: [
+              {
+                nodeId: drag.nodeId,
+                patch: gradientTargetPatch(node, drag.target, drag.paint),
+              },
+            ],
+          });
+        }
       } else {
         documentStore.cancelPreview();
       }
@@ -3024,10 +3033,7 @@ export function CanvasStage() {
             continue;
           }
           // Rotated leaves intersect by their rotated AABB.
-          const bounds =
-            node.type === "group"
-              ? unitBounds(document, nodeId)
-              : nodeBounds(node);
+          const bounds = currentSelectionFrame([nodeId])?.bounds;
           if (!bounds) {
             continue;
           }
@@ -3207,8 +3213,11 @@ export function CanvasStage() {
     if (!node || node.type !== "text") {
       return;
     }
+    const normalizedDraft = node.onPath
+      ? normalizeTextPathContent(draft)
+      : draft;
     const kerning = withKernAdjusted(
-      pruneKerning(node.kerning, draft),
+      pruneKerning(node.kerning, normalizedDraft),
       pairIndex,
       delta,
     );
@@ -3219,7 +3228,9 @@ export function CanvasStage() {
           nodeId,
           patch: {
             kerning,
-            ...(node.content !== draft ? { content: draft } : {}),
+            ...(node.content !== normalizedDraft
+              ? { content: normalizedDraft }
+              : {}),
           },
         },
       ],
@@ -3231,10 +3242,19 @@ export function CanvasStage() {
     setEditingTextId(null);
 
     const node = documentStore.document.nodes[nodeId];
-    if (commit && node && node.type === "text" && node.content !== content) {
+    const normalizedContent =
+      node?.type === "text" && node.onPath
+        ? normalizeTextPathContent(content)
+        : content;
+    if (
+      commit &&
+      node &&
+      node.type === "text" &&
+      node.content !== normalizedContent
+    ) {
       documentStore.apply({
         type: "update-nodes",
-        updates: [{ nodeId, patch: { content } }],
+        updates: [{ nodeId, patch: { content: normalizedContent } }],
       });
     }
     syncScene();

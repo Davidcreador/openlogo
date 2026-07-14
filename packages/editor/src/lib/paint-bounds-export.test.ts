@@ -2,8 +2,10 @@ import {
   createInitialDocument,
   createPath,
   createRectangle,
+  createText,
   getActiveArtboard,
   paintBounds,
+  setTextLayoutBounds,
 } from "@openlogo/core";
 import { describe, expect, it } from "vitest";
 import { nodeToPreviewSvg, nodesToSvg } from "./export";
@@ -65,6 +67,25 @@ describe("paint-aware export bounds", () => {
 
     expect(viewBox(nodesToSvg(document, [rectangle.id])!)).toEqual([
       10, 4, 126, 66,
+    ]);
+  });
+
+  it("uses rendered paragraph extents for a text selection export", () => {
+    const document = createInitialDocument();
+    const text = createText({ x: 10, y: 20, content: "Overflow" });
+    text.width = 40;
+    text.height = 8;
+    document.nodes = { [text.id]: text };
+    getActiveArtboard(document).nodeIds = [text.id];
+    setTextLayoutBounds(document, text.id, {
+      x: 10,
+      y: 20,
+      width: 100,
+      height: 44,
+    });
+
+    expect(viewBox(nodesToSvg(document, [text.id])!)).toEqual([
+      10, 20, 100, 44,
     ]);
   });
 });

@@ -40,6 +40,37 @@ describe("DocumentStore", () => {
     expect(store.canUndo).toBe(false);
   });
 
+  it("syncs derived text height without adding undo history", () => {
+    const store = new DocumentStore(createInitialDocument());
+    const text = Object.values(store.document.nodes).find(
+      (node) => node.type === "text",
+    )!;
+    const listener = vi.fn();
+    store.subscribe(listener);
+
+    store.syncTextHeight(text.id, 87.25);
+
+    expect(store.document.nodes[text.id]!.height).toBe(87.25);
+    expect(store.committedDocument.nodes[text.id]!.height).toBe(87.25);
+    expect(store.canUndo).toBe(false);
+    expect(store.committedRevision).toBe(1);
+    expect(listener).toHaveBeenCalledWith(store.document, "committed");
+  });
+
+  it("does not sync derived text height over an active preview", () => {
+    const store = new DocumentStore(createInitialDocument());
+    const text = Object.values(store.document.nodes).find(
+      (node) => node.type === "text",
+    )!;
+    const originalHeight = text.height;
+    store.preview([{ nodeId: text.id, patch: { fontSize: 80 } }]);
+
+    store.syncTextHeight(text.id, 120);
+
+    expect(store.committedDocument.nodes[text.id]!.height).toBe(originalHeight);
+    expect(store.document.nodes[text.id]).toMatchObject({ fontSize: 80 });
+  });
+
   it("preview stacks on committed state, not on previous previews", () => {
     const store = new DocumentStore(createInitialDocument());
     const nodeId = firstNodeId(store);

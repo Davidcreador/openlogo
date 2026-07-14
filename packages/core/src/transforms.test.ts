@@ -197,6 +197,19 @@ describe("selectionFrame", () => {
     expect(frame!.bounds.width).toBeCloseTo(200 + b.width - 40, 6);
   });
 
+  it("uses live interaction bounds for attached text", () => {
+    const path = createPath({ x: 300, y: 200 });
+    const text = createText({ x: 10, y: 20, content: "Attached" });
+    text.onPath = { pathId: path.id, startOffset: 0, flip: false };
+    const document = docWith(path, text);
+    const live = { x: 320, y: 170, width: 180, height: 80 };
+
+    expect(selectionFrame(document, [text.id], new Map([[text.id, live]]))).toEqual({
+      bounds: live,
+      rotation: 0,
+    });
+  });
+
   it("normalizeAngle wraps into (-180, 180]", () => {
     expect(normalizeAngle(190)).toBe(-170);
     expect(normalizeAngle(-190)).toBe(170);
