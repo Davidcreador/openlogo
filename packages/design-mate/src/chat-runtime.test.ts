@@ -6,8 +6,6 @@ import {
   assembleDesignMateChatWirePrompt,
   buildDocumentIdentity,
   createFakeDesignMateChatProvider,
-  createFallbackDesignMateChatProvider,
-  createHeuristicDesignMateChatProvider,
   makeDesignMateProviderError,
   orchestrateDesignMateChat,
   prepareDesignMateChatRequest,
@@ -168,29 +166,6 @@ describe("chat prompt assembly", () => {
 });
 
 describe("chat providers and orchestration", () => {
-  it("streams a concise local analysis without claiming canvas changes", async () => {
-    const request = makeRequest();
-    const provider = createHeuristicDesignMateChatProvider();
-    const deltas: string[] = [];
-    const proposals: DesignMateProposal[] = [];
-    for await (const chunk of provider.stream(request)) {
-      if (chunk.type === "text-delta") {
-        deltas.push(chunk.delta);
-      } else {
-        proposals.push(chunk.proposal);
-      }
-    }
-    const response = deltas.join("");
-
-    expect(response).toContain("Highest-priority findings");
-    expect(response).toContain("No canvas changes were made");
-    expect(response).toContain("proposal approval pipeline");
-    expect(deltas.every((delta) => delta.length > 0)).toBe(true);
-    expect(proposals.every((proposal) => proposal.actions.length > 0)).toBe(
-      true,
-    );
-  });
-
   it("emits stable success order, increasing indices, and a frozen message", async () => {
     const request = makeRequest();
     const provider = createFakeDesignMateChatProvider({
@@ -545,84 +520,4 @@ describe("chat providers and orchestration", () => {
     expect(events.some((event) => event.type === "message-end")).toBe(false);
   });
 
-  it("falls back only for retryable provider or rate-limit failures", async () => {
-    const request = makeRequest();
-    const fallback = createFakeDesignMateChatProvider({
-      id: "fallback",
-      chunks: [{ type: "text-delta", delta: "Fallback response." }],
-    });
-    const retryablePrimary = createFakeDesignMateChatProvider({
-      id: "primary",
-      error: makeDesignMateProviderError("primary", "Rate limited.", {
-        code: "rate-limited",
-        retryable: true,
-      }),
-    });
-    const success = await drain(
-      orchestrateDesignMateChat(
-        request,
-        createFallbackDesignMateChatProvider(retryablePrimary, fallback),
-      ),
-    );
-    expect(success.result).toMatchObject({
-      status: "completed",
-      message: { text: "Fallback response." },
-    });
-    expect(fallback.requests).toHaveLength(1);
-
-    const invalidFallback = createFakeDesignMateChatProvider({
-      id: "unused-fallback",
-      chunks: [{ type: "text-delta", delta: "Must not run." }],
-    });
-    const invalidPrimary = createFakeDesignMateChatProvider({
-      id: "invalid-primary",
-      error: makeDesignMateProviderError(
-        "invalid-primary",
-        "Invalid output.",
-        { code: "invalid-chat-response", retryable: false },
-      ),
-    });
-    const failed = await drain(
-      orchestrateDesignMateChat(
-        request,
-        createFallbackDesignMateChatProvider(
-          invalidPrimary,
-          invalidFallback,
-        ),
-      ),
-    );
-    expect(failed.result).toMatchObject({
-      status: "failed",
-      error: { code: "invalid-chat-response" },
-    });
-    expect(invalidFallback.requests).toHaveLength(0);
-
-    const partialFallback = createFakeDesignMateChatProvider({
-      id: "unused-after-partial",
-      chunks: [{ type: "text-delta", delta: "Must not append." }],
-    });
-    const partialPrimary = createFakeDesignMateChatProvider({
-      id: "partial-primary",
-      chunks: [{ type: "text-delta", delta: "Partial response." }],
-      error: makeDesignMateProviderError(
-        "partial-primary",
-        "Disconnected after output.",
-        { code: "provider-failed", retryable: true },
-      ),
-    });
-    const partial = await drain(
-      orchestrateDesignMateChat(
-        request,
-        createFallbackDesignMateChatProvider(
-          partialPrimary,
-          partialFallback,
-        ),
-      ),
-    );
-    expect(partial.result).toMatchObject({
-      status: "failed",
-      error: { code: "provider-failed" },
-    });
-    expect(partialFallback.requests).toHaveLength(0);
-  });
 });

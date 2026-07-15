@@ -10,7 +10,7 @@ export type DesignMateProviderSettings = {
   readonly baseUrl: string;
 };
 
-export const DESIGN_MATE_SETTINGS_STORAGE_KEY = "openlogo:design-mate-provider";
+const DESIGN_MATE_SETTINGS_STORAGE_KEY = "openlogo:design-mate-provider";
 
 export const DESIGN_MATE_DEFAULT_BASE_URL = "https://api.openai.com/v1";
 export const DESIGN_MATE_DEFAULT_MODEL = "gpt-4.1-mini";

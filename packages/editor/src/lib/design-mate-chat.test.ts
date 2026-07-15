@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   makeDesignMateProviderError,
   type DesignMateChatMessage,
-  type DesignMateChatProvider,
   type DocumentIdentity,
 } from "@openlogo/design-mate";
 import {
@@ -10,10 +9,8 @@ import {
   EMPTY_DESIGN_MATE_CHAT_TRANSCRIPT,
   boundDesignMateChatHistory,
   createDesignMateChatId,
-  createDesignMateChatProviderSetup,
   designMateChatHistoryFromTranscript,
   designMateConversationMemoryFromTranscript,
-  designMateChatModeLabel,
   getDesignMateAccessToken,
   isDesignMateTranscriptNearBottom,
   isDesignMateChatAnswerStale,
@@ -41,15 +38,6 @@ function message(
   text = id,
 ): DesignMateChatMessage {
   return { id, role, text, createdAt: CREATED_AT };
-}
-
-function provider(id: string): DesignMateChatProvider {
-  return {
-    id,
-    stream: async function* () {
-      yield { type: "text-delta", delta: id };
-    },
-  };
 }
 
 function startState(turnId = "turn-1"): DesignMateChatTranscriptState {
@@ -171,63 +159,7 @@ describe("Design Mate service URL configuration", () => {
   });
 });
 
-describe("Design Mate chat provider setup", () => {
-  it("uses local-only mode without an endpoint and package fallback with one", () => {
-    const calls: string[] = [];
-    let receivedTokenProvider:
-      | ((signal?: AbortSignal) => string | null | Promise<string | null>)
-      | undefined;
-    const factories = {
-      createRemote: ({
-        endpoint,
-        getAccessToken,
-      }: {
-        readonly endpoint: string;
-        readonly getAccessToken?: (
-          signal?: AbortSignal,
-        ) => string | null | Promise<string | null>;
-      }) => {
-        receivedTokenProvider = getAccessToken;
-        calls.push(`remote:${endpoint}`);
-        return provider("remote");
-      },
-      createLocal: () => {
-        calls.push("local");
-        return provider("local");
-      },
-      createFallback: (
-        primary: DesignMateChatProvider,
-        fallback: DesignMateChatProvider,
-      ) => {
-        calls.push(`fallback:${primary.id}:${fallback.id}`);
-        return provider(`${primary.id}+${fallback.id}`);
-      },
-    };
-
-    const local = createDesignMateChatProviderSetup(null, factories);
-    expect(local).toMatchObject({ mode: "local", provider: { id: "local" } });
-    expect(designMateChatModeLabel(local.mode)).toBe("Local guidance");
-    expect(calls).toEqual(["local"]);
-
-    calls.length = 0;
-    const remote = createDesignMateChatProviderSetup(
-      "/v1/design-mate/chat",
-      factories,
-      { getAccessToken: () => "short-lived-token" },
-    );
-    expect(remote).toMatchObject({
-      mode: "remote-with-fallback",
-      provider: { id: "remote+local" },
-    });
-    expect(designMateChatModeLabel(remote.mode)).toBe("AI + local fallback");
-    expect(calls).toEqual([
-      "local",
-      "remote:/v1/design-mate/chat",
-      "fallback:remote:local",
-    ]);
-    expect(receivedTokenProvider?.()).toBe("short-lived-token");
-  });
-
+describe("Design Mate access token provider", () => {
   it("keeps only the host token callback in memory", async () => {
     const tokenProvider = async () => "runtime-token";
     setDesignMateAccessTokenProvider(tokenProvider);

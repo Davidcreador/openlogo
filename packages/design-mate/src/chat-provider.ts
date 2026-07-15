@@ -1,6 +1,4 @@
-import type { DesignReview, ReviewFinding } from "@openlogo/core";
 import {
-  DESIGN_MATE_CHAT_LIMITS,
   type DesignMateChatProvider,
   type DesignMateChatProviderChunk,
   type DesignMateChatTurnRequest,
@@ -10,7 +8,6 @@ import {
   isDesignMateProviderError,
   makeDesignMateProviderError,
 } from "./provider";
-import { buildHeuristicDesignMateProposals } from "./heuristic-proposals";
 import { assembleDesignMateChatPrompt } from "./chat-prompt";
 import { toDesignMateChatWireRequest } from "./chat-request";
 import { decodeDesignMateChatSse } from "./chat-sse";
@@ -85,90 +82,6 @@ function throwIfAborted(
     throw makeDesignMateChatCancelledError(providerId);
   }
 }
-
-const SEVERITY_PRIORITY: Readonly<Record<ReviewFinding["severity"], number>> = {
-  strong: 0,
-  warning: 1,
-  info: 2,
-};
-
-function highestPriorityFindings(
-  review: DesignReview,
-): readonly ReviewFinding[] {
-  return review.findings
-    .map((finding, index) => ({ finding, index }))
-    .sort(
-      (left, right) =>
-        SEVERITY_PRIORITY[left.finding.severity] -
-          SEVERITY_PRIORITY[right.finding.severity] ||
-        left.index - right.index,
-    )
-    .slice(0, 3)
-    .map(({ finding }) => finding);
-}
-
-function heuristicResponse(
-  request: DesignMateChatTurnRequest,
-  review: DesignReview,
-): string {
-  const scopeLabel =
-    request.scope === "selection"
-      ? "the selection"
-      : request.scope === "active-artboard"
-        ? "the active artboard"
-        : "the document";
-  const findings = highestPriorityFindings(review);
-  const findingText =
-    findings.length === 0
-      ? "Highest-priority findings: none in this scope."
-      : `Highest-priority findings: ${findings
-          .map(
-            (finding, index) =>
-              `${index + 1}. ${finding.title} — ${finding.action}`,
-          )
-          .join(" ")}`;
-  return `I reviewed ${scopeLabel}. ${findingText} No canvas changes were made; any document change must go through the proposal approval pipeline.`;
-}
-
-function splitResponse(text: string): readonly string[] {
-  const chunkLength = Math.min(
-    240,
-    DESIGN_MATE_CHAT_LIMITS.deltaTextLength,
-  );
-  const chunks: string[] = [];
-  for (let offset = 0; offset < text.length; offset += chunkLength) {
-    chunks.push(text.slice(offset, offset + chunkLength));
-  }
-  return chunks;
-}
-
-export function createHeuristicDesignMateChatProvider(): DesignMateChatProvider {
-  const id = "heuristic-chat";
-  return {
-    id,
-    stream: async function* (request, signal) {
-      throwIfAborted(id, signal);
-      const review: DesignReview = request.review;
-
-      for (const delta of splitResponse(heuristicResponse(request, review))) {
-        throwIfAborted(id, signal);
-        yield { type: "text-delta", delta };
-      }
-      for (const proposal of buildHeuristicDesignMateProposals(
-        request.document,
-        review.findings,
-        request.scope,
-      ).slice(0, 1)) {
-        throwIfAborted(id, signal);
-        yield { type: "proposal-candidate", proposal };
-      }
-      throwIfAborted(id, signal);
-    },
-  };
-}
-
-export const heuristicDesignMateChatProvider =
-  createHeuristicDesignMateChatProvider();
 
 export type FakeDesignMateChatProvider = DesignMateChatProvider & {
   readonly requests: readonly DesignMateChatTurnRequest[];
@@ -572,48 +485,6 @@ export function createDirectDesignMateChatProvider(
         yield* transport.stream(prompt, signal);
       } catch (cause) {
         throw normalizeDesignMateChatProviderError(id, cause, signal);
-      }
-    },
-  };
-}
-
-export function createFallbackDesignMateChatProvider(
-  primary: DesignMateChatProvider,
-  fallback: DesignMateChatProvider,
-): DesignMateChatProvider {
-  const id = `${primary.id}+${fallback.id}`.slice(
-    0,
-    DESIGN_MATE_CHAT_LIMITS.providerIdLength,
-  );
-  return {
-    id,
-    stream: async function* (request, signal) {
-      let emittedPrimaryChunk = false;
-      try {
-        for await (const chunk of primary.stream(request, signal)) {
-          emittedPrimaryChunk = true;
-          yield chunk;
-        }
-        return;
-      } catch (cause) {
-        const error = normalizeDesignMateChatProviderError(
-          primary.id,
-          cause,
-          signal,
-        );
-        const canFallback =
-          !emittedPrimaryChunk &&
-          !signal?.aborted &&
-          error.retryable &&
-          (error.code === "provider-failed" ||
-            error.code === "rate-limited" ||
-            error.code === "request-timeout");
-        if (!canFallback) {
-          throw error;
-        }
-      }
-      for await (const chunk of fallback.stream(request, signal)) {
-        yield chunk;
       }
     },
   };

@@ -2,7 +2,6 @@ import {
   DESIGN_MATE_CHAT_LIMITS,
   type DesignMateChatEvent,
   type DesignMateChatMessage,
-  type DesignMateChatProvider,
   type DesignMateConversationMemoryEvent,
   type DesignMateProviderError,
   type DocumentIdentity,
@@ -18,10 +17,6 @@ const RELATIVE_URL_BASE = "https://openlogo.invalid";
 
 export const DESIGN_MATE_TRANSCRIPT_LIMIT = 48;
 
-export type DesignMateChatMode =
-  | "direct-with-fallback"
-  | "remote-with-fallback"
-  | "local";
 export type DesignMateAccessTokenProvider = (
   signal?: AbortSignal,
 ) => string | null | Promise<string | null>;
@@ -210,55 +205,6 @@ export const DESIGN_MATE_CHAT_ENDPOINT = resolveDesignMateChatEndpoint(
   import.meta.env.VITE_DESIGN_MATE_SERVICE_URL,
 );
 
-export type DesignMateChatProviderFactories = {
-  readonly createRemote: (options: {
-    readonly endpoint: string;
-    readonly getAccessToken?: DesignMateAccessTokenProvider;
-    readonly credentials?: RequestCredentials;
-  }) => DesignMateChatProvider;
-  readonly createLocal: () => DesignMateChatProvider;
-  readonly createFallback: (
-    primary: DesignMateChatProvider,
-    fallback: DesignMateChatProvider,
-  ) => DesignMateChatProvider;
-};
-
-export type DesignMateChatProviderSetup = {
-  readonly mode: DesignMateChatMode;
-  readonly provider: DesignMateChatProvider;
-};
-
-/**
- * Provider fallback behavior is delegated to @openlogo/design-mate. Factories
- * are injected so this pure helper stays out of the initial chat UI chunk.
- */
-export function createDesignMateChatProviderSetup(
-  endpoint: string | null,
-  factories: DesignMateChatProviderFactories,
-  remoteOptions: {
-    readonly getAccessToken?: DesignMateAccessTokenProvider;
-    readonly credentials?: RequestCredentials;
-  } = {},
-): DesignMateChatProviderSetup {
-  const local = factories.createLocal();
-  if (!endpoint) {
-    return { mode: "local", provider: local };
-  }
-  const remote = factories.createRemote({ endpoint, ...remoteOptions });
-  return {
-    mode: "remote-with-fallback",
-    provider: factories.createFallback(remote, local),
-  };
-}
-
-export function designMateChatModeLabel(mode: DesignMateChatMode): string {
-  if (mode === "direct-with-fallback") {
-    return "AI (your API key)";
-  }
-  return mode === "remote-with-fallback"
-    ? "AI + local fallback"
-    : "Local guidance";
-}
 export type DesignMateTranscriptScrollMetrics = {
   readonly scrollHeight: number;
   readonly scrollTop: number;

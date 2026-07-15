@@ -30,11 +30,11 @@ canvas mutations.
 - The browser-safe `@openlogo/design-mate` package owns the Responses transport
   behind `DesignMateModelTransport`. `@openlogo/design-mate-service` re-exports
   that transport so existing service deployments remain compatible.
-- When remote AI is enabled, in-app provider settings take precedence over a
-  legacy configured service endpoint. Without either remote configuration,
-  Design Mate uses its local heuristic provider. Remote providers retain the
-  local provider as their fallback path where the provider error policy allows
-  it.
+- When AI is enabled, in-app provider settings take precedence over a legacy
+  configured service endpoint. Without either provider—or while AI is
+  disabled—chat is unavailable. Design Mate never substitutes a synthetic
+  local response or proposal after a provider failure; deterministic review
+  remains available independently.
 - Only messages, bounded design context, deterministic review data, proposal
   memory, and up to three bounded PNG previews cross the provider seam. The raw
   Logo Document is never uploaded.
@@ -51,8 +51,10 @@ canvas mutations.
 
 ## Consequences
 
-- Local users can enable remote Design Mate without running a sidecar or
+- Local users can enable model-backed Design Mate without running a sidecar or
   rebuilding OpenLogo, while service-based deployments continue to work.
+- Missing configuration and provider failures are explicit chat states rather
+  than plausible-looking local answers.
 - The configured provider receives the bounded context and previews directly,
   so its data handling, retention, billing, CORS support, and availability
   become user-visible dependencies.

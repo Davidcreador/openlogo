@@ -433,7 +433,10 @@ async function verifyDesignMatePanel(client) {
             panel?.querySelector('[aria-label="Chat with Design Mate"]'),
           ),
           failed: text.includes("I hit a snag while getting ready"),
-          remoteOff: text.includes("Remote AI is off"),
+          aiOff: text.includes("AI is off"),
+          unconfigured: text.includes("Connect a model provider"),
+          composerDisabled:
+            panel?.querySelector("textarea")?.disabled === true,
           closeFocused:
             document.activeElement?.getAttribute("aria-label") ===
             "Close Design Mate",
@@ -444,8 +447,11 @@ async function verifyDesignMatePanel(client) {
       throw new Error("The Design Mate panel entered its recovery state.");
     }
     if (state?.loaded && state.closeFocused) {
-      if (expectRemoteConfiguration && !state.remoteOff) {
-        throw new Error("The remote AI consent control was not rendered.");
+      if (!state.composerDisabled) {
+        throw new Error("Design Mate chat was enabled without consent.");
+      }
+      if (expectRemoteConfiguration ? !state.aiOff : !state.unconfigured) {
+        throw new Error("Design Mate did not explain why chat is unavailable.");
       }
       verified = true;
       break;

@@ -15,8 +15,6 @@ import {
   DESIGN_MATE_CHAT_LIMITS,
   buildDocumentIdentity,
   createDirectDesignMateChatProvider,
-  createFallbackDesignMateChatProvider,
-  createHeuristicDesignMateChatProvider,
   createOpenAIResponsesTransport,
   createRemoteDesignMateChatProvider,
   makeDesignMateChatCancelledError,
@@ -32,10 +30,8 @@ import {
 import {
   DESIGN_MATE_CHAT_ENDPOINT,
   createDesignMateChatId,
-  createDesignMateChatProviderSetup,
   designMateChatHistoryFromTranscript,
   designMateConversationMemoryFromTranscript,
-  designMateChatModeLabel,
   getDesignMateAccessToken,
   isDesignMateTranscriptNearBottom,
   isDesignMateChatAnswerStale,
@@ -63,12 +59,6 @@ const STARTER_PROMPTS = [
   "Will this still feel clear at 16 px?",
   "Does this actually feel like the brief?",
 ] as const;
-
-const PROVIDER_FACTORIES = {
-  createRemote: createRemoteDesignMateChatProvider,
-  createLocal: createHeuristicDesignMateChatProvider,
-  createFallback: createFallbackDesignMateChatProvider,
-};
 
 const META_ACTION =
   "font-[650] text-ink-dim transition-colors duration-140 ease-studio hover:enabled:text-accent disabled:cursor-not-allowed disabled:opacity-40";
@@ -168,9 +158,12 @@ export function DesignMateChatPanel({
     loadDesignMateProviderSettings,
   );
 
-  const providerSetup = useMemo(() => {
-    if (remoteEnabled && providerSettings) {
-      const direct = createDirectDesignMateChatProvider(
+  const chatProvider = useMemo(() => {
+    if (!remoteEnabled) {
+      return null;
+    }
+    if (providerSettings) {
+      return createDirectDesignMateChatProvider(
         createOpenAIResponsesTransport({
           apiKey: providerSettings.apiKey,
           model: providerSettings.model,
@@ -178,21 +171,24 @@ export function DesignMateChatPanel({
           id: "openai-direct",
         }),
       );
-      return {
-        mode: "direct-with-fallback" as const,
-        provider: createFallbackDesignMateChatProvider(
-          direct,
-          createHeuristicDesignMateChatProvider(),
-        ),
-      };
     }
-    return createDesignMateChatProviderSetup(
-      remoteEnabled ? DESIGN_MATE_CHAT_ENDPOINT : null,
-      PROVIDER_FACTORIES,
-      { getAccessToken: getDesignMateAccessToken },
-    );
+    return DESIGN_MATE_CHAT_ENDPOINT
+      ? createRemoteDesignMateChatProvider({
+          endpoint: DESIGN_MATE_CHAT_ENDPOINT,
+          getAccessToken: getDesignMateAccessToken,
+        })
+      : null;
   }, [providerSettings, remoteEnabled]);
-  const modeLabel = designMateChatModeLabel(providerSetup.mode);
+  const providerConfigured =
+    providerSettings !== null || DESIGN_MATE_CHAT_ENDPOINT !== null;
+  const modeLabel = !providerConfigured
+    ? "AI not configured"
+    : !remoteEnabled
+      ? "AI off"
+      : providerSettings
+        ? "AI (your API key)"
+        : "AI (service)";
+  const chatAvailable = chatProvider !== null;
   const effectiveScope = resolveEffectiveDesignMateScope(
     requestedScope,
     document,
@@ -356,12 +352,14 @@ export function DesignMateChatPanel({
   }
 
   async function sendPrompt(text = prompt): Promise<void> {
+    const provider = chatProvider;
     const userText = text.trim().slice(
       0,
       DESIGN_MATE_CHAT_LIMITS.userTextLength,
     );
     if (
       disabled ||
+      !provider ||
       userText.length === 0 ||
       controllerRef.current !== null
     ) {
@@ -419,7 +417,7 @@ export function DesignMateChatPanel({
     activeRunRef.current = {
       runId,
       turnId,
-      provider: providerSetup.provider,
+      provider,
     };
     onProposalsClear?.();
     dispatch({
@@ -433,44 +431,38 @@ export function DesignMateChatPanel({
     setPrompt("");
 
     let attachments: readonly DesignMateVisualAttachment[] = [];
-    if (providerSetup.mode !== "local") {
-      setVisualNote("Preparing a bounded visual preview…");
-      try {
-        const visual = await import("../lib/design-mate-visual-context");
-        if (!isCurrentRun(runId, controller)) {
-          return;
-        }
-        const capture = await visual.captureDesignMateVisualContext(
-          committedDocument,
-          selection,
-          {
-            scope,
-            generation,
-            revision,
-            signal: controller.signal,
-          },
-        );
-        if (!isCurrentRun(runId, controller)) {
-          return;
-        }
-        attachments = capture.attachments;
-        setVisualNote(
-          visualCaptureNote(
-            capture.attachments.length,
-            capture.failedTargets,
-          ),
-        );
-      } catch {
-        if (!isCurrentRun(runId, controller)) {
-          return;
-        }
-        setVisualNote(
-          "Visual preview unavailable; continuing with bounded document context.",
-        );
+    setVisualNote("Preparing a bounded visual preview…");
+    try {
+      const visual = await import("../lib/design-mate-visual-context");
+      if (!isCurrentRun(runId, controller)) {
+        return;
       }
-    } else {
+      const capture = await visual.captureDesignMateVisualContext(
+        committedDocument,
+        selection,
+        {
+          scope,
+          generation,
+          revision,
+          signal: controller.signal,
+        },
+      );
+      if (!isCurrentRun(runId, controller)) {
+        return;
+      }
+      attachments = capture.attachments;
       setVisualNote(
-        "Local guidance uses bounded document context without uploading a preview.",
+        visualCaptureNote(
+          capture.attachments.length,
+          capture.failedTargets,
+        ),
+      );
+    } catch {
+      if (!isCurrentRun(runId, controller)) {
+        return;
+      }
+      setVisualNote(
+        "Visual preview unavailable; continuing with bounded document context.",
       );
     }
 
@@ -497,7 +489,7 @@ export function DesignMateChatPanel({
           scope,
           generation,
           revision,
-          provider: providerSetup.provider,
+          provider,
           signal: controller.signal,
         },
       );
@@ -541,7 +533,7 @@ export function DesignMateChatPanel({
         event: {
           type: "failed",
           error: makeDesignMateProviderError(
-            providerSetup.provider.id,
+            provider.id,
             "Design Mate could not start this response.",
             { code: "invalid-request", retryable: false },
           ),
@@ -569,7 +561,7 @@ export function DesignMateChatPanel({
   const characterLimit = DESIGN_MATE_CHAT_LIMITS.userTextLength;
   const nearLimit = prompt.length >= Math.floor(characterLimit * 0.85);
   const showChips =
-    transcript.entries.length === 0 && !chipsDismissed;
+    chatAvailable && transcript.entries.length === 0 && !chipsDismissed;
 
   return (
     <section
@@ -598,11 +590,14 @@ export function DesignMateChatPanel({
               aria-hidden="true"
             />
             <p className="m-0 mt-3 text-[11px] font-[600] text-ink-dim">
-              Ask me anything about this logo
+              {providerConfigured
+                ? "Ask me anything about this logo"
+                : "Connect a model provider"}
             </p>
             <p className="m-0 text-[10px] leading-[1.5] text-ink-faint">
-              Hierarchy, character, scale, or the brief — nothing changes
-              unless you say so.
+              {providerConfigured
+                ? "Hierarchy, character, scale, or the brief — nothing changes unless you say so."
+                : "Open Settings (gear) and add your API key to use chat."}
             </p>
           </div>
         ) : (
@@ -657,7 +652,7 @@ export function DesignMateChatPanel({
       </div>
 
       <div className="shrink-0 border-t border-panel-hairline px-13 pb-10 pt-9">
-        {(DESIGN_MATE_CHAT_ENDPOINT || providerSettings) && (
+        {providerConfigured && (
           <div className="mb-8 flex items-start gap-6 rounded-[8px] bg-field px-9 py-7">
             <ShieldCheck
               size={12}
@@ -666,15 +661,18 @@ export function DesignMateChatPanel({
             />
             <p className="m-0 min-w-0 flex-1 text-[9px] leading-[1.5] text-ink-dim">
               {remoteEnabled
-                ? "Remote AI is on — messages, bounded design context, review findings, and up to three PNG previews go to the configured model provider. The raw OpenLogo document is never uploaded. "
-                : "Local guidance stays on this device. Remote AI sends messages, bounded design context, review findings, and up to three PNG previews to the configured model provider. "}
+                ? "AI is on — messages, bounded design context, review findings, and up to three PNG previews go to the configured model provider. The raw OpenLogo document is never uploaded. "
+                : "AI is off — no chat data leaves this browser. Enabling AI sends messages, bounded design context, review findings, and up to three PNG previews to the configured model provider. "}
               <button
                 type="button"
                 className="font-[650] text-accent disabled:opacity-40"
-                onClick={() => setRemoteEnabled(!remoteEnabled)}
+                onClick={() => {
+                  setVisualNote(null);
+                  setRemoteEnabled(!remoteEnabled);
+                }}
                 disabled={running}
               >
-                {remoteEnabled ? "Use local only" : "Enable remote AI"}
+                {remoteEnabled ? "Disable AI" : "Enable AI"}
               </button>
             </p>
           </div>
@@ -727,10 +725,14 @@ export function DesignMateChatPanel({
             maxLength={characterLimit}
             onChange={(event) => setPrompt(event.currentTarget.value)}
             onKeyDown={onComposerKeyDown}
-            placeholder="Ask about hierarchy, character, scale…"
+            placeholder={
+              chatAvailable
+                ? "Ask about hierarchy, character, scale…"
+                : "Configure and enable a model provider to chat…"
+            }
             title="Enter to send · Shift+Enter for a new line"
             aria-describedby={statusId}
-            disabled={running || disabled}
+            disabled={running || disabled || !chatAvailable}
           />
           <button
             type="button"
@@ -740,7 +742,10 @@ export function DesignMateChatPanel({
                 : "bg-accent text-white hover:enabled:brightness-[1.08] disabled:cursor-not-allowed disabled:opacity-35"
             }`}
             onClick={running ? stop : () => void sendPrompt()}
-            disabled={!running && (disabled || prompt.trim().length === 0)}
+            disabled={
+              !running &&
+              (disabled || !chatAvailable || prompt.trim().length === 0)
+            }
             aria-label={running ? "Stop response" : "Send message"}
           >
             {running ? (
@@ -766,7 +771,7 @@ export function DesignMateChatPanel({
                 type="button"
                 className={META_ACTION}
                 onClick={() => void sendPrompt(retryPrompt)}
-                disabled={running || disabled}
+                disabled={running || disabled || !chatAvailable}
               >
                 Retry
               </button>

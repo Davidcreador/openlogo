@@ -17,7 +17,6 @@ import {
   type PrepareDesignMateChatOptions,
 } from "./chat-request";
 import {
-  heuristicDesignMateChatProvider,
   makeDesignMateChatCancelledError,
   normalizeDesignMateChatProviderError,
 } from "./chat-provider";
@@ -31,7 +30,7 @@ export type OrchestrateDesignMateChatOptions = {
 };
 
 export type StreamDesignMateChatOptions = PrepareDesignMateChatOptions & {
-  readonly provider?: DesignMateChatProvider;
+  readonly provider: DesignMateChatProvider;
   readonly signal?: AbortSignal;
 };
 
@@ -142,7 +141,7 @@ function baseResult(request: DesignMateChatTurnRequest): {
  */
 export async function* orchestrateDesignMateChat(
   request: DesignMateChatTurnRequest,
-  provider: DesignMateChatProvider = heuristicDesignMateChatProvider,
+  provider: DesignMateChatProvider,
   options: OrchestrateDesignMateChatOptions = {},
 ): AsyncGenerator<DesignMateChatEvent, DesignMateChatResult, void> {
   const providerId = boundedProviderId(provider);
@@ -367,7 +366,7 @@ export async function* streamDesignMateChat(
   );
   return yield* orchestrateDesignMateChat(
     request,
-    options.provider ?? heuristicDesignMateChatProvider,
+    options.provider,
     options.signal ? { signal: options.signal } : {},
   );
 }

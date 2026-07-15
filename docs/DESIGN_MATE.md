@@ -21,13 +21,19 @@ The full `LogoDocument` never crosses the remote chat boundary. The editor
 creates a wire-safe request without the detached document snapshot, and both
 the client and service validate that request before use.
 
-## Local-only use
+## Without a chat provider
 
-No service is required for deterministic review, heuristic proposals, or local
-chat guidance. Leave `VITE_DESIGN_MATE_SERVICE_URL` unset. The Design Mate badge
-will read `Local expert`, and no Design Mate network request is made.
+No service is required for deterministic review or its locally generated,
+previewable suggestions. Chat requires either an in-app provider configuration
+or `VITE_DESIGN_MATE_SERVICE_URL`. Without one, the composer is disabled and
+Design Mate shows setup guidance; it never fabricates a model response.
 
 ## Local development with remote AI
+
+The simplest local setup is **Settings → Design Mate** in the editor. Enter a
+provider API key, model, and Responses API base URL. The key stays in this
+browser's `localStorage` and is sent directly to that provider. Use the gateway
+below when the provider key must remain outside the browser.
 
 The service does not automatically read `.env` files. Export values in the
 shell or configure them in the process manager.
@@ -61,11 +67,12 @@ the request also comes from loopback. Never enable it on a public listener.
 
 OpenLogo appends `/v1/design-mate/chat` unless that route is already present.
 Remote non-HTTPS URLs, URL credentials, fragments, protocol-relative URLs, and
-invalid values are rejected and leave the editor in local mode.
+invalid values are rejected and leave chat unavailable.
 
-A configured URL only makes remote mode available. The editor still requires
-explicit user consent. The `designMateRemoteEnabled` preference defaults to
-`false`; turning it off immediately restores local-only chat.
+A configured URL only makes model-backed chat available. The editor still
+requires explicit user consent. The `designMateRemoteEnabled` preference
+defaults to `false`; turning it off disables chat without affecting
+deterministic review.
 
 The stock editor does not contain a service credential. A host integration can
 install an in-memory, short-lived token callback at bootstrap:
@@ -186,8 +193,9 @@ also verifies PNG headers instead of trusting claimed dimensions.
 
 OpenLogo does not persist remote requests on the gateway. The browser stores:
 
-- `openlogo:prefs` in `localStorage`, including remote-AI consent and review
-  scope; and
+- `openlogo:prefs` in `localStorage`, including AI consent and review scope;
+- `openlogo:design-mate-provider` in `localStorage` when browser-direct chat is
+  configured, including its API key, model, and base URL; and
 - `openlogo:design-mate:transcript:<document-id>` in `sessionStorage`, capped at
   128 KiB and available only for the current browser tab.
 
@@ -200,15 +208,13 @@ The configured model provider receives the validated remote payload and applies
 its own retention and training policy. A production operator must disclose that
 provider and configure its retention controls appropriately.
 
-## Failure and fallback behavior
+## Failure behavior
 
 - Invalid, oversized, stale, or no-op proposals are rejected before they reach
   the live document.
 - Approved proposals are rechecked against document identity and revision.
-- Authentication and origin failures are shown to the user and do not silently
-  fall back.
-- Retryable provider, rate-limit, and timeout failures may fall back to local
-  guidance only before the remote stream starts.
+- Authentication, origin, provider, rate-limit, and timeout failures are shown
+  to the user. Chat never substitutes a synthetic local answer.
 - Users can stop review or chat work. Abort signals propagate through preview
   capture, authentication, transport, and provider execution.
 
@@ -225,7 +231,7 @@ pnpm smoke:design-mate-service
 `smoke:editor` launches the production build in headless Chrome/Chromium,
 verifies document and CanvasKit readiness at desktop and 390 px, opens the
 lazy-loaded Design Mate panel, and checks Escape/focus restoration. CI builds
-with a safe relative service URL and additionally verifies that remote consent
-is still off. The service smoke starts the bundled executable and validates
+with a safe relative service URL and additionally verifies that AI consent is
+still off. The service smoke starts the bundled executable and validates
 `/health`; HTTP/SSE/authentication behavior is covered by the service integration
 tests.
