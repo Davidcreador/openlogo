@@ -55,7 +55,8 @@ export type LegacyMigrationResult =
   | { status: "blocked"; reason: string };
 
 export type DocumentRepositoryBootstrap = {
-  activeDocumentId: string;
+  /** Null only while the Document Library is empty (before the first create). */
+  activeDocumentId: string | null;
   documents: DocumentSummary[];
   folders: DocumentFolder[];
   migration: LegacyMigrationResult;
@@ -172,9 +173,11 @@ export type DocumentRepositoryFailure =
  * transactions, cloning, optimistic revisions, migration, and retention.
  */
 export interface DocumentRepository {
-  bootstrap(
-    initialDocument: LogoDocument,
-  ): Effect.Effect<DocumentRepositoryBootstrap, DocumentRepositoryFailure>;
+  /** Migrate and reconcile stored state; a fresh profile stays empty and unwritten. */
+  bootstrap(): Effect.Effect<
+    DocumentRepositoryBootstrap,
+    DocumentRepositoryFailure
+  >;
 
   listDocuments(): Effect.Effect<
     DocumentSummary[],

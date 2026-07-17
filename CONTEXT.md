@@ -87,8 +87,9 @@ _Avoid_: Preview, frame update
 ## Relationships
 
 - A **Document Session** owns exactly one live **Logo Document**.
-- A **Document Library** contains one or more **Document Heads** and identifies exactly one **Active Library Document**.
-- The **Active Library Document** is always unarchived.
+- A **Document Library** contains zero or more **Document Heads**; while it holds any, it identifies exactly one **Active Library Document**.
+- An empty **Document Library** is the first-run state; creating or importing the first **Logo Document** makes it the **Active Library Document**.
+- The **Active Library Document**, when present, is always unarchived.
 - A **Document Head** advances by optimistic revision; a stale write becomes a recovery **Document Version** instead of overwriting it.
 - Switching the **Active Library Document** flushes the current **Document Session** first and aborts if that save cannot finish.
 - Archiving the **Active Library Document** atomically adopts another unarchived head; the last unarchived document cannot be archived.

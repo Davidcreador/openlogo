@@ -204,11 +204,9 @@ export class DocumentLibraryController {
   }
 
   /** Hydrate dashboard metadata without loading a head or starting a session. */
-  async bootstrapLibrary(initialDocument: LogoDocument): Promise<void> {
+  async bootstrapLibrary(): Promise<void> {
     try {
-      const bootstrap = await runRepositoryEffect(
-        this.repository.bootstrap(initialDocument),
-      );
+      const bootstrap = await runRepositoryEffect(this.repository.bootstrap());
       this.activeRevision = null;
       this.checkpointedRevision = null;
       this.lastCheckpointAt = 0;
@@ -225,12 +223,6 @@ export class DocumentLibraryController {
       this.update({ ready: false, error: documentLibraryErrorMessage(error) });
       throw error;
     }
-  }
-
-  /** Bootstrap v3, migrate a legacy v1 current document, and load the head. */
-  async loadActiveDocument(initialDocument: LogoDocument): Promise<LogoDocument> {
-    await this.bootstrapLibrary(initialDocument);
-    return this.openDocument(this.requireActiveDocumentId());
   }
 
   /** Load one dashboard selection and prepare its optimistic session revision. */

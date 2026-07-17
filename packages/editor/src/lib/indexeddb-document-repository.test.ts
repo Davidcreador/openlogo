@@ -20,6 +20,15 @@ function makeDocument(id: string, name: string): LogoDocument {
   return { ...createInitialDocument(), id, name };
 }
 
+function seedDocument(
+  repository: IndexedDbDocumentRepository,
+  document: LogoDocument,
+) {
+  return Effect.runPromise(
+    repository.createDocument({ document, makeActive: true }),
+  );
+}
+
 function nextDatabaseName(): string {
   const name = `openlogo-migration-${++databaseSequence}`;
   databases.add(name);
@@ -225,12 +234,8 @@ describe("IndexedDbDocumentRepository migration", () => {
     ]);
     const repository = makeRepository(databaseName);
 
-    const first = await Effect.runPromise(
-      repository.bootstrap(makeDocument("fresh", "Fresh")),
-    );
-    const second = await Effect.runPromise(
-      repository.bootstrap(makeDocument("ignored", "Ignored")),
-    );
+    const first = await Effect.runPromise(repository.bootstrap());
+    const second = await Effect.runPromise(repository.bootstrap());
     const versions = await Effect.runPromise(
       repository.listVersions(legacy.id),
     );
@@ -254,25 +259,75 @@ describe("IndexedDbDocumentRepository migration", () => {
     ]);
   });
 
-  it("blocks invalid legacy data, creates a usable fresh head, and preserves the bad value", async () => {
+  it("blocks invalid legacy data, keeps the library empty, and preserves the bad value", async () => {
     const databaseName = nextDatabaseName();
     const invalidLegacy = { schemaVersion: 999, broken: true };
-    const fresh = makeDocument("fresh-document", "Fresh");
     await seedLegacyDatabase(databaseName, [["current", invalidLegacy]]);
     const repository = makeRepository(databaseName);
 
-    const bootstrap = await Effect.runPromise(repository.bootstrap(fresh));
-    const loaded = await Effect.runPromise(repository.loadDocument(fresh.id));
-    const versions = await Effect.runPromise(
-      repository.listVersions(fresh.id),
-    );
+    const bootstrap = await Effect.runPromise(repository.bootstrap());
+    const documents = await Effect.runPromise(repository.listDocuments());
+    const repeated = await Effect.runPromise(repository.bootstrap());
     const entries = await readLegacyEntries(databaseName);
 
-    expect(bootstrap.activeDocumentId).toBe(fresh.id);
-    expect(bootstrap.migration).toMatchObject({ status: "blocked" });
-    expect(loaded).toMatchObject({ revision: 1, document: fresh });
-    expect(versions).toEqual([]);
+    expect(bootstrap).toMatchObject({
+      activeDocumentId: null,
+      documents: [],
+      migration: { status: "blocked" },
+    });
+    expect(documents).toEqual([]);
+    // The blocked notice is recomputed on every bootstrap; nothing is seeded.
+    expect(repeated).toEqual(bootstrap);
     expect(entries).toEqual([{ key: "current", value: invalidLegacy }]);
+  });
+
+  it("leaves a fresh profile empty and completely unwritten", async () => {
+    const databaseName = nextDatabaseName();
+    const repository = makeRepository(databaseName);
+
+    const bootstrap = await Effect.runPromise(repository.bootstrap());
+
+    expect(bootstrap).toEqual({
+      activeDocumentId: null,
+      documents: [],
+      folders: [],
+      migration: { status: "none" },
+    });
+    const database = await openDatabase(databaseName);
+    const transaction = database.transaction(
+      [DOCUMENT_HEAD_STORE, DOCUMENT_SUMMARY_STORE, WORKSPACE_STORE],
+      "readonly",
+    );
+    const counts = await Promise.all(
+      [DOCUMENT_HEAD_STORE, DOCUMENT_SUMMARY_STORE, WORKSPACE_STORE].map(
+        (storeName) =>
+          new Promise<number>((resolve, reject) => {
+            const request = transaction.objectStore(storeName).count();
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+          }),
+      ),
+    );
+    await transactionDone(transaction);
+    database.close();
+    expect(counts).toEqual([0, 0, 0]);
+  });
+
+  it("writes the workspace pointer with the first created document", async () => {
+    const databaseName = nextDatabaseName();
+    const repository = makeRepository(databaseName);
+    const first = makeDocument("first-created", "First created");
+    await Effect.runPromise(repository.bootstrap());
+
+    await Effect.runPromise(
+      repository.createDocument({ document: first, makeActive: false }),
+    );
+    const bootstrap = await Effect.runPromise(repository.bootstrap());
+
+    expect(bootstrap).toMatchObject({
+      activeDocumentId: first.id,
+      documents: [{ documentId: first.id, revision: 1 }],
+    });
   });
 
   it("serializes concurrent bootstrap attempts without duplicate imports", async () => {
@@ -283,12 +338,8 @@ describe("IndexedDbDocumentRepository migration", () => {
     const secondRepository = makeRepository(databaseName);
 
     const [first, second] = await Promise.all([
-      Effect.runPromise(
-        firstRepository.bootstrap(makeDocument("fresh-one", "Fresh one")),
-      ),
-      Effect.runPromise(
-        secondRepository.bootstrap(makeDocument("fresh-two", "Fresh two")),
-      ),
+      Effect.runPromise(firstRepository.bootstrap()),
+      Effect.runPromise(secondRepository.bootstrap()),
     ]);
     const versions = await Effect.runPromise(
       firstRepository.listVersions(legacy.id),
@@ -304,9 +355,7 @@ describe("IndexedDbDocumentRepository migration", () => {
   it("upgrades the database to v3 with all repository stores", async () => {
     const databaseName = nextDatabaseName();
     const repository = makeRepository(databaseName);
-    await Effect.runPromise(
-      repository.bootstrap(makeDocument("initial", "Initial")),
-    );
+    await Effect.runPromise(repository.bootstrap());
 
     const database = await openDatabase(databaseName);
     expect(database.version).toBe(OPENLOGO_DATABASE_VERSION);
@@ -375,7 +424,7 @@ describe("IndexedDbDocumentRepository migration", () => {
     });
     database.close();
 
-    const bootstrap = await Effect.runPromise(repository.bootstrap(initial));
+    const bootstrap = await Effect.runPromise(repository.bootstrap());
     expect(bootstrap).toMatchObject({
       activeDocumentId: initial.id,
       documents: [
@@ -401,7 +450,7 @@ describe("IndexedDbDocumentRepository migration", () => {
     const initial = makeDocument("dashboard-concurrent", "Initial");
     const first = makeRepository(databaseName);
     const second = makeRepository(databaseName);
-    await Effect.runPromise(first.bootstrap(initial));
+    await seedDocument(first, initial);
     const folder = await Effect.runPromise(first.createFolder("Client"));
     const thumbnail = "data:image/png;base64,iVBORw0KGgo=";
 
@@ -423,7 +472,7 @@ describe("IndexedDbDocumentRepository migration", () => {
       Effect.runPromise(first.deleteFolder(folder.folderId)),
     ]);
 
-    const bootstrap = await Effect.runPromise(second.bootstrap(initial));
+    const bootstrap = await Effect.runPromise(second.bootstrap());
     expect(bootstrap.folders).toEqual([]);
     expect(bootstrap.documents[0]).toMatchObject({
       name: "Committed",
@@ -437,7 +486,7 @@ describe("IndexedDbDocumentRepository migration", () => {
     const databaseName = nextDatabaseName();
     const initial = makeDocument("legacy-summary", "Legacy summary");
     const repository = makeRepository(databaseName);
-    const first = await Effect.runPromise(repository.bootstrap(initial));
+    const created = await seedDocument(repository, initial);
 
     const database = await openDatabase(databaseName);
     const transaction = database.transaction(
@@ -445,8 +494,8 @@ describe("IndexedDbDocumentRepository migration", () => {
       "readwrite",
     );
     const legacySummary = {
-      ...first.documents[0]!,
-    } as Partial<(typeof first.documents)[number]>;
+      ...created.summary,
+    } as Partial<typeof created.summary>;
     delete legacySummary.archivedAt;
     delete legacySummary.thumbnail;
     delete legacySummary.folderId;
@@ -454,7 +503,7 @@ describe("IndexedDbDocumentRepository migration", () => {
     await transactionDone(transaction);
     database.close();
 
-    const recovered = await Effect.runPromise(repository.bootstrap(initial));
+    const recovered = await Effect.runPromise(repository.bootstrap());
     const documents = await Effect.runPromise(repository.listDocuments());
     expect(recovered.documents[0]?.archivedAt).toBeNull();
     expect(recovered.documents[0]?.thumbnail).toBeNull();
@@ -469,7 +518,7 @@ describe("IndexedDbDocumentRepository migration", () => {
     const first = makeDocument("available-head", "Available");
     const archived = makeDocument("archived-head", "Archived");
     const repository = makeRepository(databaseName);
-    await Effect.runPromise(repository.bootstrap(first));
+    await seedDocument(repository, first);
     const created = await Effect.runPromise(
       repository.createDocument({ document: archived, makeActive: true }),
     );
@@ -486,7 +535,7 @@ describe("IndexedDbDocumentRepository migration", () => {
     await transactionDone(transaction);
     database.close();
 
-    const recovered = await Effect.runPromise(repository.bootstrap(first));
+    const recovered = await Effect.runPromise(repository.bootstrap());
     expect(recovered.activeDocumentId).toBe(first.id);
     expect(
       recovered.documents.find(
@@ -500,7 +549,7 @@ describe("IndexedDbDocumentRepository migration", () => {
     const available = makeDocument("available-document", "Available");
     const archived = makeDocument("archived-document", "Archived");
     const repository = makeRepository(databaseName);
-    await Effect.runPromise(repository.bootstrap(available));
+    await seedDocument(repository, available);
     await Effect.runPromise(
       repository.createDocument({ document: archived, makeActive: false }),
     );
@@ -552,7 +601,7 @@ describe("IndexedDbDocumentRepository migration", () => {
     const databaseName = nextDatabaseName();
     const initial = makeDocument("surviving-head", "Surviving document");
     const repository = makeRepository(databaseName);
-    const first = await Effect.runPromise(repository.bootstrap(initial));
+    const created = await seedDocument(repository, initial);
 
     const database = await openDatabase(databaseName);
     const transaction = database.transaction(
@@ -562,7 +611,7 @@ describe("IndexedDbDocumentRepository migration", () => {
     const summaryStore = transaction.objectStore(DOCUMENT_SUMMARY_STORE);
     summaryStore.delete(initial.id);
     summaryStore.put({
-      ...first.documents[0]!,
+      ...created.summary,
       documentId: "orphaned-summary",
       name: "Deleted document",
     });
@@ -575,7 +624,7 @@ describe("IndexedDbDocumentRepository migration", () => {
     await transactionDone(transaction);
     database.close();
 
-    const recovered = await Effect.runPromise(repository.bootstrap(initial));
+    const recovered = await Effect.runPromise(repository.bootstrap());
     const documents = await Effect.runPromise(repository.listDocuments());
 
     expect(recovered.activeDocumentId).toBe(initial.id);
@@ -592,9 +641,8 @@ describe("IndexedDbDocumentRepository migration", () => {
   it("removes orphaned metadata when no authoritative heads survive", async () => {
     const databaseName = nextDatabaseName();
     const orphan = makeDocument("orphaned-head", "Orphaned document");
-    const fallback = makeDocument("replacement-head", "Replacement document");
     const repository = makeRepository(databaseName);
-    await Effect.runPromise(repository.bootstrap(orphan));
+    await seedDocument(repository, orphan);
 
     const database = await openDatabase(databaseName);
     const transaction = database.transaction(DOCUMENT_HEAD_STORE, "readwrite");
@@ -602,21 +650,22 @@ describe("IndexedDbDocumentRepository migration", () => {
     await transactionDone(transaction);
     database.close();
 
-    const recovered = await Effect.runPromise(repository.bootstrap(fallback));
+    const recovered = await Effect.runPromise(repository.bootstrap());
     const documents = await Effect.runPromise(repository.listDocuments());
 
     expect(recovered).toMatchObject({
-      activeDocumentId: fallback.id,
-      documents: [{ documentId: fallback.id, name: fallback.name }],
+      activeDocumentId: null,
+      documents: [],
+      migration: { status: "none" },
     });
-    expect(documents).toEqual(recovered.documents);
+    expect(documents).toEqual([]);
   });
 
   it("quarantines a corrupt latest head and restores its newest valid version once", async () => {
     const databaseName = nextDatabaseName();
     const initial = makeDocument("recoverable-head", "Known good version");
     const repository = makeRepository(databaseName);
-    await Effect.runPromise(repository.bootstrap(initial));
+    await seedDocument(repository, initial);
     await Effect.runPromise(
       repository.createVersion({
         documentId: initial.id,
@@ -634,14 +683,10 @@ describe("IndexedDbDocumentRepository migration", () => {
 
     await corruptHeadWidth(databaseName, initial.id);
 
-    const recovered = await Effect.runPromise(
-      repository.bootstrap(makeDocument("fresh-fallback", "Fresh fallback")),
-    );
+    const recovered = await Effect.runPromise(repository.bootstrap());
     const loaded = await Effect.runPromise(repository.loadDocument(initial.id));
     const entriesAfterRecovery = await readLegacyEntries(databaseName);
-    const repeated = await Effect.runPromise(
-      repository.bootstrap(makeDocument("ignored", "Ignored")),
-    );
+    const repeated = await Effect.runPromise(repository.bootstrap());
     const entriesAfterRepeat = await readLegacyEntries(databaseName);
 
     expect(recovered).toMatchObject({
@@ -680,30 +725,26 @@ describe("IndexedDbDocumentRepository migration", () => {
     expect(entriesAfterRepeat).toEqual(entriesAfterRecovery);
   });
 
-  it("preserves an unrecoverable corrupt head and opens a fresh fallback", async () => {
+  it("preserves an unrecoverable corrupt head and reports the library empty", async () => {
     const databaseName = nextDatabaseName();
     const initial = makeDocument("unrecoverable-head", "Unrecoverable");
-    const fallback = makeDocument("safe-fallback", "Safe fallback");
     const repository = makeRepository(databaseName);
-    await Effect.runPromise(repository.bootstrap(initial));
+    await seedDocument(repository, initial);
     await corruptHeadWidth(databaseName, initial.id);
 
-    const recovered = await Effect.runPromise(repository.bootstrap(fallback));
-    const loaded = await Effect.runPromise(repository.loadDocument(fallback.id));
+    const recovered = await Effect.runPromise(repository.bootstrap());
+    const documents = await Effect.runPromise(repository.listDocuments());
     const entries = await readLegacyEntries(databaseName);
 
     expect(recovered).toMatchObject({
-      activeDocumentId: fallback.id,
-      documents: [
-        {
-          documentId: fallback.id,
-          name: fallback.name,
-          revision: 1,
-        },
-      ],
-      migration: { status: "blocked" },
+      activeDocumentId: null,
+      documents: [],
+      migration: {
+        status: "blocked",
+        reason: expect.stringContaining("recovery-head-"),
+      },
     });
-    expect(loaded).toMatchObject({ revision: 1, document: fallback });
+    expect(documents).toEqual([]);
     expect(entries).toHaveLength(1);
     expect(entries[0]!.value).toMatchObject({
       documentId: initial.id,
@@ -715,7 +756,7 @@ describe("IndexedDbDocumentRepository migration", () => {
     const databaseName = nextDatabaseName();
     const initial = makeDocument("valid-head", "Valid head");
     const repository = makeRepository(databaseName);
-    await Effect.runPromise(repository.bootstrap(initial));
+    await seedDocument(repository, initial);
     await Effect.runPromise(
       repository.createVersion({
         documentId: initial.id,

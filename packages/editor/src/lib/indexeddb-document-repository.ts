@@ -95,9 +95,10 @@ export class IndexedDbDocumentRepository implements DocumentRepository {
     );
   }
 
-  bootstrap(
-    initialDocument: LogoDocument,
-  ): Effect.Effect<DocumentRepositoryBootstrap, DocumentRepositoryFailure> {
+  bootstrap(): Effect.Effect<
+    DocumentRepositoryBootstrap,
+    DocumentRepositoryFailure
+  > {
     return this.run("migrate", async (db) => {
       const snapshot = await runTransaction(
         db,
@@ -135,26 +136,58 @@ export class IndexedDbDocumentRepository implements DocumentRepository {
       );
 
       if (snapshot.heads.length > 0) {
-        return this.recoverExistingWorkspace(db, initialDocument);
+        return this.recoverExistingWorkspace(db);
       }
 
-      let document: LogoDocument;
+      let document: LogoDocument | null = null;
       let migration: LegacyMigrationResult = { status: "none" };
       if (snapshot.legacy !== undefined && snapshot.legacy !== null) {
         try {
           document = decodeRepositoryDocument(snapshot.legacy);
           migration = { status: "migrated", documentId: document.id };
         } catch {
-          document = decodeRepositoryDocument(initialDocument);
           migration = {
             status: "blocked",
             reason:
               "The legacy local document failed validation and was left untouched.",
           };
         }
-      } else {
-        document = decodeRepositoryDocument(initialDocument);
       }
+
+      if (document === null) {
+        // An empty library is the authoritative first-run state: nothing is
+        // seeded, so a fresh profile is never written to. Only stale derived
+        // metadata (summaries or a workspace pointer without any head) is
+        // cleared before reporting the library empty.
+        if (snapshot.summaries.length > 0 || snapshot.workspace !== undefined) {
+          const cleaned = await runTransaction(
+            db,
+            [DOCUMENT_HEAD_STORE, DOCUMENT_SUMMARY_STORE, WORKSPACE_STORE],
+            "readwrite",
+            async (transaction) => {
+              const concurrentHeads = await requestResult<HeadRecord[]>(
+                transaction.objectStore(DOCUMENT_HEAD_STORE).getAll(),
+              );
+              if (concurrentHeads.length > 0) {
+                return false;
+              }
+              transaction.objectStore(DOCUMENT_SUMMARY_STORE).clear();
+              transaction.objectStore(WORKSPACE_STORE).delete(WORKSPACE_KEY);
+              return true;
+            },
+          );
+          if (!cleaned) {
+            return this.recoverExistingWorkspace(db);
+          }
+        }
+        return {
+          activeDocumentId: null,
+          documents: [],
+          folders: sortDocumentFolders(snapshot.folders),
+          migration,
+        };
+      }
+      const migrated = document;
 
       const result = await runTransaction(
         db,
@@ -192,21 +225,21 @@ export class IndexedDbDocumentRepository implements DocumentRepository {
 
           const timestamp = this.now();
           const head: HeadRecord = {
-            documentId: document.id,
-            document: cloneLogoDocument(document),
+            documentId: migrated.id,
+            document: cloneLogoDocument(migrated),
             revision: 1,
             createdAt: timestamp,
             updatedAt: timestamp,
           };
           const summary = documentSummary(
-            document,
+            migrated,
             1,
             timestamp,
             timestamp,
           );
           const workspace: WorkspaceRecord = {
             key: WORKSPACE_KEY,
-            activeDocumentId: document.id,
+            activeDocumentId: migrated.id,
             legacyMigration: migration,
             migrationVersion: 1,
           };
@@ -218,25 +251,23 @@ export class IndexedDbDocumentRepository implements DocumentRepository {
           summaryStore.put(summary);
           workspaceStore.put(workspace);
 
-          if (migration.status === "migrated") {
-            const version: DocumentVersion = {
-              versionId: this.makeId("version"),
-              documentId: document.id,
-              kind: "migration",
-              label: "Legacy local document",
-              createdAt: timestamp,
-              sourceRevision: 1,
-              document: cloneLogoDocument(document),
-            };
-            transaction.objectStore(DOCUMENT_VERSION_STORE).put(version);
-          }
+          const version: DocumentVersion = {
+            versionId: this.makeId("version"),
+            documentId: migrated.id,
+            kind: "migration",
+            label: "Legacy local document",
+            createdAt: timestamp,
+            sourceRevision: 1,
+            document: cloneLogoDocument(migrated),
+          };
+          transaction.objectStore(DOCUMENT_VERSION_STORE).put(version);
 
           return { created: true as const, workspace, summary };
         },
       );
 
       if (!result.created) {
-        return this.recoverExistingWorkspace(db, initialDocument);
+        return this.recoverExistingWorkspace(db);
       }
       return {
         activeDocumentId: result.workspace.activeDocumentId,
@@ -909,7 +940,6 @@ export class IndexedDbDocumentRepository implements DocumentRepository {
 
   private recoverExistingWorkspace(
     db: IDBDatabase,
-    initialDocument: LogoDocument,
   ): Promise<DocumentRepositoryBootstrap> {
     // Summaries and the active pointer are derived metadata. Reconcile them
     // against the authoritative heads in one transaction so interrupted or
@@ -1029,16 +1059,20 @@ export class IndexedDbDocumentRepository implements DocumentRepository {
           }
 
           if (validHeads.length === 0) {
-            const document = this.decode(initialDocument);
-            const head: HeadRecord = {
-              documentId: document.id,
-              document,
-              revision: 1,
-              createdAt: recoveredAt,
-              updatedAt: recoveredAt,
+            // Every head was corrupt and unrecoverable. The raw records are
+            // preserved above; the library reports empty instead of seeding
+            // a starter document over the incident.
+            summaryStore.clear();
+            workspaceStore.delete(WORKSPACE_KEY);
+            return {
+              activeDocumentId: null,
+              documents: [],
+              folders: sortDocumentFolders(folders),
+              migration: {
+                status: "blocked",
+                reason: `Corrupt document heads were preserved in IndexedDB store "${LEGACY_DOCUMENT_STORE}" under ${recoveryKeys.join(", ")}. No valid retained version could restore them.`,
+              },
             };
-            headStore.put(head);
-            validHeads.push({ head, document });
           }
         }
 

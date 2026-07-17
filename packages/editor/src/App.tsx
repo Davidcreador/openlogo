@@ -395,7 +395,7 @@ export default function App() {
     let disposed = false;
     setBootstrapLoading(true);
     void documentLibrary
-      .bootstrapLibrary(documentStore.document)
+      .bootstrapLibrary()
       .then(async () => {
         if (disposed) {
           return;

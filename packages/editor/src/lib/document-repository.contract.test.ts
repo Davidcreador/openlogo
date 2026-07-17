@@ -17,6 +17,15 @@ function makeDocument(id: string, name: string): LogoDocument {
   return { ...createInitialDocument(), id, name };
 }
 
+function seedDocument(
+  repository: DocumentRepository,
+  document: LogoDocument,
+): Promise<unknown> {
+  return Effect.runPromise(
+    repository.createDocument({ document, makeActive: true }),
+  );
+}
+
 function deterministicOptions() {
   let timestamp = 1_000;
   let id = 0;
@@ -75,16 +84,34 @@ describe.each(adapters)("DocumentRepository contract: $name", ({ create }) => {
     await fixture.cleanup();
   });
 
-  it("bootstraps exactly once and returns detached snapshots", async () => {
-    const initial = makeDocument("doc-initial", "Initial");
+  it("bootstraps a fresh library empty without seeding a document", async () => {
+    const first = await Effect.runPromise(fixture.repository.bootstrap());
+    const second = await Effect.runPromise(fixture.repository.bootstrap());
+    const documents = await Effect.runPromise(
+      fixture.repository.listDocuments(),
+    );
 
-    const first = await Effect.runPromise(
-      fixture.repository.bootstrap(initial),
+    expect(first).toEqual({
+      activeDocumentId: null,
+      documents: [],
+      folders: [],
+      migration: { status: "none" },
+    });
+    expect(second).toEqual(first);
+    expect(documents).toEqual([]);
+  });
+
+  it("activates the first created document and returns detached snapshots", async () => {
+    const initial = makeDocument("doc-initial", "Initial");
+    await Effect.runPromise(fixture.repository.bootstrap());
+    // Even without makeActive, the first document fills the empty pointer.
+    await Effect.runPromise(
+      fixture.repository.createDocument({ document: initial }),
     );
+
+    const first = await Effect.runPromise(fixture.repository.bootstrap());
     first.documents[0]!.name = "Mutated outside repository";
-    const second = await Effect.runPromise(
-      fixture.repository.bootstrap(makeDocument("doc-other", "Other")),
-    );
+    const second = await Effect.runPromise(fixture.repository.bootstrap());
 
     expect(first.activeDocumentId).toBe(initial.id);
     expect(second.activeDocumentId).toBe(initial.id);
@@ -101,7 +128,7 @@ describe.each(adapters)("DocumentRepository contract: $name", ({ create }) => {
 
   it("manages folders and derived thumbnails without advancing head revisions", async () => {
     const initial = makeDocument("doc-dashboard", "Dashboard document");
-    await Effect.runPromise(fixture.repository.bootstrap(initial));
+    await seedDocument(fixture.repository, initial);
 
     const folder = await Effect.runPromise(
       fixture.repository.createFolder("  Client work  "),
@@ -124,7 +151,7 @@ describe.each(adapters)("DocumentRepository contract: $name", ({ create }) => {
       fixture.repository.renameFolder(folder.folderId, "Approved"),
     );
     const bootstrap = await Effect.runPromise(
-      fixture.repository.bootstrap(makeDocument("ignored", "Ignored")),
+      fixture.repository.bootstrap(),
     );
 
     expect(folder).toMatchObject({
@@ -156,7 +183,7 @@ describe.each(adapters)("DocumentRepository contract: $name", ({ create }) => {
 
     await Effect.runPromise(fixture.repository.deleteFolder(folder.folderId));
     const afterDelete = await Effect.runPromise(
-      fixture.repository.bootstrap(initial),
+      fixture.repository.bootstrap(),
     );
     expect(afterDelete.folders).toEqual([]);
     expect(afterDelete.documents[0]?.folderId).toBeNull();
@@ -165,7 +192,7 @@ describe.each(adapters)("DocumentRepository contract: $name", ({ create }) => {
 
   it("rejects moves to missing folders without changing document metadata", async () => {
     const initial = makeDocument("doc-missing-folder", "No folder");
-    await Effect.runPromise(fixture.repository.bootstrap(initial));
+    await seedDocument(fixture.repository, initial);
 
     const outcome = await Effect.runPromise(
       Effect.either(
@@ -186,7 +213,7 @@ describe.each(adapters)("DocumentRepository contract: $name", ({ create }) => {
   it("creates, lists, loads, and activates independent documents", async () => {
     const first = makeDocument("doc-first", "First");
     const second = makeDocument("doc-second", "Second");
-    await Effect.runPromise(fixture.repository.bootstrap(first));
+    await seedDocument(fixture.repository, first);
 
     await Effect.runPromise(
       fixture.repository.createDocument({ document: second }),
@@ -201,7 +228,7 @@ describe.each(adapters)("DocumentRepository contract: $name", ({ create }) => {
       fixture.repository.listDocuments(),
     );
     const bootstrapped = await Effect.runPromise(
-      fixture.repository.bootstrap(first),
+      fixture.repository.bootstrap(),
     );
     const reloaded = await Effect.runPromise(
       fixture.repository.loadDocument(second.id),
@@ -223,7 +250,7 @@ describe.each(adapters)("DocumentRepository contract: $name", ({ create }) => {
     const first = makeDocument("doc-first", "First");
     const second = makeDocument("doc-second", "Second");
     const third = makeDocument("doc-third", "Third");
-    await Effect.runPromise(fixture.repository.bootstrap(first));
+    await seedDocument(fixture.repository, first);
     await Effect.runPromise(
       fixture.repository.createDocument({ document: second }),
     );
@@ -235,7 +262,7 @@ describe.each(adapters)("DocumentRepository contract: $name", ({ create }) => {
       fixture.repository.archiveDocument(first.id),
     );
     const bootstrapped = await Effect.runPromise(
-      fixture.repository.bootstrap(makeDocument("ignored", "Ignored")),
+      fixture.repository.bootstrap(),
     );
 
     expect(result).toMatchObject({
@@ -261,7 +288,7 @@ describe.each(adapters)("DocumentRepository contract: $name", ({ create }) => {
   it("keeps archived heads recoverable but read-only until restored", async () => {
     const first = makeDocument("doc-first", "First");
     const second = makeDocument("doc-second", "Second");
-    await Effect.runPromise(fixture.repository.bootstrap(first));
+    await seedDocument(fixture.repository, first);
     await Effect.runPromise(
       fixture.repository.createDocument({ document: second }),
     );
@@ -325,14 +352,14 @@ describe.each(adapters)("DocumentRepository contract: $name", ({ create }) => {
     expect(restored.archivedAt).toBeNull();
     await Effect.runPromise(fixture.repository.setActiveDocument(second.id));
     const bootstrapped = await Effect.runPromise(
-      fixture.repository.bootstrap(first),
+      fixture.repository.bootstrap(),
     );
     expect(bootstrapped.activeDocumentId).toBe(second.id);
   });
 
   it("rejects archiving the final unarchived document without changing state", async () => {
     const only = makeDocument("doc-only", "Only document");
-    await Effect.runPromise(fixture.repository.bootstrap(only));
+    await seedDocument(fixture.repository, only);
 
     const outcome = await Effect.runPromise(
       Effect.either(fixture.repository.archiveDocument(only.id)),
@@ -341,7 +368,7 @@ describe.each(adapters)("DocumentRepository contract: $name", ({ create }) => {
       fixture.repository.listDocuments(),
     );
     const bootstrapped = await Effect.runPromise(
-      fixture.repository.bootstrap(only),
+      fixture.repository.bootstrap(),
     );
 
     expect(outcome).toMatchObject({
@@ -357,7 +384,7 @@ describe.each(adapters)("DocumentRepository contract: $name", ({ create }) => {
   it("serializes competing archives so exactly one unarchived head survives", async () => {
     const first = makeDocument("doc-first", "First");
     const second = makeDocument("doc-second", "Second");
-    await Effect.runPromise(fixture.repository.bootstrap(first));
+    await seedDocument(fixture.repository, first);
     await Effect.runPromise(
       fixture.repository.createDocument({ document: second }),
     );
@@ -374,7 +401,7 @@ describe.each(adapters)("DocumentRepository contract: $name", ({ create }) => {
       fixture.repository.listDocuments(),
     );
     const bootstrapped = await Effect.runPromise(
-      fixture.repository.bootstrap(first),
+      fixture.repository.bootstrap(),
     );
     const unarchived = documents.filter(
       (document) => document.archivedAt === null,
@@ -396,7 +423,7 @@ describe.each(adapters)("DocumentRepository contract: $name", ({ create }) => {
 
   it("increments revisions and preserves stale writes as conflict versions", async () => {
     const initial = makeDocument("doc-conflict", "Initial");
-    await Effect.runPromise(fixture.repository.bootstrap(initial));
+    await seedDocument(fixture.repository, initial);
 
     const committed = await Effect.runPromise(
       fixture.repository.commitDocument({
@@ -443,7 +470,7 @@ describe.each(adapters)("DocumentRepository contract: $name", ({ create }) => {
 
   it("bounds automatic versions without pruning named or conflict recovery", async () => {
     const initial = makeDocument("doc-retention", "Retention");
-    await Effect.runPromise(fixture.repository.bootstrap(initial));
+    await seedDocument(fixture.repository, initial);
     await Effect.runPromise(
       fixture.repository.createVersion({
         documentId: initial.id,
@@ -494,7 +521,7 @@ describe.each(adapters)("DocumentRepository contract: $name", ({ create }) => {
 
   it("rejects invalid snapshots without replacing the authoritative head", async () => {
     const initial = makeDocument("doc-invalid-write", "Valid head");
-    await Effect.runPromise(fixture.repository.bootstrap(initial));
+    await seedDocument(fixture.repository, initial);
     const invalid = structuredClone(initial);
     invalid.name = "Invalid replacement";
     invalid.artboards[0]!.width = -1;
@@ -550,7 +577,7 @@ describe.each(adapters)("DocumentRepository contract: $name", ({ create }) => {
 
   it("returns detached versions that can be restored as a new head revision", async () => {
     const initial = makeDocument("doc-version-restore", "Initial");
-    await Effect.runPromise(fixture.repository.bootstrap(initial));
+    await seedDocument(fixture.repository, initial);
     await Effect.runPromise(
       fixture.repository.commitDocument({
         documentId: initial.id,

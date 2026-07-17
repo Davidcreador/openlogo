@@ -66,12 +66,19 @@ export class MemoryDocumentRepository implements DocumentRepository {
     );
   }
 
-  bootstrap(
-    initialDocument: LogoDocument,
-  ): Effect.Effect<DocumentRepositoryBootstrap, DocumentRepositoryFailure> {
+  bootstrap(): Effect.Effect<
+    DocumentRepositoryBootstrap,
+    DocumentRepositoryFailure
+  > {
     return this.attempt("migrate", () => {
       if (this.heads.size === 0) {
-        this.insertInitial(initialDocument, true);
+        this.activeDocumentId = null;
+        return {
+          activeDocumentId: null,
+          documents: [],
+          folders: this.sortedFolders(),
+          migration: { status: "none" },
+        };
       }
       const unarchived = this.sortedSummaries().filter(
         (summary) => summary.archivedAt === null,

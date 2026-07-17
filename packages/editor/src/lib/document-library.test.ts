@@ -102,9 +102,13 @@ async function setup(
     repository,
     controllerOptions,
   );
+  // Mirror production: the dashboard bootstraps an (empty) library, the user
+  // creates the first document, and only then does a session adopt it.
+  await controller.bootstrapLibrary();
+  await controller.createDocument(initial);
   const session = new DocumentSession({
     store,
-    load: () => controller.loadActiveDocument(initial),
+    load: async () => store.document,
     save: (document) => controller.saveDocument(document),
     delayMs: 10_000,
     lifecycleTarget: null,
@@ -130,14 +134,23 @@ describe("DocumentLibraryController", () => {
       thumbnailDelayMs: 0,
     });
 
-    await controller.bootstrapLibrary(initial);
+    await controller.bootstrapLibrary();
 
     expect(controller.snapshot).toMatchObject({
       ready: true,
-      activeDocumentId: initial.id,
-      documents: [{ documentId: initial.id, name: initial.name }],
+      activeDocumentId: null,
+      documents: [],
       folders: [],
       versions: [],
+      notice: null,
+    });
+    expect(loadDocument).not.toHaveBeenCalled();
+    expect(listVersions).not.toHaveBeenCalled();
+
+    await controller.createDocument(initial);
+    expect(controller.snapshot).toMatchObject({
+      activeDocumentId: initial.id,
+      documents: [{ documentId: initial.id, name: initial.name }],
     });
     expect(loadDocument).not.toHaveBeenCalled();
     expect(listVersions).not.toHaveBeenCalled();
@@ -155,7 +168,8 @@ describe("DocumentLibraryController", () => {
       thumbnailRenderer: async () => "data:image/png;base64,dGVzdA==",
       thumbnailDelayMs: 0,
     });
-    await controller.bootstrapLibrary(initial);
+    await controller.bootstrapLibrary();
+    await controller.createDocument(initial);
 
     const created = await controller.createDocument(
       makeDocument("doc-dashboard-created", "Created"),
@@ -196,7 +210,8 @@ describe("DocumentLibraryController", () => {
     const controller = new DocumentLibraryController(repository, {
       thumbnailRenderer,
     });
-    await controller.bootstrapLibrary(initial);
+    await controller.bootstrapLibrary();
+    await controller.createDocument(initial);
 
     await controller.backfillThumbnail(initial.id);
 
@@ -218,7 +233,8 @@ describe("DocumentLibraryController", () => {
         throw new Error("thumbnail unavailable");
       },
     });
-    await controller.bootstrapLibrary(initial);
+    await controller.bootstrapLibrary();
+    await controller.createDocument(initial);
 
     await expect(controller.backfillThumbnail(initial.id)).resolves.toBeUndefined();
 
@@ -366,7 +382,7 @@ describe("DocumentLibraryController", () => {
     expect(controller.snapshot.documents[0]?.folderId).toBe(folder.folderId);
 
     await controller.deleteFolder(folder.folderId);
-    const bootstrap = await Effect.runPromise(repository.bootstrap(initial));
+    const bootstrap = await Effect.runPromise(repository.bootstrap());
     expect(controller.snapshot.folders).toEqual([]);
     expect(controller.snapshot.documents[0]?.folderId).toBeNull();
     expect(bootstrap.folders).toEqual([]);
@@ -431,7 +447,7 @@ describe("DocumentLibraryController", () => {
     expect(store.document).toEqual(edited);
     expect(session.state).toBe("error");
     const bootstrap = await Effect.runPromise(
-      repository.bootstrap(makeDocument("ignored", "Ignored")),
+      repository.bootstrap(),
     );
     expect(bootstrap.activeDocumentId).toBe(initial.id);
 
