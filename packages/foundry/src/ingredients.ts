@@ -35,7 +35,7 @@ export const MOTIFS: readonly Motif[] = [
   { id: "star", name: "Five-point star", d: "M50 4 61 36 95 36 67 56 78 90 50 70 22 90 33 56 5 36 39 36Z", viewBox: { width: 100, height: 100 }, vibes: ["classic", "retro", "streetwear", "playful"] },
   { id: "diamond", name: "Diamond", d: "M50 4 96 50 50 96 4 50Z", viewBox: { width: 100, height: 100 }, vibes: ["minimal", "classic", "elegant"] },
   { id: "shield", name: "Shield", d: "M12 8H88V48C88 72 72 88 50 96 28 88 12 72 12 48Z", viewBox: { width: 100, height: 100 }, vibes: ["classic", "retro", "streetwear"] },
-  { id: "spark", name: "Four-point spark", d: "M50 2C54 34 66 46 98 50 66 54 54 66 50 98 46 66 34 54 2 50 34 46 46 34Z", viewBox: { width: 100, height: 100 }, vibes: ["minimal", "elegant", "playful"] },
+  { id: "spark", name: "Four-point spark", d: "M50 2C54 34 66 46 98 50C66 54 54 66 50 98C46 66 34 54 2 50C34 46 46 34 50 2Z", viewBox: { width: 100, height: 100 }, vibes: ["minimal", "elegant", "playful"] },
   { id: "crown", name: "Crown", d: "M10 28 30 48 50 12 70 48 90 28 82 82H18ZM22 88H78V96H22Z", viewBox: { width: 100, height: 100 }, vibes: ["classic", "retro", "elegant"] },
   { id: "burst", name: "Eight-point burst", d: "M50 2 60 30 84 16 70 40 98 50 70 60 84 84 60 70 50 98 40 70 16 84 30 60 2 50 30 40 16 16 40 30Z", viewBox: { width: 100, height: 100 }, vibes: ["retro", "streetwear", "playful"] },
   { id: "leaf", name: "Leaf", d: "M10 86C16 38 45 8 91 10 88 57 58 84 10 86ZM18 78C40 62 58 44 79 20", viewBox: { width: 100, height: 100 }, vibes: ["classic", "elegant", "playful"] },

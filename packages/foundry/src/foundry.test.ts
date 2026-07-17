@@ -31,6 +31,68 @@ function contrast(first: string, second: string): number {
   return (lighter! + 0.05) / (darker! + 0.05);
 }
 
+const PATH_COMMAND_ARITY: Record<string, number> = {
+  A: 7,
+  C: 6,
+  H: 1,
+  L: 2,
+  M: 2,
+  Q: 4,
+  S: 4,
+  T: 2,
+  V: 1,
+  Z: 0,
+};
+
+function validatePathData(d: string): void {
+  const tokenPattern = /[a-zA-Z]|[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?/g;
+  const tokens = [...d.matchAll(tokenPattern)];
+  if (tokens[0]?.[0].toUpperCase() !== "M") {
+    throw new Error("Path data must start with a move command");
+  }
+  let cursor = 0;
+  let command = "";
+  let parameterCount = 0;
+
+  const finishCommand = () => {
+    if (!command) {
+      return;
+    }
+    const arity = PATH_COMMAND_ARITY[command.toUpperCase()];
+    if (arity === undefined) {
+      throw new Error(`Unsupported path command: ${command}`);
+    }
+    if (arity > 0 && (parameterCount === 0 || parameterCount % arity !== 0)) {
+      throw new Error(
+        `Path command ${command} has ${parameterCount} parameters; expected groups of ${arity}`,
+      );
+    }
+  };
+
+  for (const match of tokens) {
+    if (!/^[\s,]*$/.test(d.slice(cursor, match.index))) {
+      throw new Error(`Invalid path data near: ${d.slice(cursor)}`);
+    }
+    cursor = match.index! + match[0].length;
+
+    if (/^[a-zA-Z]$/.test(match[0])) {
+      finishCommand();
+      command = match[0];
+      parameterCount = 0;
+    } else {
+      if (!command || command.toUpperCase() === "Z") {
+        throw new Error(`Path number has no command: ${match[0]}`);
+      }
+      parameterCount += 1;
+    }
+  }
+
+  if (!/^[\s,]*$/.test(d.slice(cursor))) {
+    throw new Error(`Invalid path data near: ${d.slice(cursor)}`);
+  }
+  finishCommand();
+}
+
 describe("foundry generation", () => {
   it("pins the mulberry32 sequence", () => {
     const random = createPrng(42);
@@ -99,6 +161,36 @@ describe("foundry generation", () => {
         expect(new Set(Object.keys(document.nodes)).size).toBe(Object.keys(document.nodes).length);
         expect(Object.keys(document.nodes).every((id) => id.includes((700 + index).toString(36)))).toBe(true);
       }
+    }
+  });
+
+  it("emits valid path data across every archetype, vibe, and seed", () => {
+    for (const archetypeId of ARCHETYPE_IDS) {
+      for (const vibe of VIBES) {
+        for (let seed = 0; seed < 24; seed += 1) {
+          const document = generate({
+            brandName: "Open Logo Works",
+            tagline: "Made to evolve",
+            archetypeId,
+            vibe,
+            seed,
+          });
+          for (const node of Object.values(document.nodes)) {
+            if (node.type === "path") {
+              expect(
+                () => validatePathData(node.d),
+                `${archetypeId}:${vibe}:${seed}:${node.name}`,
+              ).not.toThrow();
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("defines valid path data for every curated motif", () => {
+    for (const motif of MOTIFS) {
+      expect(() => validatePathData(motif.d), motif.id).not.toThrow();
     }
   });
 
