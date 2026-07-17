@@ -30,6 +30,9 @@ describe("interaction safety helpers", () => {
     ["document library", { documentLibraryOpen: true }],
     ["transform dialog", { transformDialogOpen: true }],
     ["export dialog", { exportDialogOpen: true }],
+    ["command palette", { commandPaletteOpen: true }],
+    ["shortcut overlay", { shortcutOverlayOpen: true }],
+    ["canvas context menu", { contextMenuOpen: true }],
   ])("blocks workspace shortcuts behind the %s", (_label, override) => {
     expect(
       shouldBlockWorkspaceShortcuts(

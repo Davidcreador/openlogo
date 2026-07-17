@@ -123,15 +123,15 @@ const NODE_ICONS = {
   group: Folder,
 } as const;
 
-/* Recurring utility recipes. Each section is its own card on the panel's
-   paper background; fields share the warm sunken look with an accent
-   focus ring. */
+/* Recurring section rhythm; fields keep the sunken panel language. */
 const SECTION =
-  "inspector-section shrink-0 rounded-[12px] border border-panel-hairline bg-card p-14 shadow-section";
-const SECTION_HEAD = "section-head mb-12 flex min-h-22 items-center justify-between gap-8";
+  "inspector-section shrink-0 border-b border-panel-hairline px-14 py-13";
+const SECTION_HEAD =
+  "section-head flex min-h-24 items-center justify-between gap-8";
 const SECTION_H2 =
-  "m-0 text-[11px] font-[680] uppercase tracking-[0.075em] text-ink-dim";
-const SECTION_META = "section-meta min-w-0 flex-none max-w-[55%] truncate text-[11px] tabular-nums text-ink-dim";
+  "m-0 text-[10px] font-[700] uppercase tracking-[0.11em] text-ink-dim";
+const SECTION_META =
+  "section-meta min-w-0 max-w-[55%] flex-none truncate text-[10.5px] font-[560] tabular-nums text-ink-dim";
 const MUTED = "m-0 text-[12px] leading-[1.5] text-ink-dim";
 const FIELD_GRID = "grid grid-cols-2 gap-7";
 const FIELD_ROW = "flex gap-6";
@@ -173,17 +173,17 @@ function PanelSection({
 
   return (
     <section className={SECTION}>
-      <header className={`${SECTION_HEAD}${open ? "" : " mb-0"}`}>
+      <header className={`${SECTION_HEAD} ${open ? "mb-11" : ""}`}>
         <button
           type="button"
-          className="group flex min-w-0 flex-1 items-center gap-7 text-left"
+          className="group flex min-h-24 min-w-0 flex-1 items-center gap-7 text-left"
           aria-expanded={open}
           aria-controls={contentId}
           onClick={() => setOpen((value) => !value)}
         >
           <span
-            className={`grid h-18 w-18 flex-none place-items-center rounded-[5px] text-ink-dim transition-[transform,background-color,color] duration-140 ease-studio group-hover:bg-field group-hover:text-ink ${
-              open ? "rotate-90" : ""
+            className={`section-chevron grid h-18 w-18 flex-none place-items-center rounded-[5px] text-ink-dim transition-[transform,background-color,color] duration-160 ease-studio group-hover:bg-field group-hover:text-ink ${
+              open ? "is-open text-ink" : ""
             }`}
             aria-hidden="true"
           >
@@ -193,7 +193,7 @@ function PanelSection({
         </button>
         {action ?? (meta ? <span className={SECTION_META}>{meta}</span> : null)}
       </header>
-      <div id={contentId} hidden={!open}>
+      <div id={contentId} className="section-content" hidden={!open}>
         {children}
       </div>
     </section>
@@ -2800,10 +2800,10 @@ export function Inspector() {
   // controls readable and gives deep layer trees a stable, full-height target.
   return (
     <aside
-      className="inspector flex min-h-0 flex-col overflow-hidden border-l border-panel-border bg-panel shadow-rail"
+      className="inspector flex min-h-0 flex-col overflow-hidden border-l border-panel-hairline bg-panel shadow-rail"
       aria-label="Inspector"
     >
-      <header className="flex-none border-b border-panel-border bg-card/80 px-12 pb-10 pt-12 backdrop-blur-[10px]">
+      <header className="flex-none border-b border-panel-hairline bg-card/60 px-14 pb-11 pt-13 backdrop-blur-[10px]">
         <div className="mb-11 flex min-w-0 items-center gap-9">
           <span
             className="grid h-34 w-34 flex-none place-items-center rounded-[10px] border border-accent/16 bg-accent-soft text-accent"
@@ -2812,7 +2812,7 @@ export function Inspector() {
             <ContextIcon size={15} strokeWidth={1.8} />
           </span>
           <div className="min-w-0 flex-1">
-            <span className="mb-2 block text-[9.5px] font-[680] uppercase tracking-[0.09em] text-ink-dim">
+            <span className="mb-2 block text-[9.5px] font-[700] uppercase tracking-[0.12em] text-ink-dim">
               Inspector
             </span>
             <strong
@@ -2883,7 +2883,7 @@ export function Inspector() {
         id="inspector-properties-panel"
         role="tabpanel"
         aria-labelledby="inspector-properties-tab"
-        className={`inspector-card min-h-0 flex-1 flex-col gap-9 overflow-y-auto p-10 ${
+        className={`inspector-card min-h-0 flex-1 flex-col overflow-y-auto ${
           activeView === "properties" ? "flex" : "hidden"
         }`}
       >
@@ -2916,7 +2916,7 @@ export function Inspector() {
         </>
       ) : (
         <section
-          className={`${SECTION} grid justify-items-center gap-6 px-14 pb-18 pt-22 text-center`}
+          className="m-10 grid shrink-0 justify-items-center gap-6 rounded-[12px] border border-panel-hairline bg-card px-14 pb-18 pt-22 text-center shadow-section"
         >
           <span
             className="mb-4 grid h-34 w-34 place-items-center rounded-[10px] border border-accent/18 bg-[linear-gradient(135deg,var(--color-accent-soft),var(--color-accent-soft-2))] text-accent"

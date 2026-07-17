@@ -633,7 +633,17 @@ function DesignMateFocusOverlay() {
   );
 }
 
-export function CanvasStage() {
+export type CanvasContextMenuRequest = {
+  x: number;
+  y: number;
+  nodeId: string | null;
+};
+
+export function CanvasStage({
+  onContextMenu,
+}: {
+  onContextMenu?: (request: CanvasContextMenuRequest) => void;
+}) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const canvasKitRef = useRef<Awaited<ReturnType<typeof getCanvasKit>> | null>(null);
@@ -1815,6 +1825,8 @@ export function CanvasStage() {
     if (!canvas || !renderer) {
       return;
     }
+
+    if (event.button === 2) return;
 
     canvas.setPointerCapture(event.pointerId);
     const screen = getScreenPoint(event);
@@ -3201,6 +3213,39 @@ export function CanvasStage() {
     }
   }
 
+  function handleContextMenu(event: React.MouseEvent<HTMLCanvasElement>) {
+    event.preventDefault();
+    const canvas = canvasRef.current;
+    const renderer = rendererRef.current;
+    if (!canvas || !renderer || !onContextMenu) return;
+
+    canvas.focus();
+    const state = useEditorStore.getState();
+    const rect = canvas.getBoundingClientRect();
+    const hit = renderer.hitTest({
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    });
+    let nodeId: string | null = null;
+    if (hit) {
+      const resolved = resolveUnit(
+        documentStore.document,
+        hit.id,
+        state.activeGroupId,
+        event.metaKey,
+      );
+      nodeId = resolved.unitId;
+      if (resolved.scopeId !== state.activeGroupId) {
+        state.setActiveGroupId(resolved.scopeId);
+      }
+      if (!state.selectedNodeIds.includes(nodeId)) {
+        state.setSelection([nodeId]);
+      }
+      state.setTool("select");
+    }
+    onContextMenu({ x: event.clientX, y: event.clientY, nodeId });
+  }
+
   /**
    * ⌥←/⌥→ in the text-edit overlay: adjust one pair's kerning. Any
    * pending content edit commits in the same command so the pair index
@@ -3304,7 +3349,9 @@ export function CanvasStage() {
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
         onDoubleClick={handleDoubleClick}
+        onContextMenu={handleContextMenu}
         aria-label="OpenLogo canvas"
+        tabIndex={0}
       />
       <DesignMateFocusOverlay />
       {!rendererFailure && <GradientAnnotator />}

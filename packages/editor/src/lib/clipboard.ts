@@ -13,6 +13,10 @@ let pasteCount = 0;
 
 const PASTE_OFFSET = 12;
 
+export function canPasteNodes(): boolean {
+  return clipboard !== null;
+}
+
 /** Copy unit subtrees in scene z-order so paste preserves stacking. */
 export function copyNodes(nodeIds: readonly string[]): number {
   const document = documentStore.committedDocument;

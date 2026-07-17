@@ -1,21 +1,29 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Effect } from "effect";
 import { CanvasStage } from "./canvas/CanvasStage";
+import {
+  CanvasContextMenu,
+  type CanvasMenuState,
+} from "./components/CanvasContextMenu";
+import { CommandPalette } from "./components/CommandPalette";
 import { PreviewStrip } from "./components/PreviewStrip";
+import { ShortcutOverlay } from "./components/ShortcutOverlay";
 import { Toast } from "./components/Toast";
 import { Toolbar } from "./components/Toolbar";
 import { TopBar } from "./components/TopBar";
 import { ArtboardEdgeControls } from "./components/ArtboardEdgeControls";
 import { ZoomControls } from "./components/ZoomControls";
 import {
+  type AlignEdge,
   collectLeafNodeIds,
   createInitialDocument,
   getActiveArtboard,
   getParentGroupId,
   pixelSnapPatch,
 } from "@openlogo/core";
-import { fitBounds, zoomAt } from "@openlogo/renderer";
-import { copyNodes, cutNodes, pasteNodes } from "./lib/clipboard";
+import { type BooleanOp, fitBounds, zoomAt } from "@openlogo/renderer";
+import { canPasteNodes, copyNodes, cutNodes, pasteNodes } from "./lib/clipboard";
+import { applyBooleanOp, combinableNodes } from "./lib/boolean-ops";
 import { getCanvasKit } from "./lib/canvaskit";
 import { cancelActiveCanvasSessions } from "./lib/canvas-sessions";
 import {
@@ -33,13 +41,22 @@ import {
 } from "./lib/document-file";
 import { joinSelectedPaths } from "./lib/path-surgery";
 import { shouldBlockWorkspaceShortcuts } from "./lib/keyboard-shortcuts";
+import {
+  type CommandAvailability,
+  type CommandId,
+} from "./lib/commands-registry";
 import { recordTransform, transformAgain } from "./lib/transform-again";
 import {
   deleteSelection,
   groupSelection,
   ungroupSelection,
 } from "./lib/group-ops";
-import { arrangeNodes } from "./lib/object-ops";
+import {
+  alignNodes,
+  arrangeNodes,
+  flipNodes,
+  type ArrangePlacement,
+} from "./lib/object-ops";
 import {
   clearEditingSession,
   editingSessionDocumentId,
@@ -104,6 +121,41 @@ const TOOL_SHORTCUTS: Record<string, Tool> = {
   s: "shapeBuilder",
 };
 
+const COMMAND_TO_TOOL: Partial<Record<CommandId, Tool>> = {
+  "tool.select": "select",
+  "tool.rectangle": "rectangle",
+  "tool.ellipse": "ellipse",
+  "tool.pen": "pen",
+  "tool.path": "path",
+  "tool.text": "text",
+  "tool.eyedropper": "eyedropper",
+  "tool.gradient": "gradient",
+  "tool.shape-builder": "shapeBuilder",
+};
+
+const ALIGN_COMMANDS: Partial<Record<CommandId, AlignEdge>> = {
+  "arrange.align-left": "left",
+  "arrange.align-center": "centerX",
+  "arrange.align-right": "right",
+  "arrange.align-top": "top",
+  "arrange.align-middle": "centerY",
+  "arrange.align-bottom": "bottom",
+};
+
+const BOOLEAN_COMMANDS: Partial<Record<CommandId, BooleanOp>> = {
+  "edit.boolean-union": "union",
+  "edit.boolean-subtract": "subtract",
+  "edit.boolean-intersect": "intersect",
+  "edit.boolean-exclude": "exclude",
+};
+
+const ARRANGE_COMMANDS: Partial<Record<CommandId, ArrangePlacement>> = {
+  "arrange.forward": "forward",
+  "arrange.backward": "backward",
+  "arrange.front": "front",
+  "arrange.back": "back",
+};
+
 function isEditableTarget(target: EventTarget | null): boolean {
   return (
     target instanceof HTMLInputElement ||
@@ -113,11 +165,194 @@ function isEditableTarget(target: EventTarget | null): boolean {
   );
 }
 
+function selectAllNodes(): void {
+  const state = useEditorStore.getState();
+  const document = documentStore.document;
+  const artboard = document.artboards.find(
+    (item) => item.id === document.activeArtboardId,
+  );
+  if (!artboard) return;
+  state.setSelection(
+    artboard.nodeIds.filter((id) => {
+      const node = document.nodes[id];
+      return node && node.visible && !node.locked;
+    }),
+  );
+  state.setTool("select");
+}
+
+function setZoom(zoom: "fit" | 1): void {
+  const state = useEditorStore.getState();
+  const { camera, viewport } = state;
+  if (viewport.width === 0 || viewport.height === 0) return;
+  if (zoom === "fit") {
+    state.setCamera(
+      fitBounds(
+        getActiveArtboard(documentStore.document),
+        viewport.width,
+        viewport.height,
+      ),
+    );
+    return;
+  }
+  state.setCamera(
+    zoomAt(camera, { x: viewport.width / 2, y: viewport.height / 2 }, zoom),
+  );
+}
+
+async function runBooleanCommand(
+  op: BooleanOp,
+  selection: string[],
+): Promise<void> {
+  const state = useEditorStore.getState();
+  try {
+    const id = await applyBooleanOp(op, selection);
+    if (id) state.setSelection([id]);
+    else state.setToast("Those shapes could not be combined.");
+  } catch (error) {
+    console.warn("Boolean operation failed", error);
+    state.setToast(
+      "Boolean operation failed. The original shapes were preserved.",
+    );
+  }
+}
+
+function runEditorCommand(id: CommandId): void {
+  const state = useEditorStore.getState();
+  const selection = state.selectedNodeIds;
+  const tool = COMMAND_TO_TOOL[id];
+  if (tool) {
+    if (tool === "gradient") state.setGradientTarget("fill");
+    state.setTool(tool);
+    return;
+  }
+
+  const booleanOp = BOOLEAN_COMMANDS[id];
+  if (booleanOp) {
+    void runBooleanCommand(booleanOp, selection);
+    return;
+  }
+
+  const alignEdge = ALIGN_COMMANDS[id];
+  if (alignEdge) {
+    alignNodes(selection, alignEdge, state.keyObjectId);
+    return;
+  }
+
+  const arrangement = ARRANGE_COMMANDS[id];
+  if (arrangement) {
+    arrangeNodes(selection, arrangement);
+    return;
+  }
+
+  switch (id) {
+    case "edit.undo":
+    case "edit.redo":
+      cancelActiveCanvasSessions();
+      if (id === "edit.undo") documentStore.undo();
+      else documentStore.redo();
+      state.setSelection([]);
+      state.setActiveGroupId(null);
+      return;
+    case "edit.cut":
+      cutNodes(selection);
+      state.setSelection([]);
+      return;
+    case "edit.copy":
+      copyNodes(selection);
+      return;
+    case "edit.paste": {
+      const ids = pasteNodes();
+      if (ids.length > 0) {
+        state.setSelection(ids);
+        state.setTool("select");
+      }
+      return;
+    }
+    case "edit.duplicate":
+      copyNodes(selection);
+      runEditorCommand("edit.paste");
+      return;
+    case "edit.transform-again": {
+      const ids = transformAgain(selection);
+      if (ids && ids.length > 0) state.setSelection(ids);
+      return;
+    }
+    case "edit.select-all":
+      selectAllNodes();
+      return;
+    case "edit.delete":
+      deleteSelection(selection);
+      state.setSelection([]);
+      return;
+    case "edit.group": {
+      const groupId = groupSelection(selection);
+      if (groupId) state.setSelection([groupId]);
+      return;
+    }
+    case "edit.ungroup": {
+      const ids = ungroupSelection(selection);
+      if (ids.length > 0) state.setSelection(ids);
+      return;
+    }
+    case "arrange.flip-horizontal":
+      flipNodes(selection, "horizontal");
+      return;
+    case "arrange.flip-vertical":
+      flipNodes(selection, "vertical");
+      return;
+    case "arrange.transform":
+      state.setTransformDialogOpen(true);
+      return;
+    case "view.fit":
+      setZoom("fit");
+      return;
+    case "view.actual-size":
+      setZoom(1);
+      return;
+    case "view.design-mate":
+      document
+        .querySelector<HTMLButtonElement>("[data-design-mate-trigger]")
+        ?.click();
+      return;
+    case "document.open":
+      promptOpenDocument();
+      return;
+    case "document.save":
+      saveDocumentFile();
+      return;
+    case "document.library":
+      state.setDocumentLibraryOpen(true);
+      return;
+    case "document.export":
+      state.setExportDialogOpen(true);
+  }
+}
+
+function commandAvailability(selection: string[]): CommandAvailability {
+  const state = useEditorStore.getState();
+  return {
+    selectionCount: selection.length,
+    selectedGroupCount: selection.filter(
+      (id) => documentStore.document.nodes[id]?.type === "group",
+    ).length,
+    canUndo: documentStore.canUndo,
+    canRedo: documentStore.canRedo,
+    canPaste: canPasteNodes(),
+    canBoolean: combinableNodes(selection).length >= 2,
+    viewportReady: state.viewport.width > 0 && state.viewport.height > 0,
+  };
+}
+
 export default function App() {
   const view = useEditorStore((state) => state.view);
+  const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   const [sessionReady, setSessionReady] = useState(false);
   const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const [bootstrapLoading, setBootstrapLoading] = useState(true);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [shortcutOverlayOpen, setShortcutOverlayOpen] = useState(false);
+  const [canvasMenu, setCanvasMenu] = useState<CanvasMenuState | null>(null);
   const pendingSvgRef = useRef<File | null>(null);
   const transformDialogOpen = useEditorStore(
     (state) => state.transformDialogOpen,
@@ -363,35 +598,43 @@ export default function App() {
     }
 
     function onKeyDown(event: KeyboardEvent) {
-      if (isEditableTarget(event.target)) {
-        return;
-      }
-
       const state = useEditorStore.getState();
+      const key = event.key.toLowerCase();
+      const modifier = event.metaKey || event.ctrlKey;
       if (
+        document.querySelector('[role="dialog"][aria-modal="true"]') ||
         shouldBlockWorkspaceShortcuts(
-          state,
+          {
+            ...state,
+            commandPaletteOpen,
+            shortcutOverlayOpen,
+            contextMenuOpen: canvasMenu !== null,
+          },
           Boolean(documentLibrary.snapshot.operation),
         )
       ) {
         return;
       }
-      const key = event.key.toLowerCase();
 
-      if ((event.metaKey || event.ctrlKey) && key === "z") {
+      if (modifier && key === "k") {
         event.preventDefault();
-        cancelActiveCanvasSessions();
-        if (event.shiftKey) {
-          documentStore.redo();
-        } else {
-          documentStore.undo();
-        }
-        state.setSelection([]);
-        state.setActiveGroupId(null); // scope target may no longer exist
+        setCommandPaletteOpen(true);
+        return;
+      }
+      if (modifier && key === "/") {
+        event.preventDefault();
+        setShortcutOverlayOpen(true);
+        return;
+      }
+      if (isEditableTarget(event.target)) return;
+
+      if (modifier && key === "z") {
+        event.preventDefault();
+        runEditorCommand(event.shiftKey ? "edit.redo" : "edit.undo");
         return;
       }
 
-      if (event.metaKey || event.ctrlKey) {
+      if (modifier) {
         const selection = state.selectedNodeIds;
 
         // ⇧⌘C = OS clipboard "Copy as SVG" (selection, else active board).
@@ -404,36 +647,31 @@ export default function App() {
 
         if (key === "c" && selection.length > 0) {
           event.preventDefault();
-          copyNodes(selection);
+          runEditorCommand("edit.copy");
           return;
         }
 
         // ⌘S = save as .openlogo, ⌘O = open one (browser defaults eaten).
         if (key === "s") {
           event.preventDefault();
-          saveDocumentFile();
+          runEditorCommand("document.save");
           return;
         }
         if (key === "o") {
           event.preventDefault();
-          promptOpenDocument();
+          runEditorCommand("document.open");
           return;
         }
 
         if (key === "x" && selection.length > 0) {
           event.preventDefault();
-          cutNodes(selection);
-          state.setSelection([]);
+          runEditorCommand("edit.cut");
           return;
         }
 
         if (key === "v") {
           event.preventDefault();
-          const pasted = pasteNodes();
-          if (pasted.length > 0) {
-            state.setSelection(pasted);
-            state.setTool("select");
-          }
+          runEditorCommand("edit.paste");
           return;
         }
 
@@ -445,10 +683,7 @@ export default function App() {
           // browser open its bookmark dialog.
           event.preventDefault();
           if (selection.length > 0) {
-            const ids = transformAgain(selection);
-            if (ids && ids.length > 0) {
-              state.setSelection(ids);
-            }
+            runEditorCommand("edit.transform-again");
           }
           return;
         }
@@ -559,45 +794,30 @@ export default function App() {
 
         if (key === "a") {
           event.preventDefault();
-          const document = documentStore.document;
-          const artboard = document.artboards.find(
-            (item) => item.id === document.activeArtboardId,
-          );
-          if (artboard) {
-            state.setSelection(
-              artboard.nodeIds.filter((id) => {
-                const node = document.nodes[id];
-                return node && node.visible && !node.locked;
-              }),
-            );
-            state.setTool("select");
-          }
+          runEditorCommand("edit.select-all");
           return;
         }
 
         // Zoom: ⌘0 fit, ⌘1 100%, ⌘+/⌘−.
-        if (key === "0" || key === "1" || key === "=" || key === "+" || key === "-") {
+        if (
+          key === "0" ||
+          key === "1" ||
+          key === "=" ||
+          key === "+" ||
+          key === "-"
+        ) {
           event.preventDefault();
           const { camera, viewport, setCamera } = state;
           if (viewport.width === 0) {
             return;
           }
           if (key === "0") {
-            setCamera(
-              fitBounds(
-                getActiveArtboard(documentStore.document),
-                viewport.width,
-                viewport.height,
-              ),
-            );
+            runEditorCommand("view.fit");
+          } else if (key === "1") {
+            runEditorCommand("view.actual-size");
           } else {
             const center = { x: viewport.width / 2, y: viewport.height / 2 };
-            const zoom =
-              key === "1"
-                ? 1
-                : key === "-"
-                  ? camera.zoom / 1.25
-                  : camera.zoom * 1.25;
+            const zoom = key === "-" ? camera.zoom / 1.25 : camera.zoom * 1.25;
             setCamera(zoomAt(camera, center, zoom));
           }
           return;
@@ -609,24 +829,16 @@ export default function App() {
           if (selection.length === 0) {
             return;
           }
-          if (event.shiftKey) {
-            const freed = ungroupSelection(selection);
-            if (freed.length > 0) {
-              state.setSelection(freed);
-            }
-          } else {
-            const groupId = groupSelection(selection);
-            if (groupId) {
-              state.setSelection([groupId]);
-            }
-          }
+          runEditorCommand(event.shiftKey ? "edit.ungroup" : "edit.group");
           return;
         }
 
         // ⌘] forward, ⌘[ backward within each node's container.
         if ((key === "]" || key === "[") && selection.length > 0) {
           event.preventDefault();
-          arrangeNodes(selection, key === "]" ? "forward" : "backward");
+          runEditorCommand(
+            key === "]" ? "arrange.forward" : "arrange.backward",
+          );
           return;
         }
 
@@ -637,10 +849,7 @@ export default function App() {
       if ((key === "]" || key === "[") && !state.editingPathId) {
         if (state.selectedNodeIds.length > 0) {
           event.preventDefault();
-          arrangeNodes(
-            state.selectedNodeIds,
-            key === "]" ? "front" : "back",
-          );
+          runEditorCommand(key === "]" ? "arrange.front" : "arrange.back");
         }
         return;
       }
@@ -651,8 +860,7 @@ export default function App() {
         }
         if (state.selectedNodeIds.length > 0) {
           event.preventDefault();
-          deleteSelection(state.selectedNodeIds);
-          state.setSelection([]);
+          runEditorCommand("edit.delete");
           return;
         }
         // Nothing selected: delete the active artboard (never the last
@@ -734,7 +942,7 @@ export default function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [sessionReady, view]);
+  }, [canvasMenu, commandPaletteOpen, sessionReady, shortcutOverlayOpen, view]);
 
   function enterDocument(
     document: Parameters<typeof documentStore.reset>[0],
@@ -872,7 +1080,19 @@ export default function App() {
             }
           }}
         >
-          <CanvasStage />
+          <CanvasStage
+            onContextMenu={({ x, y, nodeId }) =>
+              setCanvasMenu({ x, y, hasNode: nodeId !== null })
+            }
+          />
+          {canvasMenu && (
+            <CanvasContextMenu
+              menu={canvasMenu}
+              availability={commandAvailability(selectedNodeIds)}
+              onClose={() => setCanvasMenu(null)}
+              onRun={runEditorCommand}
+            />
+          )}
           {templatePanelOpen && (
             <Suspense
               fallback={
@@ -905,6 +1125,16 @@ export default function App() {
           <Inspector />
         </Suspense>
       </div>
+      <CommandPalette
+        open={commandPaletteOpen}
+        availability={commandAvailability(selectedNodeIds)}
+        onClose={() => setCommandPaletteOpen(false)}
+        onRun={runEditorCommand}
+      />
+      <ShortcutOverlay
+        open={shortcutOverlayOpen}
+        onClose={() => setShortcutOverlayOpen(false)}
+      />
       <Suspense fallback={null}>
         {transformDialogOpen || loadedDialogs.transform ? (
           <TransformDialog />

@@ -97,7 +97,9 @@ function useClickOutside(onOutside: () => void) {
 }
 
 const ICON_BUTTON =
-  "icon-button grid h-30 w-30 place-items-center rounded-m text-chrome-dim transition-colors duration-140 ease-studio hover:enabled:bg-chrome-raised hover:enabled:text-chrome-text disabled:cursor-default disabled:opacity-30";
+  "chrome-tooltip chrome-tooltip-bottom icon-button relative grid h-32 w-32 place-items-center rounded-m text-chrome-dim hover:enabled:bg-chrome-raised hover:enabled:text-chrome-text disabled:cursor-default disabled:opacity-30";
+const CHROME_GROUP =
+  "flex items-center gap-2 rounded-[10px] border border-chrome-hairline bg-[rgb(255_255_255/0.035)] p-3";
 
 /** Hover-revealed row action (rename/duplicate/move/delete). */
 const ACTION_BUTTON =
@@ -341,15 +343,20 @@ function ArtboardMenu() {
     <div className="menu-anchor relative" ref={ref}>
       <button
         type="button"
-        className="topbar-select flex items-center gap-8 rounded-m px-9 py-5 text-chrome-text transition-colors duration-140 ease-studio hover:bg-chrome-raised"
+        className="topbar-select flex h-32 items-center gap-8 rounded-[9px] border border-transparent px-9 text-chrome-text hover:border-chrome-border hover:bg-chrome-raised"
         onClick={() => setOpen((value) => !value)}
+        aria-label={`Switch artboard. Current artboard: ${artboard.name}`}
         aria-expanded={open}
       >
         <span>{artboard.name}</span>
         <small className="text-[11px] tabular-nums text-chrome-dim">
           {artboard.width} × {artboard.height}
         </small>
-        <ChevronDown size={14} className="text-chrome-dim" />
+        <ChevronDown
+          size={14}
+          className={`text-chrome-dim transition-transform duration-140 ease-studio ${open ? "rotate-180" : ""}`}
+          aria-hidden="true"
+        />
       </button>
 
       {open && (
@@ -740,13 +747,13 @@ export function TopBar() {
   }
 
   return (
-    <header className="topbar flex items-center justify-between gap-16 border-b border-[rgb(0_0_0/0.5)] bg-linear-to-b from-[#1a1820] to-chrome pl-10 pr-16 text-chrome-text shadow-[inset_0_-1px_0_var(--color-chrome-hairline)]">
+    <header className="topbar relative z-30 flex items-center justify-between gap-12 border-b border-[rgb(0_0_0/0.5)] bg-linear-to-b from-[#1a1820] to-chrome pl-8 pr-12 text-chrome-text shadow-[inset_0_-1px_0_var(--color-chrome-hairline)]">
       <div className="flex items-center gap-8">
         <button
           type="button"
-          className={ICON_BUTTON}
+          className={`${ICON_BUTTON} chrome-tooltip-start`}
           onClick={() => void returnToProjects()}
-          title="Back to projects"
+          data-tooltip="Back to projects"
           aria-label="Back to projects"
         >
           <ArrowLeft size={15} aria-hidden="true" />
@@ -762,7 +769,7 @@ export function TopBar() {
           <span className="h-18 w-px bg-chrome-border" />
           <button
             type="button"
-            className="flex h-28 items-center gap-6 rounded-m px-7 text-[11.5px] text-chrome-dim transition-colors duration-140 ease-studio hover:bg-chrome-raised hover:text-chrome-text"
+            className="flex h-30 items-center gap-6 rounded-m border border-transparent px-7 text-[11.5px] font-[560] text-chrome-dim hover:border-chrome-border hover:bg-chrome-raised hover:text-chrome-text"
             onClick={() => setDocumentLibraryOpen(true)}
             title="Document library and version history"
             aria-label="Open document library and version history"
@@ -779,7 +786,7 @@ export function TopBar() {
 
       <div className="flex items-center gap-8">
         <div
-          className="flex items-center gap-2 rounded-[10px] border border-chrome-hairline bg-[rgb(255_255_255/0.035)] p-3"
+          className={CHROME_GROUP}
           role="group"
           aria-label="Path operations"
         >
@@ -788,8 +795,8 @@ export function TopBar() {
             className={ICON_BUTTON}
             onClick={() => void runCompound()}
             disabled={!canCompound}
-            title="Make compound path (⌘8)"
-            aria-label="Make compound path"
+            data-tooltip="Make compound path  ·  ⌘8"
+            aria-label="Make compound path (Command 8)"
           >
             <Combine size={16} strokeWidth={1.75} />
           </button>
@@ -798,8 +805,8 @@ export function TopBar() {
             className={ICON_BUTTON}
             onClick={runReleaseCompound}
             disabled={!canReleaseCompound}
-            title="Release compound path (⌥⇧⌘8 / Alt+Shift+Ctrl+8)"
-            aria-label="Release compound path"
+            data-tooltip="Release compound path  ·  ⌥⇧⌘8"
+            aria-label="Release compound path (Option Shift Command 8)"
           >
             <Unlink size={16} strokeWidth={1.75} />
           </button>
@@ -816,8 +823,8 @@ export function TopBar() {
                 className={ICON_BUTTON}
                 onClick={() => void runBoolean(op.id)}
                 disabled={!canCombine}
-                title={`${op.label} selected shapes`}
-                aria-label={op.label}
+                data-tooltip={`${op.label} shapes`}
+                aria-label={`${op.label} selected shapes`}
               >
                 <Icon size={16} strokeWidth={1.75} />
               </button>
@@ -829,7 +836,7 @@ export function TopBar() {
       <div className="flex items-center gap-10">
         <DocumentSessionStatus />
         <div
-          className="flex items-center gap-2 rounded-[10px] border border-chrome-hairline bg-[rgb(255_255_255/0.035)] p-3"
+          className={CHROME_GROUP}
           role="group"
           aria-label="History and editing"
         >
@@ -842,8 +849,8 @@ export function TopBar() {
               setSelection([]);
             }}
             disabled={!documentStore.canUndo}
-            title="Undo (⌘Z)"
-            aria-label="Undo"
+            data-tooltip="Undo  ·  ⌘Z"
+            aria-label="Undo (Command Z)"
           >
             <Undo2 size={16} />
           </button>
@@ -856,8 +863,8 @@ export function TopBar() {
               setSelection([]);
             }}
             disabled={!documentStore.canRedo}
-            title="Redo (⇧⌘Z)"
-            aria-label="Redo"
+            data-tooltip="Redo  ·  ⇧⌘Z"
+            aria-label="Redo (Shift Command Z)"
           >
             <Redo2 size={16} />
           </button>
@@ -867,8 +874,8 @@ export function TopBar() {
             className={ICON_BUTTON}
             onClick={deleteSelection}
             disabled={selectedNodeIds.length === 0}
-            title="Delete selection"
-            aria-label="Delete selection"
+            data-tooltip="Delete selection  ·  ⌫"
+            aria-label="Delete selection (Delete)"
           >
             <Trash2 size={16} />
           </button>
@@ -878,15 +885,15 @@ export function TopBar() {
               pixelSnap ? " bg-chrome-raised !text-accent" : ""
             }`}
             onClick={() => setPixelSnap(!pixelSnap)}
-            title="Pixel snap: round committed positions and sizes to whole pixels"
-            aria-label="Pixel snap"
+            data-tooltip="Pixel snap"
+            aria-label="Pixel snap: round positions and sizes to whole pixels"
             aria-pressed={pixelSnap}
           >
             <Magnet size={16} />
           </button>
         </div>
         <div
-          className="flex items-center gap-2 rounded-[10px] border border-chrome-hairline bg-[rgb(255_255_255/0.035)] p-3"
+          className={CHROME_GROUP}
           role="group"
           aria-label="File"
         >
@@ -894,8 +901,8 @@ export function TopBar() {
           type="button"
           className={ICON_BUTTON}
           onClick={() => openInputRef.current?.click()}
-          title="Open .openlogo document (⌘O)"
-          aria-label="Open document"
+          data-tooltip="Open document  ·  ⌘O"
+          aria-label="Open document (Command O)"
         >
           <FolderOpen size={16} />
         </button>
@@ -911,8 +918,8 @@ export function TopBar() {
           type="button"
           className={ICON_BUTTON}
           onClick={saveDocumentFile}
-          title="Save as .openlogo (⌘S)"
-          aria-label="Save document"
+          data-tooltip="Save document  ·  ⌘S"
+          aria-label="Save document (Command S)"
         >
           <Save size={16} />
         </button>
@@ -920,7 +927,7 @@ export function TopBar() {
           type="button"
           className={ICON_BUTTON}
           onClick={() => fileInputRef.current?.click()}
-          title="Import SVG"
+          data-tooltip="Import SVG"
           aria-label="Import SVG"
         >
           <Upload size={16} />
@@ -934,7 +941,7 @@ export function TopBar() {
         />
         </div>
         <div
-          className="flex items-center rounded-[10px] border border-chrome-hairline bg-[rgb(255_255_255/0.035)] p-3"
+          className={CHROME_GROUP}
           role="group"
           aria-label="Appearance"
         >
@@ -943,7 +950,7 @@ export function TopBar() {
             className={ICON_BUTTON}
             data-testid="theme-toggle"
             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            title={
+            data-tooltip={
               theme === "dark"
                 ? "Switch to light theme"
                 : "Switch to dark theme"
@@ -960,7 +967,7 @@ export function TopBar() {
             type="button"
             className={ICON_BUTTON}
             onClick={() => setShowSettings(true)}
-            title="Settings"
+            data-tooltip="Settings"
             aria-label="Open settings"
           >
             <Settings size={16} />

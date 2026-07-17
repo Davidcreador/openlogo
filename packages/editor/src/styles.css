@@ -46,15 +46,15 @@
   --color-chrome: #121017;
   --color-chrome-raised: rgb(255 255 255 / 0.06);
   --color-chrome-active: rgb(255 255 255 / 0.1);
-  --color-chrome-border: rgb(255 255 255 / 0.08);
-  --color-chrome-hairline: rgb(255 255 255 / 0.05);
+  --color-chrome-border: rgb(255 255 255 / 0.09);
+  --color-chrome-hairline: rgb(255 255 255 / 0.065);
   --color-chrome-text: #ecebf2;
-  --color-chrome-dim: #938fa0;
+  --color-chrome-dim: #9d98a9;
 
   --color-panel: #191722;
   --color-card: #221f2c;
   --color-panel-border: rgb(255 255 255 / 0.08);
-  --color-panel-hairline: rgb(255 255 255 / 0.06);
+  --color-panel-hairline: rgb(255 255 255 / 0.07);
   --color-ink: #e9e7f0;
   --color-ink-dim: #938fa0;
   --color-ink-faint: #6b6678;
@@ -273,6 +273,26 @@
     transform-origin: top right;
   }
 
+  .zoom-menu {
+    top: auto;
+    right: 0;
+    bottom: calc(100% + 8px);
+    left: auto;
+    transform-origin: bottom right;
+    animation-name: zoom-menu-in;
+  }
+
+  @keyframes zoom-menu-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
   @keyframes menu-in {
     from {
       opacity: 0;
@@ -379,8 +399,146 @@
     margin: 6px 4px;
   }
 
+  .menu-item:disabled {
+    cursor: default;
+    opacity: 0.38;
+  }
+
+  .command-palette-item.active {
+    background: var(--color-chrome-raised);
+    box-shadow: inset 2px 0 0 var(--color-accent);
+  }
+
+  .canvas-context-menu {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 60;
+    min-width: 224px;
+  }
+
   .menu-artboards {
     min-width: 292px;
+  }
+
+  /* ---------- Editor chrome interaction language ---------- */
+
+  .chrome-tooltip {
+    position: relative;
+  }
+
+  .chrome-tooltip::before,
+  .chrome-tooltip::after {
+    position: absolute;
+    z-index: 70;
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity 120ms var(--ease-studio),
+      transform 120ms var(--ease-studio),
+      visibility 0s linear 120ms;
+  }
+
+  .chrome-tooltip::after {
+    content: attr(data-tooltip);
+    width: max-content;
+    max-width: 220px;
+    border: 1px solid rgb(255 255 255 / 0.1);
+    border-radius: 7px;
+    background: #28242f;
+    box-shadow: var(--shadow-menu);
+    padding: 5px 7px;
+    color: var(--color-chrome-text);
+    font-size: 10.5px;
+    font-weight: 560;
+    line-height: 1.2;
+    letter-spacing: 0.005em;
+    white-space: nowrap;
+  }
+
+  .chrome-tooltip::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border: solid rgb(255 255 255 / 0.1);
+    border-width: 1px 0 0 1px;
+    background: #28242f;
+  }
+
+  .chrome-tooltip-bottom::after {
+    top: calc(100% + 10px);
+    left: 50%;
+    transform: translate(-50%, -3px);
+  }
+
+  .chrome-tooltip-bottom::before {
+    top: calc(100% + 7px);
+    left: 50%;
+    transform: translateX(-50%) rotate(45deg);
+  }
+
+  .chrome-tooltip-top::after {
+    bottom: calc(100% + 10px);
+    left: 50%;
+    transform: translate(-50%, 3px);
+  }
+
+  .chrome-tooltip-top::before {
+    bottom: calc(100% + 7px);
+    left: 50%;
+    transform: translateX(-50%) rotate(225deg);
+  }
+
+  .chrome-tooltip-right::after {
+    top: 50%;
+    left: calc(100% + 12px);
+    transform: translate(-3px, -50%);
+  }
+
+  .chrome-tooltip-right::before {
+    top: 50%;
+    left: calc(100% + 9px);
+    transform: translateY(-50%) rotate(-45deg);
+  }
+
+  .chrome-tooltip:hover::before,
+  .chrome-tooltip:hover::after,
+  .chrome-tooltip:focus-visible::before,
+  .chrome-tooltip:focus-visible::after {
+    opacity: 1;
+    visibility: visible;
+    transition-delay: 400ms, 400ms, 400ms;
+  }
+
+  .chrome-tooltip-bottom:hover::after,
+  .chrome-tooltip-bottom:focus-visible::after {
+    transform: translate(-50%, 0);
+  }
+
+  .chrome-tooltip-top:hover::after,
+  .chrome-tooltip-top:focus-visible::after {
+    transform: translate(-50%, 0);
+  }
+
+  .chrome-tooltip-right:hover::after,
+  .chrome-tooltip-right:focus-visible::after {
+    transform: translate(0, -50%);
+  }
+
+  .chrome-tooltip-bottom.chrome-tooltip-start::after {
+    left: 0;
+    transform: translateY(-3px);
+  }
+
+  .chrome-tooltip-bottom.chrome-tooltip-start::before {
+    left: 12px;
+    transform: rotate(45deg);
+  }
+
+  .chrome-tooltip-bottom.chrome-tooltip-start:hover::after,
+  .chrome-tooltip-bottom.chrome-tooltip-start:focus-visible::after {
+    transform: none;
   }
 
   /* ---------- Shape-library flyout (toolbar) ---------- */
@@ -389,8 +547,8 @@
     position: absolute;
     right: 0;
     bottom: 0;
-    width: 18px;
-    height: 18px;
+    width: 14px;
+    height: 14px;
     padding: 0;
     border: none;
     background: transparent;
@@ -518,17 +676,17 @@
     cursor: pointer;
   }
 
-  .inspector-section {
-    transition:
-      border-color 140ms var(--ease-studio),
-      box-shadow 140ms var(--ease-studio);
+  .inspector-section:last-child {
+    border-bottom: 0;
   }
 
-  .inspector-section:hover {
-    border-color: rgb(255 255 255 / 0.11);
-    box-shadow:
-      0 1px 2px rgb(0 0 0 / 0.25),
-      0 5px 16px rgb(0 0 0 / 0.2);
+  .section-chevron {
+    transform: rotate(0deg);
+    transform-origin: center;
+  }
+
+  .section-chevron.is-open {
+    transform: rotate(90deg);
   }
 
   .inspector-range {
@@ -951,14 +1109,7 @@
   --ruler-mat-hover: rgb(250 249 247 / 0.88);
 }
 
-/* Component states whose overlay strength is tuned per theme (a white
-   lift on dark needs more alpha than warm ink on paper). */
-[data-theme="light"] .inspector-section:hover {
-  border-color: rgb(28 25 33 / 0.09);
-  box-shadow:
-    0 1px 2px rgb(28 25 33 / 0.045),
-    0 5px 16px rgb(28 25 33 / 0.035);
-}
+/* Control states whose overlay strength is tuned per theme. */
 
 [data-theme="light"] .inspector-range::-webkit-slider-thumb {
   background: #686773;
@@ -1012,6 +1163,18 @@
 :where(.toolbar, .menu, [data-testid="toast"])
   :where(button, input, select, textarea, [tabindex]):focus-visible {
   outline-color: var(--focus-halo);
+}
+
+:where(.topbar, .toolbar, .zoom-controls, .inspector) button {
+  transition-property:
+    background-color, border-color, box-shadow, color, filter, opacity, transform;
+  transition-duration: 140ms;
+  transition-timing-function: var(--ease-studio);
+}
+
+:where(.topbar, .toolbar, .zoom-controls, .inspector)
+  button:active:enabled:not([aria-disabled="true"]) {
+  transform: scale(0.97);
 }
 
 @media (prefers-reduced-motion: reduce) {

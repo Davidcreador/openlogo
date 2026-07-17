@@ -40,11 +40,12 @@ const SHAPE_TOOL_IDS = new Set(SHAPE_TOOLS.map((item) => item.id));
 const LONG_PRESS_MS = 350;
 
 const TOOL_BUTTON =
-  "toolbar-button grid h-36 w-36 place-items-center rounded-[9px] transition-[background-color,color,box-shadow] duration-140 ease-studio";
+  "chrome-tooltip chrome-tooltip-right toolbar-button relative grid h-36 w-36 place-items-center rounded-[9px]";
 const TOOL_BUTTON_ACTIVE =
-  "bg-linear-to-b from-accent-grad to-accent text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.24),0_2px_8px_var(--glow-45)]";
+  "bg-linear-to-b from-accent-grad to-accent text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.28),inset_2px_0_0_rgb(255_255_255/0.42),0_0_0_1px_var(--glow-40),0_4px_14px_var(--glow-45)]";
 const TOOL_BUTTON_IDLE =
   "text-chrome-dim hover:bg-chrome-raised hover:text-chrome-text aria-disabled:cursor-not-allowed aria-disabled:opacity-40";
+const TOOL_SEPARATOR = "my-4 h-px w-24 bg-chrome-border";
 
 /**
  * Rectangle tool slot with a shape-library flyout: click activates the
@@ -138,7 +139,7 @@ function ShapeToolSlot() {
       <button
         ref={mainButtonRef}
         type="button"
-        className={`${TOOL_BUTTON} relative ${
+        className={`${TOOL_BUTTON} ${
           active ? `active ${TOOL_BUTTON_ACTIVE}` : TOOL_BUTTON_IDLE
         }`}
         onPointerDown={() => {
@@ -163,8 +164,10 @@ function ShapeToolSlot() {
           event.preventDefault();
           setOpen(true);
         }}
-        title={`${current.label}${current.shortcut ? ` (${current.shortcut})` : ""} — hold for more shapes`}
-        aria-label={`${current.label}${current.shortcut ? ` (${current.shortcut})` : ""}`}
+        data-tooltip={`${current.label}${current.shortcut ? `  ·  ${current.shortcut}` : ""}`}
+        aria-label={`${current.label} tool${
+          current.shortcut ? ` (${current.shortcut})` : ""
+        }. Hold for more shapes.`}
         aria-pressed={active}
         aria-haspopup="true"
         aria-expanded={open}
@@ -261,7 +264,10 @@ export function Toolbar() {
 
   const renderButton = (item: ToolSpec) => {
     const Icon = item.icon;
-    const title = item.shortcut ? `${item.label} (${item.shortcut})` : item.label;
+    const tooltip = item.shortcut
+      ? `${item.label}  ·  ${item.shortcut}`
+      : item.label;
+    const accessibleLabel = `${item.label} tool${item.shortcut ? ` (${item.shortcut})` : ""}`;
     const unavailable = item.id === "shapeBuilder" && selectedNodeIds.length < 2;
     return (
       <button
@@ -278,8 +284,8 @@ export function Toolbar() {
             setTool(item.id);
           }
         }}
-        title={title}
-        aria-label={title}
+        data-tooltip={tooltip}
+        aria-label={accessibleLabel}
         aria-pressed={tool === item.id}
         aria-disabled={unavailable}
       >
@@ -290,7 +296,7 @@ export function Toolbar() {
 
   return (
     <nav
-      className="toolbar mt-16 flex flex-col items-center gap-2 self-start justify-self-center rounded-panel border border-[rgb(0_0_0/0.5)] bg-linear-to-b from-[#1c1a22] to-chrome p-6 shadow-[inset_0_1px_0_var(--color-chrome-hairline),0_2px_6px_rgb(20_17_26/0.18),0_14px_36px_rgb(20_17_26/0.26)]"
+      className="toolbar mt-16 flex flex-col items-center gap-3 self-start justify-self-center rounded-panel border border-[rgb(0_0_0/0.5)] bg-linear-to-b from-[#1c1a22] to-chrome p-6 shadow-[inset_0_1px_0_var(--color-chrome-hairline),0_2px_6px_rgb(20_17_26/0.18),0_14px_36px_rgb(20_17_26/0.26)]"
       aria-label="Tools"
     >
       {renderButton({
@@ -299,20 +305,20 @@ export function Toolbar() {
         shortcut: "V",
         icon: MousePointer2,
       })}
-      <span className="my-3 h-px w-20 bg-chrome-border" aria-hidden="true" />
+      <span className={TOOL_SEPARATOR} aria-hidden="true" />
       <ShapeToolSlot />
       {AFTER_SHAPES.slice(0, 4).map(renderButton)}
-      <span className="my-3 h-px w-20 bg-chrome-border" aria-hidden="true" />
+      <span className={TOOL_SEPARATOR} aria-hidden="true" />
       {AFTER_SHAPES.slice(4).map(renderButton)}
-      <span className="my-3 h-px w-20 bg-chrome-border" aria-hidden="true" />
+      <span className={TOOL_SEPARATOR} aria-hidden="true" />
       <button
         type="button"
         className={`${TOOL_BUTTON} ${
           templatePanelOpen ? `active ${TOOL_BUTTON_ACTIVE}` : TOOL_BUTTON_IDLE
         }`}
         onClick={() => setTemplatePanelOpen(!templatePanelOpen)}
-        title="Templates"
-        aria-label="Templates"
+        data-tooltip="Templates"
+        aria-label="Open templates"
         aria-pressed={templatePanelOpen}
         aria-expanded={templatePanelOpen}
         aria-controls="editor-template-panel"
