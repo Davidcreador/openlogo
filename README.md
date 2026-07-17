@@ -19,6 +19,9 @@ packages/
              Headless review, context, chat, proposal, and provider runtime.
   design-mate-service/
              Authenticated Node.js SSE gateway for remote model providers.
+  foundry/   Deterministic generative Template Proposals: archetype ×
+             font pairing × palette × seed recipes that materialize as
+             fully editable Logo Documents. Pure TS, depends only on core.
 poc/         Original SVG-DOM prototype, kept as reference.
 ```
 
@@ -93,6 +96,12 @@ decisions live in [docs/adr](docs/adr).
   512px icon PNGs in one click
 - Brand colors: editing a swatch recolors every object using it (one undo)
 - Patch-based undo/redo (⌘Z / ⇧⌘Z), 200-entry history
+- Command palette (⌘K) with fuzzy search over tools, edit, arrange, view,
+  and document actions; right-click canvas context menu; keyboard-shortcut
+  overlay (⌘/)
+- Template Foundry: live generative logo templates (archetype × font ×
+  palette × seed) personalized with your brand name, on the dashboard and
+  as an editor panel; inserted proposals stay fully editable vectors
 - Document Library with create, switch, duplicate, rename, archive/restore,
   independent file import, named versions, automatic recovery history, and
   confirmed version restore; archived documents restore without opening
