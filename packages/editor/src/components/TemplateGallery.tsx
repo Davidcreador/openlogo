@@ -46,8 +46,9 @@ export default function TemplateGallery({
   }
 
   return (
-    <section className="mt-28" aria-labelledby="template-gallery-heading">
-      <div className="rounded-panel border border-panel-hairline bg-panel/72 p-14 shadow-[0_10px_30px_rgb(19_16_25/0.07)] sm:p-18">
+    <section className="mt-18" aria-labelledby="template-gallery-heading">
+      <div className="relative overflow-hidden rounded-panel border border-accent/20 bg-[radial-gradient(circle_at_0%_0%,color-mix(in_srgb,var(--color-accent)_12%,transparent),transparent_42%),var(--color-panel)] p-14 shadow-[0_14px_38px_rgb(19_16_25/0.1)] sm:p-18">
+        <span className="pointer-events-none absolute -right-24 -top-40 h-112 w-112 rounded-full border border-accent/12" aria-hidden="true" />
         <div className="flex flex-col gap-14 xl:flex-row xl:items-end xl:justify-between">
           <div className="max-w-[520px]">
             <span className="inline-flex items-center gap-6 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-accent">
@@ -55,7 +56,7 @@ export default function TemplateGallery({
             </span>
             <h2
               id="template-gallery-heading"
-              className="mb-0 mt-5 text-[18px] font-[720] tracking-[-0.02em] text-ink"
+              className="mb-0 mt-5 text-[20px] font-[720] tracking-[-0.025em] text-ink"
             >
               Start from a template
             </h2>
@@ -89,7 +90,7 @@ export default function TemplateGallery({
             </label>
             <button
               type="button"
-              className="mt-auto inline-flex h-36 items-center justify-center gap-7 rounded-field border border-field-border bg-card px-12 text-[12px] font-semibold text-ink transition-[border-color,color,transform] duration-140 ease-studio hover:-translate-y-1 hover:border-accent hover:text-accent disabled:translate-y-0 disabled:opacity-45"
+              className="mt-auto inline-flex h-36 items-center justify-center gap-7 rounded-field border border-field-border bg-card px-12 text-[12px] font-semibold text-ink shadow-[0_5px_16px_rgb(19_16_25/0.08)] transition-[border-color,color,transform,box-shadow] duration-140 ease-studio hover:-translate-y-1 hover:border-accent hover:text-accent hover:shadow-[0_9px_22px_rgb(19_16_25/0.14)] active:scale-[0.98] disabled:translate-y-0 disabled:opacity-45 motion-reduce:transform-none motion-reduce:transition-none"
               onClick={gallery.shuffle}
               disabled={disabled || creatingKey !== null}
             >
@@ -106,7 +107,7 @@ export default function TemplateGallery({
           <span className="mr-2 text-[10.5px] font-semibold text-ink-dim">Vibe</span>
           <button
             type="button"
-            className={`h-28 rounded-full border px-10 text-[10.5px] font-semibold transition-colors ${
+            className={`h-28 rounded-full border px-10 text-[10.5px] font-semibold transition-[border-color,background-color,color,transform] duration-140 active:scale-[0.97] motion-reduce:transform-none ${
               gallery.vibe === null
                 ? "border-accent bg-accent text-white"
                 : "border-field-border bg-card text-ink-dim hover:border-accent/55 hover:text-accent"
@@ -121,7 +122,7 @@ export default function TemplateGallery({
             <button
               key={item}
               type="button"
-              className={`h-28 rounded-full border px-10 text-[10.5px] font-semibold transition-colors ${
+              className={`h-28 rounded-full border px-10 text-[10.5px] font-semibold transition-[border-color,background-color,color,transform] duration-140 active:scale-[0.97] motion-reduce:transform-none ${
                 gallery.vibe === item
                   ? "border-accent bg-accent text-white"
                   : "border-field-border bg-card text-ink-dim hover:border-accent/55 hover:text-accent"
@@ -139,7 +140,7 @@ export default function TemplateGallery({
         </div>
       </div>
 
-      <div className="mt-12 grid grid-cols-1 gap-12 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <div className="mt-14 grid grid-cols-1 gap-12 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {gallery.proposals.map((proposal) => {
           const ready = templateFontsReady(proposal);
           const creating = creatingKey === proposal.key;

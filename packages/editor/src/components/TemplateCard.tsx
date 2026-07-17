@@ -22,10 +22,10 @@ export function TemplateCard({
   compact?: boolean;
 }) {
   return (
-    <article className="group relative overflow-hidden rounded-panel border border-panel-hairline bg-panel text-left shadow-[0_8px_24px_rgb(19_16_25/0.07)] transition-[border-color,transform,box-shadow] duration-160 ease-studio hover:-translate-y-1 hover:border-accent/55 hover:shadow-[0_16px_36px_rgb(19_16_25/0.13)] focus-within:border-accent/55">
+    <article className="group relative overflow-hidden rounded-panel border border-panel-hairline bg-panel text-left shadow-[0_8px_24px_rgb(19_16_25/0.07)] transition-[border-color,transform,box-shadow] duration-160 ease-studio hover:-translate-y-2 hover:border-accent/55 hover:shadow-[0_18px_40px_rgb(19_16_25/0.16)] focus-within:border-accent/55 motion-reduce:transform-none motion-reduce:transition-none">
       <button
         type="button"
-        className="block w-full text-left disabled:cursor-wait"
+        className="block w-full text-left active:scale-[0.99] disabled:cursor-wait motion-reduce:transform-none"
         onClick={onUse}
         disabled={disabled || !ready}
         aria-label={
@@ -35,13 +35,13 @@ export function TemplateCard({
         }
       >
         <span
-          className={`relative grid place-items-center overflow-hidden border-b border-panel-hairline bg-field/65 ${
+          className={`relative grid place-items-center overflow-hidden border-b border-panel-hairline bg-[radial-gradient(circle_at_50%_18%,var(--color-card),var(--color-field)_74%)] ${
             compact ? "aspect-[16/10]" : "aspect-[4/3]"
           }`}
         >
           {ready ? (
             <span
-              className="absolute inset-0 flex min-h-0 min-w-0 items-center justify-center p-11 [&>svg]:block [&>svg]:h-auto [&>svg]:max-h-full [&>svg]:max-w-full [&>svg]:w-auto"
+              className="absolute inset-0 flex min-h-0 min-w-0 items-center justify-center p-11 transition-transform duration-160 ease-studio group-hover:scale-[1.015] motion-reduce:transform-none motion-reduce:transition-none [&>svg]:block [&>svg]:h-auto [&>svg]:max-h-full [&>svg]:max-w-full [&>svg]:w-auto"
               aria-hidden="true"
               dangerouslySetInnerHTML={{ __html: proposal.svg }}
             />
@@ -57,6 +57,7 @@ export function TemplateCard({
               Working…
             </span>
           )}
+          <span className="pointer-events-none absolute inset-0 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.035),inset_0_-18px_36px_rgb(19_16_25/0.05)]" aria-hidden="true" />
         </span>
         <span className="flex items-center justify-between gap-8 px-12 py-10">
           <span>
@@ -67,14 +68,14 @@ export function TemplateCard({
               {vibeLabel}
             </small>
           </span>
-          <span className="text-[10px] font-semibold text-accent opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+          <span className="max-w-[58%] translate-x-2 truncate rounded-full bg-accent/9 px-7 py-4 text-[9.5px] font-semibold text-accent opacity-0 transition-[opacity,transform] duration-140 group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:translate-x-0 group-focus-within:opacity-100 motion-reduce:transform-none motion-reduce:transition-none">
             {actionLabel}
           </span>
         </span>
       </button>
 
       <div
-        className="absolute right-8 top-8 flex gap-5 rounded-full border border-white/55 bg-white/88 p-5 opacity-0 shadow-[0_4px_14px_rgb(19_16_25/0.18)] backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+        className="absolute right-8 top-8 flex -translate-y-2 gap-5 rounded-full border border-white/55 bg-white/90 p-5 opacity-0 shadow-[0_6px_18px_rgb(19_16_25/0.2)] backdrop-blur-sm transition-[opacity,transform] duration-140 group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100 motion-reduce:transform-none motion-reduce:transition-none"
         role="group"
         aria-label={`Palette for ${proposal.archetypeLabel}`}
       >
@@ -82,7 +83,11 @@ export function TemplateCard({
           <button
             key={palette.id}
             type="button"
-            className="h-18 w-18 rounded-full border-2 border-white shadow-[0_0_0_1px_rgb(19_16_25/0.18)] transition-transform hover:scale-110 focus-visible:scale-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-45"
+            className={`h-18 w-18 rounded-full border-2 border-white transition-transform hover:scale-110 focus-visible:scale-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-45 motion-reduce:transform-none ${
+              proposal.paletteId === palette.id
+                ? "shadow-[0_0_0_2px_var(--color-accent),0_2px_8px_rgb(19_16_25/0.25)]"
+                : "shadow-[0_0_0_1px_rgb(19_16_25/0.18)]"
+            }`}
             style={{
               background: `linear-gradient(135deg, ${palette.ink} 0 50%, ${palette.accent} 50% 100%)`,
             }}

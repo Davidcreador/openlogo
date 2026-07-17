@@ -20,7 +20,7 @@ const VIBE_LABELS: Record<Vibe, string> = {
 };
 
 const INPUT =
-  "h-32 min-w-0 rounded-field border border-field-border bg-field px-9 text-[11.5px] text-ink outline-none transition-[border-color,box-shadow] placeholder:text-ink-faint focus:border-accent focus:bg-card focus:shadow-ring";
+  "h-32 min-w-0 rounded-field border border-field-border bg-field px-9 text-[11.5px] text-ink outline-none transition-[border-color,box-shadow] duration-140 ease-studio placeholder:text-ink-faint focus:border-accent focus:bg-card focus:shadow-ring";
 
 export default function EditorTemplatePanel() {
   const document = useDocument();
@@ -57,10 +57,10 @@ export default function EditorTemplatePanel() {
   return (
     <aside
       id="editor-template-panel"
-      className="absolute bottom-12 left-12 top-12 z-30 flex min-h-0 w-[280px] flex-col overflow-hidden rounded-panel border border-panel-hairline bg-panel/94 shadow-[0_18px_48px_rgb(19_16_25/0.28)] backdrop-blur-[3px]"
+      className="absolute bottom-12 left-12 top-12 z-30 flex min-h-0 w-[280px] flex-col overflow-hidden rounded-panel border border-accent/18 bg-panel/94 shadow-[0_22px_56px_rgb(19_16_25/0.32)] backdrop-blur-[3px]"
       aria-labelledby="editor-template-heading"
     >
-      <div className="flex items-center justify-between border-b border-panel-hairline px-12 py-10">
+      <div className="flex items-center justify-between border-b border-panel-hairline bg-[linear-gradient(115deg,color-mix(in_srgb,var(--color-accent)_9%,transparent),transparent_58%)] px-12 py-10">
         <div>
           <span className="inline-flex items-center gap-5 text-[9.5px] font-semibold uppercase tracking-[0.08em] text-accent">
             <Sparkles size={11} aria-hidden="true" /> Foundry
@@ -74,7 +74,7 @@ export default function EditorTemplatePanel() {
         </div>
         <button
           type="button"
-          className="grid h-28 w-28 place-items-center rounded-field text-ink-dim hover:bg-field hover:text-ink"
+          className="grid h-28 w-28 place-items-center rounded-field text-ink-dim transition-[background-color,color,transform] duration-140 hover:bg-field hover:text-ink active:scale-[0.94] motion-reduce:transform-none"
           onClick={() => setTemplatePanelOpen(false)}
           aria-label="Close templates"
         >
@@ -113,7 +113,7 @@ export default function EditorTemplatePanel() {
         >
           <button
             type="button"
-            className={`h-25 shrink-0 rounded-full border px-8 text-[9.5px] font-semibold ${
+            className={`h-25 shrink-0 rounded-full border px-8 text-[9.5px] font-semibold transition-[border-color,background-color,color,transform] duration-140 active:scale-[0.97] motion-reduce:transform-none ${
               gallery.vibe === null
                 ? "border-accent bg-accent text-white"
                 : "border-field-border bg-card text-ink-dim hover:text-accent"
@@ -127,7 +127,7 @@ export default function EditorTemplatePanel() {
             <button
               key={vibe}
               type="button"
-              className={`h-25 shrink-0 rounded-full border px-8 text-[9.5px] font-semibold ${
+              className={`h-25 shrink-0 rounded-full border px-8 text-[9.5px] font-semibold transition-[border-color,background-color,color,transform] duration-140 active:scale-[0.97] motion-reduce:transform-none ${
                 gallery.vibe === vibe
                   ? "border-accent bg-accent text-white"
                   : "border-field-border bg-card text-ink-dim hover:text-accent"
@@ -146,7 +146,7 @@ export default function EditorTemplatePanel() {
           </span>
           <button
             type="button"
-            className="inline-flex h-28 items-center gap-5 rounded-field border border-field-border bg-card px-9 text-[10px] font-semibold text-ink hover:border-accent/55 hover:text-accent"
+            className="inline-flex h-28 items-center gap-5 rounded-field border border-field-border bg-card px-9 text-[10px] font-semibold text-ink transition-[border-color,color,transform] duration-140 hover:border-accent/55 hover:text-accent active:scale-[0.97] motion-reduce:transform-none"
             onClick={gallery.shuffle}
             disabled={insertingKey !== null}
           >

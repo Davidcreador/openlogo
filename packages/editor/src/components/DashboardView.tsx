@@ -59,6 +59,31 @@ const TemplateGallery = lazy(() => import("./TemplateGallery"));
 
 type DashboardTab = "projects" | "folders" | "archived";
 type DashboardSort = "recent" | "name" | "created";
+type PresetKind = "blank" | "logo" | "square" | "wide";
+const PROJECT_PRESETS = [
+  { kind: "blank", label: "New blank", size: "720 × 420" },
+  { kind: "logo", label: "Logo", size: "500 × 500", width: 500, height: 500 },
+  {
+    kind: "square",
+    label: "Square",
+    size: "1080 × 1080",
+    width: 1080,
+    height: 1080,
+  },
+  {
+    kind: "wide",
+    label: "Wide",
+    size: "1920 × 1080",
+    width: 1920,
+    height: 1080,
+  },
+] satisfies Array<{
+  kind: PresetKind;
+  label: string;
+  size: string;
+  width?: number;
+  height?: number;
+}>;
 type RenameTarget =
   | { kind: "document"; id: string; name: string }
   | { kind: "folder"; id: string; name: string };
@@ -144,6 +169,46 @@ function sortDocuments(
   });
 }
 
+function PresetIcon({ kind }: { kind: PresetKind }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-22 w-22"
+      aria-hidden="true"
+    >
+      {kind === "blank" && (
+        <>
+          <rect x="3.5" y="5" width="17" height="14" rx="2.5" />
+          <path d="M12 8.5v7M8.5 12h7" />
+        </>
+      )}
+      {kind === "logo" && (
+        <>
+          <circle cx="10" cy="11" r="5.5" />
+          <path d="m14.2 14.6 2.2 3.9 4.1-7.2-4.5.2" />
+        </>
+      )}
+      {kind === "square" && (
+        <>
+          <rect x="4" y="4" width="16" height="16" rx="3" />
+          <path d="M8 8h8v8H8z" />
+        </>
+      )}
+      {kind === "wide" && (
+        <>
+          <rect x="2.5" y="6.5" width="19" height="11" rx="2.5" />
+          <path d="M6.5 11h11M6.5 13.5h7" />
+        </>
+      )}
+    </svg>
+  );
+}
+
 function DocumentCard({
   summary,
   folders,
@@ -179,46 +244,83 @@ function DocumentCard({
 
   return (
     <article
-      className={`group relative rounded-panel border border-panel-hairline bg-panel shadow-[0_10px_28px_rgb(19_16_25/0.08)] transition-[border-color,transform,box-shadow] duration-160 ease-studio hover:border-field-border hover:shadow-[0_16px_38px_rgb(19_16_25/0.13)] ${
-        menuOpen ? "z-30" : "z-0 hover:-translate-y-1"
+      className={`group relative rounded-panel border border-panel-hairline bg-panel shadow-[0_10px_28px_rgb(19_16_25/0.08)] transition-[border-color,transform,box-shadow] duration-160 ease-studio hover:border-accent/45 hover:shadow-[0_18px_44px_rgb(19_16_25/0.18)] focus-within:border-accent/45 motion-reduce:transform-none motion-reduce:transition-none ${
+        menuOpen ? "z-30" : "z-0 hover:-translate-y-2"
       } ${archived || busy ? "" : "cursor-grab active:cursor-grabbing"}`}
       draggable={!archived && !busy}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
     >
-      <button
-        type="button"
-        className="block w-full text-left disabled:cursor-default"
-        onClick={onOpen}
-        disabled={busy || archived}
-        aria-label={archived ? `${summary.name} is archived` : `Open ${summary.name}`}
-      >
-        <span className="relative grid aspect-[16/10] place-items-center overflow-hidden border-b border-panel-hairline bg-field/70">
-          {summary.thumbnail ? (
-            <img
-              src={summary.thumbnail}
-              alt=""
-              className="h-full w-full object-contain p-12"
-            />
-          ) : (
-            <span className="grid place-items-center gap-7 text-center text-ink-faint">
-              <span className="grid h-42 w-42 place-items-center rounded-[12px] border border-field-border bg-card text-ink-dim">
-                <FilePlus2 size={19} strokeWidth={1.5} aria-hidden="true" />
-              </span>
-              <span className="text-[12px] font-medium text-ink-dim">
-                {summary.activeArtboardWidth} × {summary.activeArtboardHeight}
-              </span>
+      <div className="relative grid aspect-[16/10] place-items-center overflow-hidden border-b border-panel-hairline bg-[radial-gradient(circle_at_50%_15%,var(--color-card),var(--color-field)_72%)]">
+        <button
+          type="button"
+          className="absolute inset-0 z-1 disabled:cursor-default active:scale-[0.98] motion-reduce:transform-none"
+          onClick={onOpen}
+          disabled={busy || archived}
+          aria-label={archived ? `${summary.name} is archived` : `Open ${summary.name}`}
+        />
+        {summary.thumbnail ? (
+          <img
+            src={summary.thumbnail}
+            alt=""
+            className="h-full w-full object-contain p-14 transition-transform duration-160 ease-studio group-hover:scale-[1.015] motion-reduce:transform-none motion-reduce:transition-none"
+          />
+        ) : (
+          <span className="grid place-items-center gap-7 text-center text-ink-faint">
+            <span className="grid h-42 w-42 place-items-center rounded-[12px] border border-field-border bg-card text-ink-dim">
+              <FilePlus2 size={19} strokeWidth={1.5} aria-hidden="true" />
             </span>
-          )}
-          {archived && (
-            <span className="absolute inset-0 grid place-items-center bg-panel/72 backdrop-blur-[1px]">
-              <span className="inline-flex items-center gap-6 rounded-full border border-panel-hairline bg-card px-10 py-5 text-[11px] font-semibold text-ink-dim">
-                <Archive size={12} aria-hidden="true" /> Archived
-              </span>
+            <span className="text-[12px] font-medium text-ink-dim">
+              {summary.activeArtboardWidth} × {summary.activeArtboardHeight}
             </span>
-          )}
-        </span>
-      </button>
+          </span>
+        )}
+        {archived && (
+          <span className="absolute inset-0 z-2 grid place-items-center bg-panel/72 backdrop-blur-[1px]">
+            <span className="inline-flex items-center gap-6 rounded-full border border-panel-hairline bg-card px-10 py-5 text-[11px] font-semibold text-ink-dim">
+              <Archive size={12} aria-hidden="true" /> Archived
+            </span>
+          </span>
+        )}
+        {!archived && (
+          <div className="pointer-events-none absolute inset-x-8 bottom-8 z-3 grid translate-y-4 grid-cols-4 gap-4 rounded-[10px] border border-white/10 bg-[rgb(27_23_35/0.9)] p-4 opacity-0 shadow-[0_10px_28px_rgb(0_0_0/0.3)] backdrop-blur-md transition-[opacity,transform] duration-140 ease-studio group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100 motion-reduce:transform-none motion-reduce:transition-none">
+            <button
+              type="button"
+              className="inline-flex h-28 items-center justify-center gap-4 rounded-[7px] text-[9.5px] font-semibold text-white/90 transition-colors hover:bg-white/10 hover:text-white active:scale-[0.98] motion-reduce:transform-none"
+              onClick={onOpen}
+              disabled={busy}
+            >
+              <ArrowUpRight size={11} aria-hidden="true" /> Open
+            </button>
+            <button
+              type="button"
+              className="inline-flex h-28 items-center justify-center gap-4 rounded-[7px] text-[9.5px] font-semibold text-white/75 transition-colors hover:bg-white/10 hover:text-white active:scale-[0.98] motion-reduce:transform-none"
+              onClick={onDuplicate}
+              disabled={busy}
+            >
+              <Copy size={11} aria-hidden="true" /> Duplicate
+            </button>
+            <button
+              type="button"
+              className="inline-flex h-28 items-center justify-center gap-4 rounded-[7px] text-[9.5px] font-semibold text-white/75 transition-colors hover:bg-white/10 hover:text-white active:scale-[0.98] motion-reduce:transform-none"
+              onClick={onRename}
+              disabled={busy}
+            >
+              <Pencil size={11} aria-hidden="true" /> Rename
+            </button>
+            <button
+              type="button"
+              className="inline-flex h-28 items-center justify-center gap-4 rounded-[7px] text-[9.5px] font-semibold text-white/75 transition-colors hover:bg-amber-400/12 hover:text-amber-200 active:scale-[0.98] disabled:opacity-35 motion-reduce:transform-none"
+              onClick={onArchive}
+              disabled={busy || !canArchive}
+              title={canArchive ? undefined : "Keep at least one project available"}
+            >
+              <Archive size={11} aria-hidden="true" /> Archive
+            </button>
+          </div>
+        )}
+        <span className="pointer-events-none absolute inset-0 z-2 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.035),inset_0_-20px_40px_rgb(19_16_25/0.06)]" />
+      </div>
 
       <div className="flex items-start gap-8 p-12">
         <button
@@ -247,7 +349,7 @@ function DocumentCard({
           onToggle={(event) => setMenuOpen(event.currentTarget.open)}
         >
           <summary
-            className="grid h-28 w-28 cursor-pointer list-none place-items-center rounded-m text-ink-dim transition-colors hover:bg-field hover:text-ink [&::-webkit-details-marker]:hidden"
+            className="grid h-28 w-28 cursor-pointer list-none place-items-center rounded-m text-ink-faint opacity-65 transition-[background-color,color,opacity] duration-140 hover:bg-field hover:text-ink group-hover:opacity-100 focus-visible:opacity-100 [&::-webkit-details-marker]:hidden"
             aria-label={`Actions for ${summary.name}`}
           >
             <MoreHorizontal size={16} aria-hidden="true" />
@@ -255,22 +357,6 @@ function DocumentCard({
           <div className="absolute right-0 top-32 z-20 grid w-196 gap-2 rounded-panel border border-panel-hairline bg-panel p-5 shadow-[0_16px_44px_rgb(19_16_25/0.24)]">
             {!archived ? (
               <>
-                <button
-                  type="button"
-                  className="menu-item"
-                  onClick={onRename}
-                  disabled={busy}
-                >
-                  <Pencil size={13} aria-hidden="true" /> Rename
-                </button>
-                <button
-                  type="button"
-                  className="menu-item"
-                  onClick={onDuplicate}
-                  disabled={busy}
-                >
-                  <Copy size={13} aria-hidden="true" /> Duplicate
-                </button>
                 <label className="grid gap-4 border-y border-panel-hairline px-8 py-7 text-[10px] font-semibold uppercase tracking-[0.07em] text-ink-faint">
                   Move to folder
                   <select
@@ -582,10 +668,54 @@ export function DashboardView({
     setToast("Choose a .openlogo or SVG file.");
   }
 
-  function renderCards(documents: readonly DocumentSummary[]) {
+  function renderCards(
+    documents: readonly DocumentSummary[],
+    emptyState: "library" | "filtered" = "filtered",
+  ) {
     if (documents.length === 0) {
+      if (emptyState === "library") {
+        return (
+          <div className="col-span-full grid min-h-300 place-items-center overflow-hidden rounded-panel border border-accent/20 bg-[radial-gradient(circle_at_50%_0%,color-mix(in_srgb,var(--color-accent)_13%,transparent),transparent_52%),var(--color-panel)] p-28 text-center shadow-[0_18px_60px_rgb(19_16_25/0.1)]">
+            <div className="max-w-[430px]">
+              <div className="relative mx-auto grid h-74 w-96 place-items-center" aria-hidden="true">
+                <span className="absolute left-0 top-13 h-48 w-48 -rotate-12 rounded-[14px] border border-accent/20 bg-card shadow-[0_10px_24px_rgb(19_16_25/0.14)]" />
+                <span className="absolute right-0 top-13 h-48 w-48 rotate-12 rounded-[14px] border border-accent/20 bg-card shadow-[0_10px_24px_rgb(19_16_25/0.14)]" />
+                <span className="relative grid h-64 w-64 place-items-center rounded-[18px] border border-accent/35 bg-[linear-gradient(145deg,var(--color-card),var(--color-field))] text-accent shadow-[0_16px_32px_rgb(19_16_25/0.2),inset_0_1px_0_rgb(255_255_255/0.06)]">
+                  <Sparkles size={25} strokeWidth={1.5} />
+                </span>
+              </div>
+              <h2 className="mb-0 mt-14 text-[17px] font-[700] tracking-[-0.02em] text-ink">
+                Your next mark starts here
+              </h2>
+              <p className="mb-0 mt-6 text-[12px] leading-5 text-ink-dim">
+                Create a blank canvas or explore editable directions from Foundry.
+              </p>
+              <div className="mt-16 flex flex-wrap justify-center gap-8">
+                <button
+                  type="button"
+                  className={`${PRIMARY_BUTTON} active:scale-[0.98] motion-reduce:transform-none`}
+                  onClick={() => void createPreset()}
+                  disabled={busy || !library.ready}
+                >
+                  <FilePlus2 size={14} aria-hidden="true" /> Create blank project
+                </button>
+                <button
+                  type="button"
+                  className={`${SECONDARY_BUTTON} active:scale-[0.98] motion-reduce:transform-none`}
+                  onClick={() => setTemplatesOpen(true)}
+                  disabled={busy || !library.ready}
+                  aria-haspopup="dialog"
+                >
+                  <Sparkles size={14} className="text-accent" aria-hidden="true" />
+                  Browse templates
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      }
       return (
-        <div className="col-span-full grid min-h-220 place-items-center rounded-panel border border-dashed border-field-border bg-panel/45 p-24 text-center">
+        <div className="col-span-full grid min-h-200 place-items-center rounded-panel border border-dashed border-field-border bg-panel/45 p-24 text-center">
           <div>
             <FolderOpen
               className="mx-auto text-ink-faint"
@@ -594,10 +724,10 @@ export function DashboardView({
               aria-hidden="true"
             />
             <p className="mb-0 mt-10 text-[13px] font-semibold text-ink-dim">
-              No projects here
+              No matching projects
             </p>
             <p className="mb-0 mt-4 text-[11.5px] text-ink-faint">
-              Adjust search/filter, or create a new logo document.
+              Try a different search or folder filter.
             </p>
           </div>
         </div>
@@ -716,18 +846,19 @@ export function DashboardView({
 
           <button
             type="button"
-            className="inline-flex h-36 items-center gap-6 rounded-field border border-field-border bg-card px-12 text-[12px] font-[620] text-ink transition-colors hover:border-accent/55 hover:text-accent"
+            className="inline-flex h-36 items-center gap-6 rounded-field border border-field-border bg-card px-10 text-[12px] font-[620] text-ink transition-[border-color,color,transform] duration-140 ease-studio hover:border-accent/55 hover:text-accent active:scale-[0.98] motion-reduce:transform-none sm:px-12"
             onClick={() => setTemplatesOpen(true)}
             aria-haspopup="dialog"
+            aria-label="Browse templates"
           >
             <Sparkles size={13} className="text-accent" aria-hidden="true" />
-            Templates
+            <span className="hidden sm:inline">Templates</span>
           </button>
 
-          <label className="hidden items-center gap-7 text-[11px] text-ink-dim sm:flex">
+          <label className="hidden h-36 items-center gap-7 rounded-field border border-field-border bg-field pl-9 text-[10.5px] text-ink-dim transition-[border-color,box-shadow] duration-140 focus-within:border-accent focus-within:shadow-ring sm:flex">
             Sort
             <select
-              className={`${FIELD_INPUT} w-112 pr-7`}
+              className="h-full w-112 rounded-r-field border-0 border-l border-field-border bg-transparent px-9 text-[11.5px] text-ink outline-none"
               value={sort}
               onChange={(event) => setSort(event.target.value as DashboardSort)}
               aria-label="Sort projects"
@@ -756,8 +887,10 @@ export function DashboardView({
             className={SECONDARY_BUTTON}
             onClick={() => fileInputRef.current?.click()}
             disabled={busy}
+            aria-label="Import project"
           >
-            <Upload size={14} aria-hidden="true" /> Import
+            <Upload size={14} aria-hidden="true" />
+            <span className="hidden sm:inline">Import</span>
           </button>
         </div>
       </header>
@@ -809,27 +942,12 @@ export function DashboardView({
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-9 sm:grid-cols-3 lg:grid-cols-5">
-            {[
-              { label: "New blank", size: "720 × 420" },
-              { label: "Logo", size: "500 × 500", width: 500, height: 500 },
-              {
-                label: "Square",
-                size: "1080 × 1080",
-                width: 1080,
-                height: 1080,
-              },
-              {
-                label: "Wide",
-                size: "1920 × 1080",
-                width: 1920,
-                height: 1080,
-              },
-            ].map((preset) => (
+          <div className="grid grid-cols-2 gap-10 sm:grid-cols-3 lg:grid-cols-5">
+            {PROJECT_PRESETS.map((preset) => (
               <button
                 key={preset.label}
                 type="button"
-                className="group flex min-h-82 items-center gap-11 rounded-panel border border-panel-hairline bg-panel px-13 text-left shadow-[0_6px_20px_rgb(19_16_25/0.06)] transition-[border-color,transform] duration-140 ease-studio hover:-translate-y-1 hover:border-accent/50 disabled:opacity-45"
+                className="group flex min-h-104 items-center gap-12 rounded-panel border border-panel-hairline bg-panel px-14 text-left shadow-[0_8px_24px_rgb(19_16_25/0.07)] transition-[border-color,transform,box-shadow] duration-140 ease-studio hover:-translate-y-2 hover:border-accent/50 hover:shadow-[0_14px_32px_rgb(19_16_25/0.14)] active:scale-[0.98] disabled:opacity-45 motion-reduce:transform-none motion-reduce:transition-none"
                 onClick={() =>
                   void createPreset(
                     preset.width,
@@ -839,14 +957,14 @@ export function DashboardView({
                 }
                 disabled={busy || !library.ready}
               >
-                <span className="grid h-38 w-38 shrink-0 place-items-center rounded-[11px] bg-accent/9 text-accent transition-colors group-hover:bg-accent group-hover:text-white">
-                  <FilePlus2 size={17} aria-hidden="true" />
+                <span className="grid h-48 w-48 shrink-0 place-items-center rounded-[14px] border border-accent/12 bg-accent/8 text-accent shadow-[inset_0_1px_0_rgb(255_255_255/0.04)] transition-[background-color,color,border-color] duration-140 group-hover:border-accent group-hover:bg-accent group-hover:text-white">
+                  <PresetIcon kind={preset.kind} />
                 </span>
                 <span className="min-w-0">
-                  <strong className="block text-[12.5px] font-[650] text-ink">
+                  <strong className="block text-[13px] font-[670] text-ink">
                     {preset.label}
                   </strong>
-                  <small className="mt-3 block text-[10.5px] text-ink-faint">
+                  <small className="mt-4 block font-mono text-[10px] tabular-nums text-ink-faint">
                     {preset.size}
                   </small>
                 </span>
@@ -854,28 +972,71 @@ export function DashboardView({
             ))}
             <button
               type="button"
-              className="group flex min-h-82 items-center gap-11 rounded-panel border border-dashed border-field-border bg-panel/65 px-13 text-left transition-[border-color,transform] duration-140 ease-studio hover:-translate-y-1 hover:border-accent/60 disabled:opacity-45"
+              className="group col-span-2 flex min-h-104 items-center gap-12 rounded-panel border border-dashed border-accent/30 bg-accent/[0.035] px-14 text-left transition-[border-color,background-color,transform,box-shadow] duration-140 ease-studio hover:-translate-y-2 hover:border-accent/70 hover:bg-accent/[0.06] hover:shadow-[0_14px_32px_rgb(19_16_25/0.12)] active:scale-[0.98] disabled:opacity-45 motion-reduce:transform-none motion-reduce:transition-none sm:col-span-1"
               onClick={() => setCustomOpen(true)}
               disabled={busy || !library.ready}
             >
-              <span className="grid h-38 w-38 shrink-0 place-items-center rounded-[11px] bg-field text-ink-dim group-hover:text-accent">
+              <span className="grid h-48 w-48 shrink-0 place-items-center rounded-[14px] border border-dashed border-accent/30 bg-field/70 text-ink-dim transition-colors group-hover:border-accent group-hover:text-accent">
                 <ArrowUpRight size={17} aria-hidden="true" />
               </span>
               <span>
-                <strong className="block text-[12.5px] font-[650] text-ink">
+                <strong className="block text-[13px] font-[670] text-ink">
                   Custom size
                 </strong>
-                <small className="mt-3 block text-[10.5px] text-ink-faint">
+                <small className="mt-4 block text-[10px] text-ink-faint">
                   Up to 16,384 px
                 </small>
               </span>
             </button>
           </div>
+
+          <button
+            type="button"
+            className="group relative mt-12 flex w-full items-center gap-14 overflow-hidden rounded-panel border border-accent/25 bg-[linear-gradient(105deg,color-mix(in_srgb,var(--color-accent)_13%,var(--color-panel)),var(--color-panel)_52%,color-mix(in_srgb,var(--color-accent-deep)_10%,var(--color-panel)))] px-16 py-14 text-left shadow-[0_10px_30px_rgb(19_16_25/0.1)] transition-[border-color,transform,box-shadow] duration-140 ease-studio hover:-translate-y-1 hover:border-accent/55 hover:shadow-[0_16px_38px_rgb(19_16_25/0.16)] active:scale-[0.99] disabled:opacity-45 motion-reduce:transform-none motion-reduce:transition-none"
+            onClick={() => setTemplatesOpen(true)}
+            disabled={busy || !library.ready}
+            aria-haspopup="dialog"
+          >
+            <span className="grid h-44 w-44 shrink-0 place-items-center rounded-[13px] bg-[linear-gradient(135deg,#6a82f8,var(--color-accent)_55%,var(--color-accent-deep))] text-white shadow-[0_8px_20px_var(--glow-40),inset_0_1px_0_rgb(255_255_255/0.25)]">
+              <Sparkles size={19} aria-hidden="true" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[10px] font-bold uppercase tracking-[0.09em] text-accent">
+                OpenLogo Foundry
+              </span>
+              <strong className="mt-3 block text-[13px] font-[650] text-ink">
+                Generate an editable logo direction in seconds
+              </strong>
+            </span>
+            <span className="hidden items-center gap-5 text-[11.5px] font-semibold text-accent transition-transform duration-140 group-hover:translate-x-2 motion-reduce:transform-none sm:inline-flex">
+              Explore templates <ArrowUpRight size={14} aria-hidden="true" />
+            </span>
+            <span className="pointer-events-none absolute -right-18 -top-32 h-96 w-96 rounded-full border border-accent/15" aria-hidden="true" />
+            <span className="pointer-events-none absolute -right-1 top-22 h-64 w-64 rounded-full border border-accent/10" aria-hidden="true" />
+          </button>
+
+          {availableDocuments.length > 0 && availableDocuments.length <= 3 && (
+            <div className="mt-10 flex flex-wrap items-center gap-x-8 gap-y-4 rounded-[10px] border border-panel-hairline bg-panel/55 px-12 py-9 text-[10.5px] text-ink-dim">
+              <span className="inline-flex items-center gap-5 font-semibold text-ink">
+                <Sparkles size={11} className="text-accent" aria-hidden="true" />
+                Quick start
+              </span>
+              <span className="text-ink-faint" aria-hidden="true">·</span>
+              Duplicate a project to explore alternates without losing your original.
+              <button
+                type="button"
+                className="font-semibold text-accent transition-colors hover:text-ink"
+                onClick={() => setTemplatesOpen(true)}
+              >
+                Or start from Foundry
+              </button>
+            </div>
+          )}
         </section>
 
         <section className="mt-28" aria-label="Document library">
-          <div className="flex flex-wrap items-center gap-8 border-b border-panel-hairline">
-            <div className="flex" role="tablist" aria-label="Project views">
+          <div className="flex min-h-44 flex-wrap items-center gap-8 border-b border-panel-hairline">
+            <div className="relative grid grid-cols-3" role="tablist" aria-label="Project views">
               {(
                 [
                   ["projects", "Projects", availableDocuments.length],
@@ -888,24 +1049,31 @@ export function DashboardView({
                   type="button"
                   role="tab"
                   aria-selected={tab === id}
-                  className={`relative h-40 px-13 text-[12px] font-[620] transition-colors ${
+                  className={`relative z-1 h-44 min-w-96 px-12 text-[12px] font-[620] transition-colors duration-140 ${
                     tab === id ? "text-accent" : "text-ink-dim hover:text-ink"
                   }`}
                   onClick={() => setTab(id)}
                 >
                   {label} <span className="text-[10px] text-ink-faint">{count}</span>
-                  {tab === id && (
-                    <span className="absolute inset-x-8 bottom-0 h-2 rounded-full bg-accent" />
-                  )}
                 </button>
               ))}
+              <span
+                className={`pointer-events-none absolute bottom-0 left-0 h-2 w-1/3 rounded-full bg-accent shadow-[0_0_12px_var(--glow-40)] transition-transform duration-160 ease-studio motion-reduce:transition-none ${
+                  tab === "projects"
+                    ? "translate-x-0"
+                    : tab === "folders"
+                      ? "translate-x-full"
+                      : "translate-x-[200%]"
+                }`}
+                aria-hidden="true"
+              />
             </div>
 
             {tab === "projects" && (
-              <label className="ml-auto flex items-center gap-7 pb-7 text-[10.5px] text-ink-dim">
+              <label className="ml-auto flex h-36 items-center gap-7 rounded-field border border-field-border bg-field pl-9 text-[10.5px] text-ink-dim transition-[border-color,box-shadow] duration-140 focus-within:border-accent focus-within:shadow-ring">
                 Folder
                 <select
-                  className="h-30 rounded-field border border-field-border bg-field px-8 text-[11.5px] text-ink outline-none focus:border-accent"
+                  className="h-full rounded-r-field border-0 border-l border-field-border bg-transparent px-9 text-[11.5px] text-ink outline-none"
                   value={folderFilter}
                   onChange={(event) => setFolderFilter(event.target.value)}
                   aria-label="Filter projects by folder"
@@ -963,7 +1131,14 @@ export function DashboardView({
               role="tabpanel"
               className="grid grid-cols-1 gap-14 pt-16 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
             >
-              {renderCards(projectDocuments)}
+              {renderCards(
+                projectDocuments,
+                availableDocuments.length === 0 &&
+                  normalizedQuery === "" &&
+                  folderFilter === "all"
+                  ? "library"
+                  : "filtered",
+              )}
             </div>
           )}
 
