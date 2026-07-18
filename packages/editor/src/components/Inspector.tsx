@@ -2000,11 +2000,6 @@ function GroupSection({ group }: { group: GroupNode }) {
   );
 }
 
-/**
- * Active-artboard properties shown when nothing is selected (Figma-style
- * canvas inspector): position, size and background of the stage the user
- * is looking at, instead of dead space.
- */
 function CanvasSection({ artboard }: { artboard: Artboard }) {
   function patchArtboard(patch: ArtboardPatch) {
     documentStore.apply({
@@ -2054,7 +2049,6 @@ function CanvasSection({ artboard }: { artboard: Artboard }) {
   );
 }
 
-/** Hex field for the artboard background; invalid drafts revert on blur. */
 function ArtboardBackgroundField({
   background,
   onCommit,

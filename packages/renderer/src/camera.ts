@@ -59,6 +59,32 @@ export function panBy(camera: Camera, screenDelta: Vec2): Camera {
   };
 }
 
+/** Keep the world point under the viewport centre when the CSS size changes. */
+export function cameraKeepingCenter(
+  camera: Camera,
+  prev: { width: number; height: number },
+  next: { width: number; height: number },
+): Camera {
+  if (
+    prev.width <= 0 ||
+    prev.height <= 0 ||
+    next.width <= 0 ||
+    next.height <= 0 ||
+    (prev.width === next.width && prev.height === next.height)
+  ) {
+    return camera;
+  }
+  const cx = camera.offset.x + prev.width / 2 / camera.zoom;
+  const cy = camera.offset.y + prev.height / 2 / camera.zoom;
+  return {
+    zoom: camera.zoom,
+    offset: {
+      x: cx - next.width / 2 / camera.zoom,
+      y: cy - next.height / 2 / camera.zoom,
+    },
+  };
+}
+
 /** Fit bounds into a viewport with padding, centred. */
 export function fitBounds(
   bounds: Bounds,

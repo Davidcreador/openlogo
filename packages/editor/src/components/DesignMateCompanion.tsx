@@ -69,7 +69,6 @@ function useDesignMateStatusLine(): string {
         : "Want a second pair of eyes?";
 }
 
-/** Floating launcher in the canvas corner; toggles the dock column. */
 export function DesignMateCompanion() {
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const open = useEditorStore((state) => state.designMateOpen);
@@ -119,11 +118,7 @@ export function DesignMateCompanion() {
   );
 }
 
-/**
- * Right-edge dock column (after the inspector) hosting Design Mate. The
- * workspace grid only reserves its width while open; once activated it
- * stays mounted (hidden) so chat state survives toggling.
- */
+/** Dock column; stays mounted (hidden) after first open so chat state survives. */
 export function DesignMateDock() {
   const open = useEditorStore((state) => state.designMateOpen);
   const setOpen = useEditorStore((state) => state.setDesignMateOpen);

@@ -65,11 +65,7 @@ type EditorState = {
   designMateRemoteEnabled: boolean;
   designMateStatus: DesignMateStatus;
   designMateError: string | null;
-  /**
-   * Design Mate dock visibility (session-only). When open the workspace
-   * grid gains a third panel column, so the canvas yields width instead
-   * of being covered.
-   */
+  /** Design Mate dock open (session-only; adds a workspace grid column). */
   designMateOpen: boolean;
   rendererReady: boolean;
   /** Local document hydration/autosave state shown in the app chrome. */

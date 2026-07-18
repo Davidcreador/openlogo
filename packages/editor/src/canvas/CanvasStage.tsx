@@ -62,6 +62,7 @@ import {
   FontRegistry,
   type HandleId,
   SceneRenderer,
+  cameraKeepingCenter,
   fitBounds,
   panBy,
   rotateHandlePoint,
@@ -839,24 +840,33 @@ export function CanvasStage({
 
       const applySize = () => {
         const rect = container.getBoundingClientRect();
+        const next = { width: rect.width, height: rect.height };
+        const store = useEditorStore.getState();
+        const previous = store.viewport;
+
         canvas.style.width = `${rect.width}px`;
         canvas.style.height = `${rect.height}px`;
-        renderer.resize(rect.width, rect.height, window.devicePixelRatio || 1);
-        useEditorStore
-          .getState()
-          .setViewport({ width: rect.width, height: rect.height });
 
-        if (!cameraFittedRef.current && rect.width > 0) {
+        if (!cameraFittedRef.current && next.width > 0) {
           cameraFittedRef.current = true;
           const artboard = getActiveArtboard(documentStore.document);
-          // Initial view: fit, but never auto-magnify past actual size —
-          // opening a small artboard at 198% looks blown up. Explicit
-          // ⌘0 / fit keeps true Illustrator-style uncapped fit.
-          useEditorStore
-            .getState()
-            .setCamera(fitBounds(artboard, rect.width, rect.height, 48, 1));
+          // Initial view: fit, but never auto-magnify past actual size.
+          // Explicit ⌘0 / fit stays uncapped.
+          store.setCamera(fitBounds(artboard, next.width, next.height, 48, 1));
+        } else if (cameraFittedRef.current) {
+          // Dock/window resize: keep zoom and the world point under centre
+          // so the artboard does not jump or blank-refit.
+          const kept = cameraKeepingCenter(store.camera, previous, next);
+          if (kept !== store.camera) {
+            store.setCamera(kept);
+          }
         }
+
+        store.setViewport(next);
+        // Scene must carry the updated camera before resize's invalidate
+        // paints, or one frame draws the old framing on the new surface.
         syncScene();
+        renderer.resize(next.width, next.height, window.devicePixelRatio || 1);
       };
 
       observer = new ResizeObserver(applySize);

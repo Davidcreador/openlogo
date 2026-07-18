@@ -22,7 +22,6 @@ import {
   pixelSnapPatch,
 } from "@openlogo/core";
 import { type BooleanOp, fitBounds, zoomAt } from "@openlogo/renderer";
-import { fitArtboardAfterViewportChange } from "./lib/artboard-ops";
 import { canPasteNodes, copyNodes, cutNodes, pasteNodes } from "./lib/clipboard";
 import { applyBooleanOp, combinableNodes } from "./lib/boolean-ops";
 import { getCanvasKit } from "./lib/canvaskit";
@@ -379,8 +378,6 @@ export default function App() {
     export: false,
     library: false,
   });
-  // Skip the mount tick — only re-fit when the dock actually toggles.
-  const designMateFitReady = useRef(false);
 
   useEffect(() => {
     if (
@@ -400,16 +397,6 @@ export default function App() {
     loadedDialogs,
     transformDialogOpen,
   ]);
-
-  // Dock open/close changes the canvas column width; wait for ResizeObserver
-  // to publish the new viewport, then fit so the artboard is not clipped.
-  useEffect(() => {
-    if (!designMateFitReady.current) {
-      designMateFitReady.current = true;
-      return;
-    }
-    fitArtboardAfterViewportChange();
-  }, [designMateOpen]);
 
   // Dashboard boot reads repository metadata only. CanvasKit, the active head,
   // fonts, and DocumentSession remain cold until the user enters the editor.
