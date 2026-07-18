@@ -460,11 +460,37 @@ export class SceneRenderer {
     if (this.disposed) {
       return;
     }
+    const width = Math.max(1, Math.round(cssWidth * dpr));
+    const height = Math.max(1, Math.round(cssHeight * dpr));
+    // Dock toggles fire ResizeObserver; skip when the backing store is unchanged.
+    if (
+      this.canvas.width === width &&
+      this.canvas.height === height &&
+      this.dpr === dpr &&
+      this.surface
+    ) {
+      return;
+    }
     this.dpr = dpr;
-    this.canvas.width = Math.max(1, Math.round(cssWidth * dpr));
-    this.canvas.height = Math.max(1, Math.round(cssHeight * dpr));
-    this.createSurface(false);
-    this.invalidate();
+    this.canvas.width = width;
+    this.canvas.height = height;
+    if (!this.createSurface(false)) {
+      return;
+    }
+    // Paint now — waiting for rAF leaves one blank frame after the GL
+    // surface is recreated (visible as Design Mate dock open/close flicker).
+    const scene = this.scene;
+    if (!scene) {
+      return;
+    }
+    try {
+      this.draw(scene);
+      this.frameScheduler.clearPending();
+    } catch (error) {
+      console.warn("CanvasKit render surface failed; awaiting recovery.", error);
+      this.releaseSurface();
+      this.clearRenderCaches();
+    }
   }
 
   dispose(): void {

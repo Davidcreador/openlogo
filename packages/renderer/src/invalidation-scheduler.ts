@@ -24,6 +24,18 @@ export class InvalidationScheduler {
     this.schedule();
   }
 
+  /** Drop a pending frame after a synchronous paint (e.g. resize). */
+  clearPending(): void {
+    if (this.disposed) {
+      return;
+    }
+    this.dirty = false;
+    if (this.frame !== null) {
+      this.cancelFrame(this.frame);
+      this.frame = null;
+    }
+  }
+
   dispose(): void {
     if (this.disposed) {
       return;

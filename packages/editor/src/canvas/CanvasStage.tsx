@@ -841,8 +841,11 @@ export function CanvasStage({
       const applySize = () => {
         const rect = container.getBoundingClientRect();
         const next = { width: rect.width, height: rect.height };
+        const dpr = window.devicePixelRatio || 1;
         const store = useEditorStore.getState();
         const previous = store.viewport;
+        const sizeUnchanged =
+          previous.width === next.width && previous.height === next.height;
 
         canvas.style.width = `${rect.width}px`;
         canvas.style.height = `${rect.height}px`;
@@ -851,22 +854,20 @@ export function CanvasStage({
           cameraFittedRef.current = true;
           const artboard = getActiveArtboard(documentStore.document);
           // Initial view: fit, but never auto-magnify past actual size.
-          // Explicit ⌘0 / fit stays uncapped.
           store.setCamera(fitBounds(artboard, next.width, next.height, 48, 1));
-        } else if (cameraFittedRef.current) {
-          // Dock/window resize: keep zoom and the world point under centre
-          // so the artboard does not jump or blank-refit.
+        } else if (cameraFittedRef.current && !sizeUnchanged) {
           const kept = cameraKeepingCenter(store.camera, previous, next);
           if (kept !== store.camera) {
             store.setCamera(kept);
           }
         }
 
-        store.setViewport(next);
-        // Scene must carry the updated camera before resize's invalidate
-        // paints, or one frame draws the old framing on the new surface.
+        if (!sizeUnchanged) {
+          store.setViewport(next);
+        }
+        // Camera must be in the scene before resize paints the new surface.
         syncScene();
-        renderer.resize(next.width, next.height, window.devicePixelRatio || 1);
+        renderer.resize(next.width, next.height, dpr);
       };
 
       observer = new ResizeObserver(applySize);

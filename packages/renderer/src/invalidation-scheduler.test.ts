@@ -109,6 +109,25 @@ describe("InvalidationScheduler", () => {
     expect(frames.pending).toBe(0);
   });
 
+  it("clears a pending frame after a synchronous paint", () => {
+    const frames = new FakeAnimationFrames();
+    const render = vi.fn();
+    const scheduler = new InvalidationScheduler(
+      render,
+      frames.request,
+      frames.cancel,
+    );
+
+    scheduler.invalidate();
+    const handle = frames.firstPendingHandle;
+    scheduler.clearPending();
+
+    expect(handle).not.toBeNull();
+    expect(frames.cancel).toHaveBeenCalledWith(handle);
+    expect(frames.pending).toBe(0);
+    expect(render).not.toHaveBeenCalled();
+  });
+
   it("cancels a pending frame and cannot reschedule after disposal", () => {
     const frames = new FakeAnimationFrames();
     const render = vi.fn();

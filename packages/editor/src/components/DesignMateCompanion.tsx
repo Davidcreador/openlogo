@@ -2,7 +2,6 @@ import {
   Component,
   lazy,
   Suspense,
-  useCallback,
   useEffect,
   useRef,
   useState,
@@ -70,7 +69,6 @@ function useDesignMateStatusLine(): string {
 }
 
 export function DesignMateCompanion() {
-  const launcherRef = useRef<HTMLButtonElement | null>(null);
   const open = useEditorStore((state) => state.designMateOpen);
   const setOpen = useEditorStore((state) => state.setDesignMateOpen);
   const status = useEditorStore((state) => state.designMateStatus);
@@ -79,14 +77,9 @@ export function DesignMateCompanion() {
   const thinking = status === "reviewing";
   const statusLine = useDesignMateStatusLine();
 
-  function toggle(): void {
-    setOpen(!open);
-  }
-
   return (
     <div className="pointer-events-none absolute bottom-64 right-16 z-20 flex flex-col items-end">
       <button
-        ref={launcherRef}
         type="button"
         data-design-mate-trigger
         className={`pointer-events-auto flex items-center gap-6 rounded-full border px-11 py-7 shadow-float transition-[transform,background-color,border-color,color] duration-180 ease-studio hover:-translate-y-1 ${
@@ -94,7 +87,7 @@ export function DesignMateCompanion() {
             ? "border-accent/40 bg-card text-ink"
             : "border-panel-border bg-card text-ink hover:border-accent/40"
         }`}
-        onClick={toggle}
+        onClick={() => setOpen(!open)}
         aria-expanded={open}
         aria-controls={PANEL_ID}
         aria-label={`${open ? "Close" : "Open"} Design Mate. ${statusLine}`}
@@ -118,7 +111,6 @@ export function DesignMateCompanion() {
   );
 }
 
-/** Dock column; stays mounted (hidden) after first open so chat state survives. */
 export function DesignMateDock() {
   const open = useEditorStore((state) => state.designMateOpen);
   const setOpen = useEditorStore((state) => state.setDesignMateOpen);
@@ -128,21 +120,21 @@ export function DesignMateDock() {
   const panelRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
 
-  useEffect(() => {
-    if (open) {
-      setActivated(true);
-      requestAnimationFrame(() => closeButtonRef.current?.focus());
-    }
-  }, [open]);
-
-  const close = useCallback((): void => {
+  function close(): void {
     setOpen(false);
     requestAnimationFrame(() => {
       document
         .querySelector<HTMLButtonElement>("[data-design-mate-trigger]")
         ?.focus();
     });
-  }, [setOpen]);
+  }
+
+  useEffect(() => {
+    if (open) {
+      setActivated(true);
+      requestAnimationFrame(() => closeButtonRef.current?.focus());
+    }
+  }, [open]);
 
   useEffect(() => {
     if (!open) {
@@ -161,7 +153,7 @@ export function DesignMateDock() {
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, close]);
+  }, [open, setOpen]);
 
   if (!activated) {
     return null;
