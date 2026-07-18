@@ -121,14 +121,15 @@ describe("reflectLeafPatches", () => {
     expect(second!.patch.rotation).toBeCloseTo(rect.rotation, 6);
   });
 
-  it("keeps text upright (no content mirror) on a vertical-line reflect", () => {
-    const text = createText({ x: 100, y: 100 });
+  it("keeps text upright and reverses the string on Flip Horizontal", () => {
+    const text = { ...createText({ x: 100, y: 100 }), content: "Logo" };
     const document = docWith(text);
     const [update] = reflectLeafPatches(document, [text.id], 90, {
       x: 0,
       y: 0,
     });
-    expect(update!.patch.rotation).toBe(0); // not 180 — text stays readable
+    expect(update!.patch.rotation).toBeUndefined();
+    expect(update!.patch.content).toBe("ogoL");
   });
 });
 

@@ -81,6 +81,35 @@ export function angleFromPoints(start: Vec2, end: Vec2): number {
   return (Math.atan2(end.y - start.y, end.x - start.x) * 180) / Math.PI;
 }
 
+/**
+ * Mirror a paint in node-box normalized space across the horizontal mid-
+ * line (y → 1 − y). Matches the content-flip half of reflectLeafPatches
+ * so fills reverse with the shape under Flip Vertical / Reflect.
+ */
+export function mirrorPaintVertically(paint: Paint): Paint {
+  if (paint.type === "solid") {
+    return paint;
+  }
+  if (paint.type === "linear-gradient") {
+    if (paint.start && paint.end) {
+      const start = { x: paint.start.x, y: 1 - paint.start.y };
+      const end = { x: paint.end.x, y: 1 - paint.end.y };
+      return {
+        ...paint,
+        start,
+        end,
+        angle: angleFromPoints(start, end),
+      };
+    }
+    return { ...paint, angle: -paint.angle };
+  }
+  return {
+    ...paint,
+    cy: 1 - paint.cy,
+    ...(paint.fy !== undefined ? { fy: 1 - paint.fy } : {}),
+  };
+}
+
 /* ---------------- stop editing (immutable) ---------------- */
 
 const HEX = /^#([0-9a-f]{6})$/i;

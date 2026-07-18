@@ -87,6 +87,10 @@ export type Scene = {
       hovered: boolean;
     }>;
   } | null;
+  /** Illustrator-style pixel grid over the active artboard. */
+  showGrid?: boolean;
+  /** Grid cell size in artboard px. */
+  gridSize?: number;
 };
 
 export type TextMetrics = { width: number; height: number };
@@ -832,6 +836,19 @@ export class SceneRenderer {
     canvas.clipRect(rect, ck.ClipOp.Intersect, true);
     canvas.translate(artboard.x, artboard.y);
 
+    if (
+      this.scene?.showGrid &&
+      artboard.id === document.activeArtboardId
+    ) {
+      this.drawArtboardGrid(
+        canvas,
+        artboard.width,
+        artboard.height,
+        this.scene.gridSize ?? 8,
+        camera.zoom,
+      );
+    }
+
     // Tree walk instead of the flattened render list: a group with a
     // blend mode must composite its subtree as ONE layer against the
     // backdrop (saveLayer), which per-leaf flattening cannot express.
@@ -841,6 +858,34 @@ export class SceneRenderer {
     }
 
     canvas.restore();
+  }
+
+  /** Square grid in artboard-local space (caller already translated). */
+  private drawArtboardGrid(
+    canvas: Canvas,
+    width: number,
+    height: number,
+    gridSize: number,
+    zoom: number,
+  ): void {
+    if (!Number.isFinite(gridSize) || gridSize <= 0) {
+      return;
+    }
+    const ck = this.canvasKit;
+    const paint = new ck.Paint();
+    paint.setStyle(ck.PaintStyle.Stroke);
+    paint.setStrokeWidth(1 / zoom);
+    paint.setColor(ck.parseColorString(activeTheme.selection));
+    paint.setAlphaf(0.18);
+    paint.setAntiAlias(false);
+
+    for (let x = gridSize; x < width; x += gridSize) {
+      canvas.drawLine(x, 0, x, height, paint);
+    }
+    for (let y = gridSize; y < height; y += gridSize) {
+      canvas.drawLine(0, y, width, y, paint);
+    }
+    paint.delete();
   }
 
   /**

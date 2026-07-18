@@ -1,4 +1,5 @@
 import { type Vec2, rotatePoint } from "./geometry";
+import { mirrorPaintVertically } from "./gradient";
 import {
   pathGeometryToSvg,
   scalePathGeometry,
@@ -6,7 +7,7 @@ import {
 } from "./path-data";
 import type { NodePatch } from "./commands";
 import { collectLeafNodeIds } from "./queries";
-import type { LogoDocument } from "./types";
+import type { LogoDocument, LogoNode, Stroke } from "./types";
 
 /**
  * Leaf-level transform patch builders (rotate / reflect / scale /
@@ -78,6 +79,22 @@ export function reflectPoint(
   };
 }
 
+function withMirroredPaints(node: LogoNode, patch: NodePatch): void {
+  if (node.type === "group") {
+    return;
+  }
+  const fill = mirrorPaintVertically(node.fill);
+  if (fill !== node.fill) {
+    patch.fill = fill;
+  }
+  if (node.stroke?.paint) {
+    const paint = mirrorPaintVertically(node.stroke.paint);
+    if (paint !== node.stroke.paint) {
+      patch.stroke = { ...node.stroke, paint } satisfies Stroke;
+    }
+  }
+}
+
 /**
  * Reflect the selection's leaves across the mirror line through `pivot`
  * at `axisAngle` degrees (0 = horizontal line → flips up/down, 90 =
@@ -86,10 +103,9 @@ export function reflectPoint(
  * Decomposition per leaf: the mirrored appearance of a box node rotated
  * by θ equals content-flipped-vertically + rotation (2·axis − θ), with
  * the centre reflected across the line. Paths with structured geometry
- * flip their intrinsic content; rectangles/ellipses are symmetric under
- * the flip. Text (and geometry-less paths) cannot flip their content, so
- * they keep the decomposition whose angle stays most upright — the same
- * approximation the existing flip buttons use.
+ * flip their intrinsic content; paints get the same vertical content
+ * flip so gradients reverse under Flip Vertical. Text reverses its
+ * string across a vertical mirror line (Flip Horizontal).
  */
 export function reflectLeafPatches(
   document: LogoDocument,
@@ -97,6 +113,9 @@ export function reflectLeafPatches(
   axisAngle: number,
   pivot: Vec2,
 ): LeafUpdate[] {
+  const axis = ((axisAngle % 180) + 180) % 180;
+  const flipHorizontal = Math.abs(axis - 90) < 1e-6;
+
   return collectLeafNodeIds(document, nodeIds)
     .map((nodeId) => {
       const node = document.nodes[nodeId];
@@ -126,18 +145,33 @@ export function reflectLeafPatches(
         patch.geometry = mirrored;
         patch.d = pathGeometryToSvg(mirrored);
         patch.rotation = flippedRotation;
+        // Detach shape-library params so a later param edit cannot
+        // regenerate the pre-flip silhouette.
+        if (node.shape) {
+          patch.shape = undefined;
+        }
       } else if (node.type === "rectangle" || node.type === "ellipse") {
-        // Content is symmetric under the vertical flip.
         patch.rotation = flippedRotation;
+      } else if (node.type === "text") {
+        // Keep type readable: Flip Horizontal reverses the string; Flip
+        // Vertical only carries the reflected rotation (no glyph invert).
+        if (flipHorizontal) {
+          if (node.content.length > 0) {
+            patch.content = [...node.content].reverse().join("");
+          }
+        } else {
+          patch.rotation = flippedRotation;
+        }
       } else {
-        // Text / legacy paths: content cannot mirror — pick the
-        // decomposition that keeps the node most upright.
+        // Legacy paths without geometry: keep the most upright angle.
         const alternate = normalizeAngle(flippedRotation - 180);
         patch.rotation =
           Math.abs(alternate) < Math.abs(flippedRotation)
             ? alternate
             : flippedRotation;
       }
+
+      withMirroredPaints(node, patch);
 
       return { nodeId, patch };
     })

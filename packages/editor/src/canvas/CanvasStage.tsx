@@ -47,6 +47,7 @@ import {
   normalizeAngle,
   normalizeTextPathContent,
   pathNodeLocalGeometry,
+  gridSnapPatch,
   pixelSnapPatch,
   removeAnchor,
   rotatePoint,
@@ -669,6 +670,8 @@ export function CanvasStage({
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
   const keyObjectId = useEditorStore((state) => state.keyObjectId);
   const camera = useEditorStore((state) => state.camera);
+  const showGrid = useEditorStore((state) => state.showGrid);
+  const gridSize = useEditorStore((state) => state.gridSize);
   const theme = useEditorStore((state) => state.theme);
   const tool = useEditorStore((state) => state.tool);
   const setTool = useEditorStore((state) => state.setTool);
@@ -772,6 +775,8 @@ export function CanvasStage({
             })),
           }
         : null,
+      showGrid: state.showGrid,
+      gridSize: state.gridSize,
     });
   }, []);
 
@@ -895,10 +900,10 @@ export function CanvasStage({
     [syncScene],
   );
 
-  // Camera and selection still originate in React state.
+  // Camera, selection, and grid chrome still originate in React state.
   useEffect(() => {
     syncScene();
-  }, [camera, selectedNodeIds, keyObjectId, syncScene]);
+  }, [camera, selectedNodeIds, keyObjectId, showGrid, gridSize, syncScene]);
 
   // Theme swaps renderer constants (selection accent, artboard shadow).
   useEffect(() => {
@@ -3098,10 +3103,16 @@ export function CanvasStage({
     ) {
       // Pixel snap is a commit-time concern: previews stay fluid, the
       // history entry gets whole-pixel geometry.
-      const updates = useEditorStore.getState().pixelSnap
+      const editorState = useEditorStore.getState();
+      const snapPatch = editorState.showGrid
+        ? (patch: NodePatch) => gridSnapPatch(patch, editorState.gridSize)
+        : editorState.pixelSnap
+          ? pixelSnapPatch
+          : null;
+      const updates = snapPatch
         ? drag.patches.map(({ nodeId, patch }) => ({
             nodeId,
-            patch: pixelSnapPatch(patch),
+            patch: snapPatch(patch),
           }))
         : drag.patches;
       documentStore.apply({ type: "update-nodes", updates });

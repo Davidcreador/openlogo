@@ -108,6 +108,10 @@ type EditorState = {
   previewStripOpen: boolean | null;
   /** Size-check preview background (persisted). */
   previewStripSurface: PreviewSurface;
+  /** Artboard overlay grid + snap-to-grid when visible (persisted). */
+  showGrid: boolean;
+  /** Grid cell size in artboard px (persisted). */
+  gridSize: number;
   setTool: (tool: Tool) => void;
   setGradientTarget: (target: GradientTarget) => void;
   setView: (view: EditorView) => void;
@@ -135,6 +139,8 @@ type EditorState = {
   setDocumentSessionState: (state: DocumentSessionState) => void;
   setPreviewStripOpen: (open: boolean) => void;
   setPreviewStripSurface: (surface: PreviewSurface) => void;
+  setShowGrid: (show: boolean) => void;
+  setGridSize: (size: number) => void;
 };
 
 const initialPrefs = loadPrefs();
@@ -167,6 +173,8 @@ export const useEditorStore = create<EditorState>((set) => ({
   toast: null,
   previewStripOpen: initialPrefs.previewStripOpen,
   previewStripSurface: initialPrefs.previewStripSurface,
+  showGrid: initialPrefs.showGrid,
+  gridSize: initialPrefs.gridSize,
   setView: (view) => set({ view }),
   setTool: (tool) => set({ tool }),
   setGradientTarget: (gradientTarget) => set({ gradientTarget }),
@@ -225,5 +233,14 @@ export const useEditorStore = create<EditorState>((set) => ({
   setPreviewStripSurface: (previewStripSurface) => {
     savePrefs({ ...loadPrefs(), previewStripSurface });
     set({ previewStripSurface });
+  },
+  setShowGrid: (showGrid) => {
+    savePrefs({ ...loadPrefs(), showGrid });
+    set({ showGrid });
+  },
+  setGridSize: (gridSize) => {
+    const size = Number.isFinite(gridSize) && gridSize > 0 ? gridSize : 8;
+    savePrefs({ ...loadPrefs(), gridSize: size });
+    set({ gridSize: size });
   },
 }));

@@ -25,6 +25,10 @@ export type EditorPrefs = {
    */
   previewStripOpen: boolean | null;
   previewStripSurface: PreviewSurface;
+  /** Illustrator-style artboard overlay grid (also enables snap-to-grid). */
+  showGrid: boolean;
+  /** Grid cell size in artboard px. */
+  gridSize: number;
 };
 
 const DEFAULTS: EditorPrefs = {
@@ -34,6 +38,8 @@ const DEFAULTS: EditorPrefs = {
   designMateRemoteEnabled: false,
   previewStripOpen: null,
   previewStripSurface: "artboard",
+  showGrid: false,
+  gridSize: 8,
 };
 
 function isPreviewSurface(value: unknown): value is PreviewSurface {
@@ -82,6 +88,16 @@ export function loadPrefs(): EditorPrefs {
       previewStripSurface: isPreviewSurface(parsed.previewStripSurface)
         ? parsed.previewStripSurface
         : DEFAULTS.previewStripSurface,
+      showGrid:
+        typeof parsed.showGrid === "boolean"
+          ? parsed.showGrid
+          : DEFAULTS.showGrid,
+      gridSize:
+        typeof parsed.gridSize === "number" &&
+        Number.isFinite(parsed.gridSize) &&
+        parsed.gridSize > 0
+          ? parsed.gridSize
+          : DEFAULTS.gridSize,
     };
   } catch {
     return { ...DEFAULTS };

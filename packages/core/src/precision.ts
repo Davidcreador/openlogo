@@ -30,6 +30,31 @@ export function pixelSnapPatch(patch: NodePatch): NodePatch {
   return snapped;
 }
 
+/**
+ * Round geometric patch fields onto a square grid. Same "only touch present
+ * fields" contract as pixelSnapPatch. `gridSize` ≤ 0 is a no-op.
+ */
+export function gridSnapPatch(patch: NodePatch, gridSize: number): NodePatch {
+  if (!Number.isFinite(gridSize) || gridSize <= 0) {
+    return patch;
+  }
+  const snap = (value: number) => Math.round(value / gridSize) * gridSize;
+  const snapped: NodePatch = { ...patch };
+  if (snapped.x !== undefined) {
+    snapped.x = snap(snapped.x);
+  }
+  if (snapped.y !== undefined) {
+    snapped.y = snap(snapped.y);
+  }
+  if (snapped.width !== undefined) {
+    snapped.width = Math.max(gridSize, snap(snapped.width));
+  }
+  if (snapped.height !== undefined) {
+    snapped.height = Math.max(gridSize, snap(snapped.height));
+  }
+  return snapped;
+}
+
 export type SpacingUnit = {
   id: string;
   bounds: Bounds;

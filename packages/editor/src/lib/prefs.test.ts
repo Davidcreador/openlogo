@@ -31,6 +31,8 @@ describe("editor preferences", () => {
       designMateRemoteEnabled: false,
       previewStripOpen: null,
       previewStripSurface: "artboard",
+      showGrid: false,
+      gridSize: 8,
     });
   });
 
@@ -57,6 +59,8 @@ describe("editor preferences", () => {
       designMateRemoteEnabled: true,
       previewStripOpen: false,
       previewStripSurface: "transparent",
+      showGrid: true,
+      gridSize: 16,
     });
     expect(loadPrefs()).toEqual({
       theme: "dark",
@@ -65,7 +69,15 @@ describe("editor preferences", () => {
       designMateRemoteEnabled: true,
       previewStripOpen: false,
       previewStripSurface: "transparent",
+      showGrid: true,
+      gridSize: 16,
     });
+  });
+
+  it("defaults the overlay grid off and validates stored cell size", () => {
+    installStorage(JSON.stringify({ showGrid: true, gridSize: -4 }));
+    expect(loadPrefs().showGrid).toBe(true);
+    expect(loadPrefs().gridSize).toBe(8);
   });
 
   it("defaults the theme to dark, including for unknown stored values", () => {

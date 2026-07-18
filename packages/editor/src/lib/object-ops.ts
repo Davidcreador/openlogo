@@ -13,15 +13,13 @@ import {
   findContainerId,
   getActiveArtboard,
   getContainerChildIds,
-  pathGeometryToSvg,
   rotatePoint,
-  scalePathGeometry,
-  translatePathGeometry,
   unitBounds,
   visualBounds,
 } from "@openlogo/core";
 import { expandStroke } from "@openlogo/renderer";
 import { getCanvasKit } from "./canvaskit";
+import { applyTransform } from "./transform-ops";
 import { recordTransform } from "./transform-again";
 import { documentStore } from "../state/document";
 
@@ -258,72 +256,33 @@ export function distributeNodesSpacing(
   }
 }
 
-/** Mirror nodes across the selection bounds (content mirrored for paths). */
+/**
+ * Mirror nodes across the selection centre. Shares reflectLeafPatches with
+ * the Transform dialog so Flip / Reflect / ⌘D stay one code path.
+ * "horizontal" = across the vertical mid-line (axis 90°);
+ * "vertical" = across the horizontal mid-line (axis 0°).
+ */
 export function flipNodes(
   nodeIds: readonly string[],
   axis: "horizontal" | "vertical",
 ): void {
-  const document = documentStore.document;
   const units = selectedUnits(nodeIds, "unrotated");
   const bounds = unionBounds(units);
   if (!bounds) {
     return;
   }
-
-  // Mirroring every leaf across the shared bounds also mirrors a
-  // group's internal arrangement, which is the Illustrator behaviour.
-  const leaves = collectLeafNodeIds(
-    document,
-    units.map((unit) => unit.id),
-  )
-    .map((id) => document.nodes[id])
-    .filter(
-      (node): node is LogoNode => Boolean(node) && !node!.locked,
-    );
-
-  const horizontal = axis === "horizontal";
-  const updates = leaves.map((node) => {
-    const patch: NodePatch = {};
-
-    if (horizontal) {
-      patch.x = 2 * bounds.x + bounds.width - (node.x + node.width);
-    } else {
-      patch.y = 2 * bounds.y + bounds.height - (node.y + node.height);
-    }
-    if (node.rotation !== 0) {
-      patch.rotation = -node.rotation;
-    }
-
-    if (node.type === "path" && node.geometry) {
-      const mirrored = translatePathGeometry(
-        scalePathGeometry(
-          node.geometry,
-          horizontal ? -1 : 1,
-          horizontal ? 1 : -1,
-        ),
-        horizontal ? node.intrinsicWidth : 0,
-        horizontal ? 0 : node.intrinsicHeight,
-      );
-      patch.geometry = mirrored;
-      patch.d = pathGeometryToSvg(mirrored);
-    }
-
-    return { nodeId: node.id, patch };
-  });
-
-  documentStore.apply({ type: "update-nodes", updates });
-  // A flip is a reflect: "horizontal" mirrors across the vertical line
-  // through the selection centre (axis 90°), "vertical" across the
-  // horizontal one (axis 0°). ⌘D repeats it.
-  recordTransform({
-    kind: "reflect",
-    axisAngle: horizontal ? 90 : 0,
-    pivot: {
-      x: bounds.x + bounds.width / 2,
-      y: bounds.y + bounds.height / 2,
-    },
-    copy: false,
-  });
+  const pivot = {
+    x: bounds.x + bounds.width / 2,
+    y: bounds.y + bounds.height / 2,
+  };
+  const spec = {
+    kind: "reflect" as const,
+    axisAngle: axis === "horizontal" ? 90 : 0,
+    pivot,
+  };
+  if (applyTransform(nodeIds, spec, false)) {
+    recordTransform({ ...spec, copy: false });
+  }
 }
 
 /**

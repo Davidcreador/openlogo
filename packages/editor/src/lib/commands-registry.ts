@@ -48,6 +48,7 @@ export type CommandId =
   | "arrange.transform"
   | "view.fit"
   | "view.actual-size"
+  | "view.toggle-grid"
   | "view.design-mate"
   | "document.open"
   | "document.save"
@@ -112,6 +113,13 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "arrange.transform", label: "Open Transform dialog", group: "Arrange", keywords: "rotate reflect" },
   { id: "view.fit", label: "Fit to View", group: "View", shortcut: "Mod+0", keywords: "zoom artboard" },
   { id: "view.actual-size", label: "Zoom to 100%", group: "View", shortcut: "Mod+1", keywords: "actual size" },
+  {
+    id: "view.toggle-grid",
+    label: "Show Grid",
+    group: "View",
+    shortcut: "Mod+'",
+    keywords: "overlay snap guides",
+  },
   { id: "view.design-mate", label: "Toggle Design Mate", group: "View", keywords: "assistant review" },
   { id: "document.open", label: "Open document", group: "Document", shortcut: "Mod+O" },
   { id: "document.save", label: "Save document", group: "Document", shortcut: "Mod+S" },
@@ -237,6 +245,7 @@ export const SHORTCUT_GROUPS = [
     label: "View",
     items: [
       ["Fit to View", "Mod+0"], ["Zoom to 100%", "Mod+1"],
+      ["Show Grid", "Mod+'"],
       ["Zoom in", "Mod+Plus"], ["Zoom out", "Mod+Minus"],
       ["Command Palette", "Mod+K"], ["Keyboard shortcuts", "Mod+/"],
     ],

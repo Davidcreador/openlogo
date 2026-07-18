@@ -316,6 +316,9 @@ function runEditorCommand(id: CommandId): void {
     case "view.actual-size":
       setZoom(1);
       return;
+    case "view.toggle-grid":
+      state.setShowGrid(!state.showGrid);
+      return;
     case "view.design-mate":
       document
         .querySelector<HTMLButtonElement>("[data-design-mate-trigger]")
@@ -817,15 +820,21 @@ export default function App() {
           return;
         }
 
-        // Zoom: ⌘0 fit, ⌘1 100%, ⌘+/⌘−.
+        // Zoom: ⌘0 fit, ⌘1 100%, ⌘+/⌘−. Grid: ⌘' (Illustrator Show Grid).
         if (
           key === "0" ||
           key === "1" ||
           key === "=" ||
           key === "+" ||
-          key === "-"
+          key === "-" ||
+          key === "'" ||
+          key === '"'
         ) {
           event.preventDefault();
+          if (key === "'" || key === '"') {
+            runEditorCommand("view.toggle-grid");
+            return;
+          }
           const { camera, viewport, setCamera } = state;
           if (viewport.width === 0) {
             return;
