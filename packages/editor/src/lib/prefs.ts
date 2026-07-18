@@ -11,12 +11,20 @@ const PREFS_KEY = "openlogo:prefs";
 
 export type ThemeName = "dark" | "light";
 
+export type PreviewSurface = "artboard" | "light" | "dark" | "transparent";
+
 export type EditorPrefs = {
   /** UI theme. Dark is the product default; light only when chosen. */
   theme: ThemeName;
   pixelSnap: boolean;
   designMateScope: ReviewScope;
   designMateRemoteEnabled: boolean;
+  /**
+   * Size-check dock. null = auto (open once the active artboard has
+   * content, collapsed on an empty canvas); a user toggle sticks.
+   */
+  previewStripOpen: boolean | null;
+  previewStripSurface: PreviewSurface;
 };
 
 const DEFAULTS: EditorPrefs = {
@@ -24,7 +32,18 @@ const DEFAULTS: EditorPrefs = {
   pixelSnap: false,
   designMateScope: "active-artboard",
   designMateRemoteEnabled: false,
+  previewStripOpen: null,
+  previewStripSurface: "artboard",
 };
+
+function isPreviewSurface(value: unknown): value is PreviewSurface {
+  return (
+    value === "artboard" ||
+    value === "light" ||
+    value === "dark" ||
+    value === "transparent"
+  );
+}
 
 function isReviewScope(value: unknown): value is ReviewScope {
   return (
@@ -56,6 +75,13 @@ export function loadPrefs(): EditorPrefs {
         typeof parsed.designMateRemoteEnabled === "boolean"
           ? parsed.designMateRemoteEnabled
           : DEFAULTS.designMateRemoteEnabled,
+      previewStripOpen:
+        typeof parsed.previewStripOpen === "boolean"
+          ? parsed.previewStripOpen
+          : DEFAULTS.previewStripOpen,
+      previewStripSurface: isPreviewSurface(parsed.previewStripSurface)
+        ? parsed.previewStripSurface
+        : DEFAULTS.previewStripSurface,
     };
   } catch {
     return { ...DEFAULTS };

@@ -29,7 +29,23 @@ describe("editor preferences", () => {
       pixelSnap: true,
       designMateScope: "active-artboard",
       designMateRemoteEnabled: false,
+      previewStripOpen: null,
+      previewStripSurface: "artboard",
     });
+  });
+
+  it("keeps the size-check dock in auto mode unless a toggle was stored", () => {
+    installStorage(JSON.stringify({ previewStripOpen: true }));
+    expect(loadPrefs().previewStripOpen).toBe(true);
+    installStorage(JSON.stringify({ previewStripOpen: "yes" }));
+    expect(loadPrefs().previewStripOpen).toBeNull();
+  });
+
+  it("validates the stored size-check surface", () => {
+    installStorage(JSON.stringify({ previewStripSurface: "dark" }));
+    expect(loadPrefs().previewStripSurface).toBe("dark");
+    installStorage(JSON.stringify({ previewStripSurface: "sepia" }));
+    expect(loadPrefs().previewStripSurface).toBe("artboard");
   });
 
   it("round-trips explicit remote consent and the preferred review scope", () => {
@@ -39,12 +55,16 @@ describe("editor preferences", () => {
       pixelSnap: false,
       designMateScope: "document",
       designMateRemoteEnabled: true,
+      previewStripOpen: false,
+      previewStripSurface: "transparent",
     });
     expect(loadPrefs()).toEqual({
       theme: "dark",
       pixelSnap: false,
       designMateScope: "document",
       designMateRemoteEnabled: true,
+      previewStripOpen: false,
+      previewStripSurface: "transparent",
     });
   });
 

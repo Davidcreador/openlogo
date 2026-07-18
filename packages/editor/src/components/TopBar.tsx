@@ -36,9 +36,9 @@ import {
   getActiveArtboard,
   nextArtboardPosition,
 } from "@openlogo/core";
-import { type BooleanOp, fitBounds } from "@openlogo/renderer";
+import { type BooleanOp } from "@openlogo/renderer";
+import { ensureArtboardVisible, fitArtboard } from "../lib/artboard-ops";
 import { applyBooleanOp, combinableNodes } from "../lib/boolean-ops";
-import { SettingsDialog } from "./SettingsDialog";
 import { cancelActiveCanvasSessions } from "../lib/canvas-sessions";
 import {
   canMakeCompoundPath,
@@ -57,10 +57,10 @@ import {
 import { exportPack } from "../lib/export-pack";
 import { deleteSelection as deleteSelectedUnits } from "../lib/group-ops";
 import { clearEditingSession } from "../lib/session-resume";
-import { ensureArtboardVisible } from "../lib/artboard-ops";
 import { MAX_SVG_IMPORT_BYTES, importSvg } from "../lib/svg-import";
 import { documentStore, useDocument } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
+import { SettingsDialog } from "./SettingsDialog";
 
 const BOOLEAN_OPS: Array<{
   id: BooleanOp;
@@ -147,20 +147,6 @@ function normalizeArtboardDimension(value: number): number | null {
   return rounded >= 1 && rounded <= MAX_ARTBOARD_DIMENSION ? rounded : null;
 }
 
-/** Fit the camera to an artboard (new/switched); no-op before first layout. */
-function fitCameraTo(artboardId: string) {
-  const state = useEditorStore.getState();
-  const target = documentStore.document.artboards.find(
-    (item) => item.id === artboardId,
-  );
-  if (target && state.viewport.width > 0) {
-    // Automatic view change: fit without magnifying past actual size.
-    state.setCamera(
-      fitBounds(target, state.viewport.width, state.viewport.height, 48, 1),
-    );
-  }
-}
-
 function ArtboardRenameField({
   artboard,
   onDone,
@@ -223,7 +209,7 @@ function ArtboardMenu() {
   function activate(artboardId: string) {
     documentStore.apply({ type: "set-active-artboard", artboardId });
     setSelection([]);
-    fitCameraTo(artboardId);
+    fitArtboard(artboardId);
     setOpen(false);
   }
 
@@ -303,7 +289,7 @@ function ArtboardMenu() {
     setConfirmDeleteId(null);
     documentStore.apply({ type: "remove-artboard", artboardId });
     setSelection([]);
-    fitCameraTo(documentStore.document.activeArtboardId);
+    fitArtboard(documentStore.document.activeArtboardId);
   }
 
   function createVariant(purpose: LogoVariant) {
@@ -785,52 +771,56 @@ export function TopBar() {
       </div>
 
       <div className="flex items-center gap-8">
-        <div
-          className={CHROME_GROUP}
-          role="group"
-          aria-label="Path operations"
-        >
-          <button
-            type="button"
-            className={ICON_BUTTON}
-            onClick={() => void runCompound()}
-            disabled={!canCompound}
-            data-tooltip="Make compound path  ·  ⌘8"
-            aria-label="Make compound path (Command 8)"
+        {/* Path operations only make sense with 2+ shapes selected; keep
+            the chrome quiet until then (they stay reachable via ⌘K). */}
+        {selectedNodeIds.length >= 2 && (
+          <div
+            className={CHROME_GROUP}
+            role="group"
+            aria-label="Path operations"
           >
-            <Combine size={16} strokeWidth={1.75} />
-          </button>
-          <button
-            type="button"
-            className={ICON_BUTTON}
-            onClick={runReleaseCompound}
-            disabled={!canReleaseCompound}
-            data-tooltip="Release compound path  ·  ⌥⇧⌘8"
-            aria-label="Release compound path (Option Shift Command 8)"
-          >
-            <Unlink size={16} strokeWidth={1.75} />
-          </button>
-          <span
-            className="mx-2 h-18 w-px bg-chrome-border"
-            aria-hidden="true"
-          />
-          {BOOLEAN_OPS.map((op) => {
-            const Icon = op.icon;
-            return (
-              <button
-                key={op.id}
-                type="button"
-                className={ICON_BUTTON}
-                onClick={() => void runBoolean(op.id)}
-                disabled={!canCombine}
-                data-tooltip={`${op.label} shapes`}
-                aria-label={`${op.label} selected shapes`}
-              >
-                <Icon size={16} strokeWidth={1.75} />
-              </button>
-            );
-          })}
-        </div>
+            <button
+              type="button"
+              className={ICON_BUTTON}
+              onClick={() => void runCompound()}
+              disabled={!canCompound}
+              data-tooltip="Make compound path  ·  ⌘8"
+              aria-label="Make compound path (Command 8)"
+            >
+              <Combine size={16} strokeWidth={1.75} />
+            </button>
+            <button
+              type="button"
+              className={ICON_BUTTON}
+              onClick={runReleaseCompound}
+              disabled={!canReleaseCompound}
+              data-tooltip="Release compound path  ·  ⌥⇧⌘8"
+              aria-label="Release compound path (Option Shift Command 8)"
+            >
+              <Unlink size={16} strokeWidth={1.75} />
+            </button>
+            <span
+              className="mx-2 h-18 w-px bg-chrome-border"
+              aria-hidden="true"
+            />
+            {BOOLEAN_OPS.map((op) => {
+              const Icon = op.icon;
+              return (
+                <button
+                  key={op.id}
+                  type="button"
+                  className={ICON_BUTTON}
+                  onClick={() => void runBoolean(op.id)}
+                  disabled={!canCombine}
+                  data-tooltip={`${op.label} shapes`}
+                  aria-label={`${op.label} selected shapes`}
+                >
+                  <Icon size={16} strokeWidth={1.75} />
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-10">

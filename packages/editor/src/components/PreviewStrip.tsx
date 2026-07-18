@@ -1,12 +1,14 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { ChevronDown } from "lucide-react";
 import { type LogoDocument, getActiveArtboard } from "@openlogo/core";
 import { documentToSvg } from "../lib/export";
+import type { PreviewSurface } from "../lib/prefs";
 import { useDocument } from "../state/document";
+import { useEditorStore } from "../state/editor-store";
+
+export type { PreviewSurface };
 
 export const PREVIEW_SIZES = [128, 64, 48, 32, 16] as const;
-
-export type PreviewSurface = "artboard" | "light" | "dark" | "transparent";
 
 const SURFACES: {
   id: PreviewSurface;
@@ -50,9 +52,16 @@ export function productionPreviewSvg(
  */
 export function PreviewStrip() {
   const document = useDocument();
-  const [open, setOpen] = useState(true);
-  const [surface, setSurface] = useState<PreviewSurface>("artboard");
+  const previewStripOpen = useEditorStore((state) => state.previewStripOpen);
+  const setPreviewStripOpen = useEditorStore(
+    (state) => state.setPreviewStripOpen,
+  );
+  const surface = useEditorStore((state) => state.previewStripSurface);
+  const setSurface = useEditorStore((state) => state.setPreviewStripSurface);
   const artboard = getActiveArtboard(document);
+  // Auto mode (no explicit toggle): stay out of the way on an empty
+  // canvas, open once there is something to check.
+  const open = previewStripOpen ?? artboard.nodeIds.length > 0;
 
   const svg = useMemo(
     () => productionPreviewSvg(document, surface),
@@ -74,7 +83,7 @@ export function PreviewStrip() {
       <button
         type="button"
         className="preview-toggle flex w-full items-center justify-between gap-16 px-12 py-9 text-left transition-colors duration-140 ease-studio hover:bg-field/60"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setPreviewStripOpen(!open)}
         aria-expanded={open}
         aria-controls="logo-production-previews"
       >

@@ -563,6 +563,34 @@ export function DesignMateChatPanel({
   const showChips =
     chatAvailable && transcript.entries.length === 0 && !chipsDismissed;
 
+  // No provider yet: one compact setup card instead of a full-height
+  // chat surface with a disabled composer. Scope controls stay — the
+  // "Take a look" review runs locally without a provider.
+  if (!providerConfigured && transcript.entries.length === 0) {
+    return (
+      <section
+        className="flex min-h-0 flex-1 flex-col"
+        aria-label="Chat with Design Mate"
+      >
+        <div className="m-13 flex flex-col items-center gap-4 rounded-[10px] border border-panel-hairline bg-card px-16 py-14 text-center">
+          <Sparkles size={16} className="text-ink-faint" aria-hidden="true" />
+          <p className="m-0 mt-3 text-[11px] font-[600] text-ink-dim">
+            Connect a model provider
+          </p>
+          <p className="m-0 text-[10px] leading-[1.5] text-ink-faint">
+            Open Settings (gear, top right) and add your API key to use
+            chat.
+          </p>
+        </div>
+        {controls && (
+          <div className="mt-auto shrink-0 border-t border-panel-hairline px-13 pb-10 pt-9">
+            {controls}
+          </div>
+        )}
+      </section>
+    );
+  }
+
   return (
     <section
       className="flex min-h-0 flex-1 flex-col"
@@ -597,7 +625,7 @@ export function DesignMateChatPanel({
             <p className="m-0 text-[10px] leading-[1.5] text-ink-faint">
               {providerConfigured
                 ? "Hierarchy, character, scale, or the brief — nothing changes unless you say so."
-                : "Open Settings (gear) and add your API key to use chat."}
+                : "Open Settings (gear, top right) and add your API key to use chat."}
             </p>
           </div>
         ) : (

@@ -828,46 +828,41 @@ export function DashboardView({
             </span>
           </div>
 
-          <label className="relative ml-auto min-w-0 flex-1 md:max-w-[440px]">
-            <Search
-              className="pointer-events-none absolute left-11 top-1/2 -translate-y-1/2 text-ink-faint"
-              size={14}
-              aria-hidden="true"
-            />
-            <input
-              type="search"
-              className={`${FIELD_INPUT} w-full pl-34`}
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search projects"
-              aria-label="Search projects by name"
-            />
-          </label>
+          {library.documents.length > 0 && (
+            <label className="relative ml-auto min-w-0 flex-1 md:max-w-[440px]">
+              <Search
+                className="pointer-events-none absolute left-11 top-1/2 -translate-y-1/2 text-ink-faint"
+                size={14}
+                aria-hidden="true"
+              />
+              <input
+                type="search"
+                className={`${FIELD_INPUT} w-full pl-34`}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search projects"
+                aria-label="Search projects by name"
+              />
+            </label>
+          )}
 
-          <button
-            type="button"
-            className="inline-flex h-36 items-center gap-6 rounded-field border border-field-border bg-card px-10 text-[12px] font-[620] text-ink transition-[border-color,color,transform] duration-140 ease-studio hover:border-accent/55 hover:text-accent active:scale-[0.98] motion-reduce:transform-none sm:px-12"
-            onClick={() => setTemplatesOpen(true)}
-            aria-haspopup="dialog"
-            aria-label="Browse templates"
-          >
-            <Sparkles size={13} className="text-accent" aria-hidden="true" />
-            <span className="hidden sm:inline">Templates</span>
-          </button>
+          {/* Templates live in the Foundry banner below; no second path here. */}
 
-          <label className="hidden h-36 items-center gap-7 rounded-field border border-field-border bg-field pl-9 text-[10.5px] text-ink-dim transition-[border-color,box-shadow] duration-140 focus-within:border-accent focus-within:shadow-ring sm:flex">
-            Sort
-            <select
-              className="h-full w-112 rounded-r-field border-0 border-l border-field-border bg-transparent px-9 text-[11.5px] text-ink outline-none"
-              value={sort}
-              onChange={(event) => setSort(event.target.value as DashboardSort)}
-              aria-label="Sort projects"
-            >
-              <option value="recent">Recent</option>
-              <option value="name">Name</option>
-              <option value="created">Created</option>
-            </select>
-          </label>
+          {library.documents.length > 1 && (
+            <label className="hidden h-36 items-center gap-7 rounded-field border border-field-border bg-field pl-9 text-[10.5px] text-ink-dim transition-[border-color,box-shadow] duration-140 focus-within:border-accent focus-within:shadow-ring sm:flex">
+              Sort
+              <select
+                className="h-full w-112 rounded-r-field border-0 border-l border-field-border bg-transparent px-9 text-[11.5px] text-ink outline-none"
+                value={sort}
+                onChange={(event) => setSort(event.target.value as DashboardSort)}
+                aria-label="Sort projects"
+              >
+                <option value="recent">Recent</option>
+                <option value="name">Name</option>
+                <option value="created">Created</option>
+              </select>
+            </label>
+          )}
 
           <input
             ref={fileInputRef}
@@ -884,7 +879,7 @@ export function DashboardView({
           />
           <button
             type="button"
-            className={SECONDARY_BUTTON}
+            className={`${SECONDARY_BUTTON} ml-auto`}
             onClick={() => fileInputRef.current?.click()}
             disabled={busy}
             aria-label="Import project"

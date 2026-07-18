@@ -22,6 +22,7 @@ import {
   pixelSnapPatch,
 } from "@openlogo/core";
 import { type BooleanOp, fitBounds, zoomAt } from "@openlogo/renderer";
+import { fitArtboardAfterViewportChange } from "./lib/artboard-ops";
 import { canPasteNodes, copyNodes, cutNodes, pasteNodes } from "./lib/clipboard";
 import { applyBooleanOp, combinableNodes } from "./lib/boolean-ops";
 import { getCanvasKit } from "./lib/canvaskit";
@@ -92,6 +93,11 @@ const TransformDialog = lazy(() =>
 const DesignMateCompanion = lazy(() =>
   import("./components/DesignMateCompanion").then((module) => ({
     default: module.DesignMateCompanion,
+  })),
+);
+const DesignMateDock = lazy(() =>
+  import("./components/DesignMateCompanion").then((module) => ({
+    default: module.DesignMateDock,
   })),
 );
 const DashboardView = lazy(() =>
@@ -347,6 +353,7 @@ function commandAvailability(selection: string[]): CommandAvailability {
 export default function App() {
   const view = useEditorStore((state) => state.view);
   const selectedNodeIds = useEditorStore((state) => state.selectedNodeIds);
+  const designMateOpen = useEditorStore((state) => state.designMateOpen);
   const [sessionReady, setSessionReady] = useState(false);
   const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const [bootstrapLoading, setBootstrapLoading] = useState(true);
@@ -369,6 +376,8 @@ export default function App() {
     export: false,
     library: false,
   });
+  // Skip the mount tick — only re-fit when the dock actually toggles.
+  const designMateFitReady = useRef(false);
 
   useEffect(() => {
     if (
@@ -388,6 +397,16 @@ export default function App() {
     loadedDialogs,
     transformDialogOpen,
   ]);
+
+  // Dock open/close changes the canvas column width; wait for ResizeObserver
+  // to publish the new viewport, then fit so the artboard is not clipped.
+  useEffect(() => {
+    if (!designMateFitReady.current) {
+      designMateFitReady.current = true;
+      return;
+    }
+    fitArtboardAfterViewportChange();
+  }, [designMateOpen]);
 
   // Dashboard boot reads repository metadata only. CanvasKit, the active head,
   // fonts, and DocumentSession remain cold until the user enters the editor.
@@ -1050,7 +1069,11 @@ export default function App() {
       {/* The whole workspace shares one textured surface; the GPU canvas
           clears to transparent so panels genuinely sit on the same material. */}
       <div
-        className="app-main grid min-h-0 grid-cols-[72px_minmax(0,1fr)_336px] bg-surface bg-[radial-gradient(var(--color-canvas-dot)_1px,transparent_1.15px)] bg-[size:20px_20px]"
+        className={`app-main grid min-h-0 bg-surface bg-[radial-gradient(var(--color-canvas-dot)_1px,transparent_1.15px)] bg-[size:20px_20px] ${
+          designMateOpen
+            ? "grid-cols-[72px_minmax(0,1fr)_336px_390px]"
+            : "grid-cols-[72px_minmax(0,1fr)_336px]"
+        }`}
       >
         <Toolbar />
         <section
@@ -1123,6 +1146,9 @@ export default function App() {
           }
         >
           <Inspector />
+        </Suspense>
+        <Suspense fallback={null}>
+          <DesignMateDock />
         </Suspense>
       </div>
       <CommandPalette

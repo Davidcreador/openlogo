@@ -7,7 +7,12 @@ import type {
   DesignMateFocusTarget,
   DesignMateRequestSignature,
 } from "../lib/design-mate-review";
-import { loadPrefs, savePrefs, type ThemeName } from "../lib/prefs";
+import {
+  loadPrefs,
+  savePrefs,
+  type PreviewSurface,
+  type ThemeName,
+} from "../lib/prefs";
 
 export type Tool =
   | "select"
@@ -60,6 +65,12 @@ type EditorState = {
   designMateRemoteEnabled: boolean;
   designMateStatus: DesignMateStatus;
   designMateError: string | null;
+  /**
+   * Design Mate dock visibility (session-only). When open the workspace
+   * grid gains a third panel column, so the canvas yields width instead
+   * of being covered.
+   */
+  designMateOpen: boolean;
   rendererReady: boolean;
   /** Local document hydration/autosave state shown in the app chrome. */
   documentSessionState: DocumentSessionState;
@@ -90,6 +101,13 @@ type EditorState = {
   theme: ThemeName;
   /** Transient status message (file open errors etc.); null = hidden. */
   toast: string | null;
+  /**
+   * Size-check dock expansion (persisted). null = auto: collapsed while
+   * the active artboard is empty, opens once it has content.
+   */
+  previewStripOpen: boolean | null;
+  /** Size-check preview background (persisted). */
+  previewStripSurface: PreviewSurface;
   setTool: (tool: Tool) => void;
   setGradientTarget: (target: GradientTarget) => void;
   setView: (view: EditorView) => void;
@@ -112,8 +130,11 @@ type EditorState = {
   setDesignMateRemoteEnabled: (enabled: boolean) => void;
   setDesignMateStatus: (status: DesignMateStatus) => void;
   setDesignMateError: (error: string | null) => void;
+  setDesignMateOpen: (open: boolean) => void;
   setRendererReady: (ready: boolean) => void;
   setDocumentSessionState: (state: DocumentSessionState) => void;
+  setPreviewStripOpen: (open: boolean) => void;
+  setPreviewStripSurface: (surface: PreviewSurface) => void;
 };
 
 const initialPrefs = loadPrefs();
@@ -131,6 +152,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   designMateRemoteEnabled: initialPrefs.designMateRemoteEnabled,
   designMateStatus: "idle",
   designMateError: null,
+  designMateOpen: false,
   rendererReady: false,
   documentSessionState: "loading",
   editingPathId: null,
@@ -143,6 +165,8 @@ export const useEditorStore = create<EditorState>((set) => ({
   pixelSnap: initialPrefs.pixelSnap,
   theme: initialPrefs.theme,
   toast: null,
+  previewStripOpen: initialPrefs.previewStripOpen,
+  previewStripSurface: initialPrefs.previewStripSurface,
   setView: (view) => set({ view }),
   setTool: (tool) => set({ tool }),
   setGradientTarget: (gradientTarget) => set({ gradientTarget }),
@@ -190,7 +214,16 @@ export const useEditorStore = create<EditorState>((set) => ({
   },
   setDesignMateStatus: (designMateStatus) => set({ designMateStatus }),
   setDesignMateError: (designMateError) => set({ designMateError }),
+  setDesignMateOpen: (designMateOpen) => set({ designMateOpen }),
   setRendererReady: (rendererReady) => set({ rendererReady }),
   setDocumentSessionState: (documentSessionState) =>
     set({ documentSessionState }),
+  setPreviewStripOpen: (previewStripOpen) => {
+    savePrefs({ ...loadPrefs(), previewStripOpen });
+    set({ previewStripOpen });
+  },
+  setPreviewStripSurface: (previewStripSurface) => {
+    savePrefs({ ...loadPrefs(), previewStripSurface });
+    set({ previewStripSurface });
+  },
 }));

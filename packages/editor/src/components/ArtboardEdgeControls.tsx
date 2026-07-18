@@ -72,9 +72,9 @@ export function ArtboardEdgeControls() {
           <button
             key={side}
             type="button"
-            className="absolute z-20 grid h-24 w-24 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-panel-hairline bg-panel/92 text-ink-dim opacity-55 shadow-[0_4px_14px_rgb(19_16_25/0.18)] transition-[opacity,color,background-color,border-color] hover:border-accent hover:bg-accent hover:text-white hover:opacity-100"
+            className="chrome-tooltip chrome-tooltip-bottom absolute z-20 grid h-24 w-24 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-panel-hairline bg-panel/92 text-ink-dim opacity-55 shadow-[0_4px_14px_rgb(19_16_25/0.18)] transition-[opacity,color,background-color,border-color] hover:border-accent hover:bg-accent hover:text-white hover:opacity-100"
             style={{ left: point.x, top: point.y }}
-            title={label}
+            data-tooltip={label}
             aria-label={label}
             onClick={() => addArtboardBeside(artboard.id, side)}
           >

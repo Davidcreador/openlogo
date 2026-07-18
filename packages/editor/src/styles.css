@@ -307,7 +307,7 @@
   @keyframes design-mate-in {
     from {
       opacity: 0;
-      transform: translateY(8px) scale(0.975);
+      transform: translateX(14px);
     }
     to {
       opacity: 1;
@@ -316,7 +316,6 @@
   }
 
   .design-mate-panel {
-    transform-origin: bottom right;
     animation: design-mate-in 180ms var(--ease-studio);
   }
 

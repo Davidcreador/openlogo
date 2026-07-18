@@ -2,6 +2,7 @@ import {
   Component,
   lazy,
   Suspense,
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -50,17 +51,12 @@ class DesignMateErrorBoundary extends Component<
   }
 }
 
-export function DesignMateCompanion() {
-  const [open, setOpen] = useState(false);
-  const [activated, setActivated] = useState(false);
-  const launcherRef = useRef<HTMLButtonElement | null>(null);
-  const panelRef = useRef<HTMLElement | null>(null);
-  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+function useDesignMateStatusLine(): string {
   const status = useEditorStore((state) => state.designMateStatus);
   const snapshot = useEditorStore((state) => state.designMateReview);
   const findingCount = snapshot?.review.findings.length ?? 0;
   const thinking = status === "reviewing";
-  const statusLine = thinking
+  return thinking
     ? "Give me a moment…"
     : status === "error"
       ? "I hit a snag—try me again"
@@ -71,97 +67,25 @@ export function DesignMateCompanion() {
               findingCount === 1 ? "thing" : "things"
             }`
         : "Want a second pair of eyes?";
+}
+
+/** Floating launcher in the canvas corner; toggles the dock column. */
+export function DesignMateCompanion() {
+  const launcherRef = useRef<HTMLButtonElement | null>(null);
+  const open = useEditorStore((state) => state.designMateOpen);
+  const setOpen = useEditorStore((state) => state.setDesignMateOpen);
+  const status = useEditorStore((state) => state.designMateStatus);
+  const snapshot = useEditorStore((state) => state.designMateReview);
+  const findingCount = snapshot?.review.findings.length ?? 0;
+  const thinking = status === "reviewing";
+  const statusLine = useDesignMateStatusLine();
 
   function toggle(): void {
-    setActivated(true);
-    if (open) {
-      close();
-      return;
-    }
-    setOpen(true);
-    requestAnimationFrame(() => closeButtonRef.current?.focus());
+    setOpen(!open);
   }
-
-  function close(): void {
-    setOpen(false);
-    requestAnimationFrame(() => launcherRef.current?.focus());
-  }
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const panel = panelRef.current;
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (
-        event.key === "Escape" &&
-        panel?.contains(document.activeElement)
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-        close();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open]);
 
   return (
     <div className="pointer-events-none absolute bottom-64 right-16 z-20 flex flex-col items-end">
-      {activated && (
-        <section
-          ref={panelRef}
-          id={PANEL_ID}
-          className={`design-mate-panel pointer-events-auto mb-10 h-[calc(100vh-176px)] max-h-[690px] min-h-420 w-[390px] flex-col overflow-hidden rounded-[14px] border border-panel-border bg-panel shadow-panel ${
-            open ? "flex" : "hidden"
-          }`}
-          role="dialog"
-          aria-modal="false"
-          aria-labelledby={PANEL_TITLE_ID}
-        >
-          <header className="flex shrink-0 items-center gap-7 border-b border-panel-hairline px-13 py-10">
-            <Sparkles
-              size={14}
-              className={`shrink-0 text-accent ${thinking ? "animate-pulse" : ""}`}
-              aria-hidden="true"
-            />
-            <h2
-              id={PANEL_TITLE_ID}
-              className="m-0 min-w-0 flex-1 truncate text-[12px] font-[650] tracking-[-0.01em] text-ink"
-            >
-              Design Mate
-            </h2>
-            <button
-              ref={closeButtonRef}
-              type="button"
-              className="grid h-26 w-26 shrink-0 place-items-center rounded-m text-ink-dim transition-colors duration-140 ease-studio hover:bg-chrome-raised hover:text-ink"
-              onClick={close}
-              aria-label="Close Design Mate"
-            >
-              <X size={14} aria-hidden="true" />
-            </button>
-          </header>
-
-          <div className="flex min-h-0 flex-1 flex-col">
-            <DesignMateErrorBoundary>
-              <Suspense
-                fallback={
-                  <div
-                    className="grid flex-1 place-items-center text-[11px] text-ink-dim"
-                    role="status"
-                    aria-live="polite"
-                  >
-                    Design Mate is getting ready…
-                  </div>
-                }
-              >
-                <DesignMateSection />
-              </Suspense>
-            </DesignMateErrorBoundary>
-          </div>
-        </section>
-      )}
-
       <button
         ref={launcherRef}
         type="button"
@@ -173,7 +97,7 @@ export function DesignMateCompanion() {
         }`}
         onClick={toggle}
         aria-expanded={open}
-        aria-controls={activated ? PANEL_ID : undefined}
+        aria-controls={PANEL_ID}
         aria-label={`${open ? "Close" : "Open"} Design Mate. ${statusLine}`}
       >
         <Sparkles
@@ -192,5 +116,114 @@ export function DesignMateCompanion() {
         )}
       </button>
     </div>
+  );
+}
+
+/**
+ * Right-edge dock column (after the inspector) hosting Design Mate. The
+ * workspace grid only reserves its width while open; once activated it
+ * stays mounted (hidden) so chat state survives toggling.
+ */
+export function DesignMateDock() {
+  const open = useEditorStore((state) => state.designMateOpen);
+  const setOpen = useEditorStore((state) => state.setDesignMateOpen);
+  const status = useEditorStore((state) => state.designMateStatus);
+  const thinking = status === "reviewing";
+  const [activated, setActivated] = useState(open);
+  const panelRef = useRef<HTMLElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      setActivated(true);
+      requestAnimationFrame(() => closeButtonRef.current?.focus());
+    }
+  }, [open]);
+
+  const close = useCallback((): void => {
+    setOpen(false);
+    requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLButtonElement>("[data-design-mate-trigger]")
+        ?.focus();
+    });
+  }, [setOpen]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const panel = panelRef.current;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (
+        event.key === "Escape" &&
+        panel?.contains(document.activeElement)
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        close();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open, close]);
+
+  if (!activated) {
+    return null;
+  }
+
+  return (
+    <section
+      ref={panelRef}
+      id={PANEL_ID}
+      className={`design-mate-panel min-h-0 w-full flex-col overflow-hidden border-l border-panel-border bg-panel ${
+        open ? "flex" : "hidden"
+      }`}
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby={PANEL_TITLE_ID}
+      aria-hidden={!open}
+    >
+      <header className="flex shrink-0 items-center gap-7 border-b border-panel-hairline px-13 py-10">
+        <Sparkles
+          size={14}
+          className={`shrink-0 text-accent ${thinking ? "animate-pulse" : ""}`}
+          aria-hidden="true"
+        />
+        <h2
+          id={PANEL_TITLE_ID}
+          className="m-0 min-w-0 flex-1 truncate text-[12px] font-[650] tracking-[-0.01em] text-ink"
+        >
+          Design Mate
+        </h2>
+        <button
+          ref={closeButtonRef}
+          type="button"
+          className="grid h-26 w-26 shrink-0 place-items-center rounded-m text-ink-dim transition-colors duration-140 ease-studio hover:bg-chrome-raised hover:text-ink"
+          onClick={close}
+          aria-label="Close Design Mate"
+        >
+          <X size={14} aria-hidden="true" />
+        </button>
+      </header>
+
+      <div className="flex min-h-0 flex-1 flex-col">
+        <DesignMateErrorBoundary>
+          <Suspense
+            fallback={
+              <div
+                className="grid flex-1 place-items-center text-[11px] text-ink-dim"
+                role="status"
+                aria-live="polite"
+              >
+                Design Mate is getting ready…
+              </div>
+            }
+          >
+            <DesignMateSection />
+          </Suspense>
+        </DesignMateErrorBoundary>
+      </div>
+    </section>
   );
 }

@@ -1,10 +1,61 @@
 import { type Artboard, createArtboard } from "@openlogo/core";
+import { fitBounds } from "@openlogo/renderer";
 import { documentStore } from "../state/document";
 import { useEditorStore } from "../state/editor-store";
 
 export type ArtboardSide = "left" | "right" | "top" | "bottom";
 
 const GAP = 48;
+
+/**
+ * Fit the camera to an artboard. No-op before first layout. Caps zoom at
+ * 1× so automatic view changes never magnify past actual size (same
+ * contract as the initial CanvasStage fit and artboard switches).
+ */
+export function fitArtboard(artboardId: string): void {
+  const state = useEditorStore.getState();
+  const target = documentStore.document.artboards.find(
+    (item) => item.id === artboardId,
+  );
+  if (!target || state.viewport.width === 0) {
+    return;
+  }
+  state.setCamera(
+    fitBounds(target, state.viewport.width, state.viewport.height, 48, 1),
+  );
+}
+
+/**
+ * Wait for the next viewport size change (e.g. Design Mate dock open/
+ * close), then fit the active artboard. Falls back after a short delay
+ * if ResizeObserver does not fire.
+ */
+export function fitArtboardAfterViewportChange(
+  artboardId: string = documentStore.document.activeArtboardId,
+): void {
+  const previous = useEditorStore.getState().viewport;
+  let settled = false;
+
+  const settle = () => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    unsub();
+    window.clearTimeout(timer);
+    fitArtboard(artboardId);
+  };
+
+  const unsub = useEditorStore.subscribe((state) => {
+    if (
+      state.viewport.width !== previous.width ||
+      state.viewport.height !== previous.height
+    ) {
+      settle();
+    }
+  });
+  const timer = window.setTimeout(settle, 120);
+}
 
 /** Pan the camera just enough to bring the artboard into view. */
 export function ensureArtboardVisible(artboardId: string): void {

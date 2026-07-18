@@ -49,6 +49,8 @@ import {
   DEFAULT_POLYGON_SIDES,
   DEFAULT_STAR_INNER_RATIO,
   DEFAULT_STAR_POINTS,
+  type Artboard,
+  type ArtboardPatch,
   type Effect,
   type GroupNode,
   type LogoDocument,
@@ -1998,6 +2000,114 @@ function GroupSection({ group }: { group: GroupNode }) {
   );
 }
 
+/**
+ * Active-artboard properties shown when nothing is selected (Figma-style
+ * canvas inspector): position, size and background of the stage the user
+ * is looking at, instead of dead space.
+ */
+function CanvasSection({ artboard }: { artboard: Artboard }) {
+  function patchArtboard(patch: ArtboardPatch) {
+    documentStore.apply({
+      type: "update-artboard",
+      artboardId: artboard.id,
+      patch,
+    });
+  }
+
+  return (
+    <PanelSection title="Artboard" meta={`${artboard.name} · ${artboard.purpose}`}>
+      <div className={FIELD_GRID}>
+        <NumberField
+          label="X"
+          unit="px"
+          value={artboard.x}
+          onCommit={(x) => patchArtboard({ x })}
+        />
+        <NumberField
+          label="Y"
+          unit="px"
+          value={artboard.y}
+          onCommit={(y) => patchArtboard({ y })}
+        />
+        <NumberField
+          label="W"
+          unit="px"
+          value={artboard.width}
+          onCommit={(width) =>
+            patchArtboard({ width: Math.min(16384, Math.max(1, width)) })
+          }
+        />
+        <NumberField
+          label="H"
+          unit="px"
+          value={artboard.height}
+          onCommit={(height) =>
+            patchArtboard({ height: Math.min(16384, Math.max(1, height)) })
+          }
+        />
+      </div>
+      <ArtboardBackgroundField
+        background={artboard.background}
+        onCommit={(background) => patchArtboard({ background })}
+      />
+    </PanelSection>
+  );
+}
+
+/** Hex field for the artboard background; invalid drafts revert on blur. */
+function ArtboardBackgroundField({
+  background,
+  onCommit,
+}: {
+  background: string;
+  onCommit: (background: string) => void;
+}) {
+  const [draft, setDraft] = useState(background);
+
+  useEffect(() => {
+    setDraft(background);
+  }, [background]);
+
+  function commit() {
+    const value = draft.trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(value) && value !== background) {
+      onCommit(value);
+    } else {
+      setDraft(background);
+    }
+  }
+
+  return (
+    <div className="mt-7 flex items-center gap-7">
+      <span
+        className="h-24 w-24 flex-none rounded-[5px] border border-panel-hairline"
+        style={{ backgroundColor: background }}
+        aria-hidden="true"
+      />
+      <input
+        type="text"
+        className="h-24 min-w-0 flex-1 rounded-[5px] border border-field-border bg-field px-7 font-mono text-[11px] text-ink outline-none focus:border-accent"
+        value={draft}
+        autoComplete="off"
+        spellCheck={false}
+        maxLength={7}
+        aria-label="Artboard background color"
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            (event.target as HTMLInputElement).blur();
+          } else if (event.key === "Escape") {
+            setDraft(background);
+            (event.target as HTMLInputElement).blur();
+          }
+        }}
+      />
+      <span className="text-[10px] text-ink-dim">Background</span>
+    </div>
+  );
+}
+
 function SwatchesSection() {
   const document = useDocument();
   const palette = document.palettes[0];
@@ -2915,41 +3025,13 @@ export function Inspector() {
           <EffectsSection node={selectedNodes[0]!} />
         </>
       ) : (
-        <section
-          className="m-10 grid shrink-0 justify-items-center gap-6 rounded-[12px] border border-panel-hairline bg-card px-14 pb-18 pt-22 text-center shadow-section"
-        >
-          <span
-            className="mb-4 grid h-34 w-34 place-items-center rounded-[10px] border border-accent/18 bg-[linear-gradient(135deg,var(--color-accent-soft),var(--color-accent-soft-2))] text-accent"
-            aria-hidden="true"
-          >
-            <Shapes size={16} strokeWidth={1.75} />
-          </span>
-          <strong className="text-[12.5px] font-[650]">Nothing selected</strong>
-          <p className="m-0 text-[11.5px] leading-[1.5] text-ink-dim">
-            Select an object on the canvas to edit it,
-            <br />
-            or start drawing with the tools.
+        <>
+          {activeArtboard && <CanvasSection artboard={activeArtboard} />}
+          <p className="m-10 mt-0 text-[11px] leading-[1.5] text-ink-faint">
+            Select an object to edit it, or draw with the tools:{" "}
+            <kbd>V</kbd> <kbd>R</kbd> <kbd>O</kbd> <kbd>P</kbd> <kbd>T</kbd>
           </p>
-          <div className="mt-12 grid grid-cols-[auto_auto] justify-center gap-x-10 gap-y-6">
-            {(
-              [
-                ["V", "Select"],
-                ["R", "Rectangle"],
-                ["O", "Ellipse"],
-                ["P", "Pen"],
-                ["T", "Text"],
-                ["⌘G", "Group"],
-              ] as const
-            ).map(([key, label]) => (
-              <span
-                key={key}
-                className="flex items-center gap-7 text-[11px] text-ink-dim"
-              >
-                <kbd>{key}</kbd> {label}
-              </span>
-            ))}
-          </div>
-        </section>
+        </>
       )}
       <SwatchesSection />
       </div>
