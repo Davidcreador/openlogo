@@ -6,4 +6,5 @@ dist
 node_modules/.tmp
 .claude/
 .codex-token-guard/
+.wrangler/
 output/

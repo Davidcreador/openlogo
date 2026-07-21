@@ -1,9 +1,27 @@
+import { cloudflare } from "@cloudflare/vite-plugin";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    ...(process.env.OPENLOGO_SITES_BUILD === "true"
+      ? [
+          cloudflare({
+            config: {
+              assets: {
+                binding: "ASSETS",
+                run_worker_first: true,
+              },
+              main: "./worker/index.ts",
+              name: "server",
+            },
+          }),
+        ]
+      : []),
+  ],
   // canvaskit-wasm ships CJS; pre-bundling gives it ESM interop in dev.
   optimizeDeps: {
     include: ["canvaskit-wasm"],
