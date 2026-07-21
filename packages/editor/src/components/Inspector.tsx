@@ -157,6 +157,60 @@ const TEXT_INPUT =
 const OUTLINE_BUTTON =
   "w-full rounded-field border border-dashed border-[rgb(var(--edge-rgb)_/_0.22)] bg-transparent px-10 py-7 text-[12px] text-ink-dim transition-[border-color,color] duration-140 ease-studio hover:enabled:border-accent hover:enabled:text-accent disabled:cursor-not-allowed disabled:opacity-50";
 
+const NO_FILL_COLORS = new Set([
+  "none",
+  "transparent",
+  "#00000000",
+  "#0000",
+]);
+
+export function fillIsEnabled(fill: Paint): boolean {
+  return fill.type !== "solid" || !NO_FILL_COLORS.has(fill.color.toLowerCase());
+}
+
+export function toggledFill(fill: Paint): Paint {
+  return fillIsEnabled(fill)
+    ? { type: "solid", color: "#00000000" }
+    : { type: "solid", color: "#111827" };
+}
+
+function fillMeta(fill: Paint): string {
+  if (!fillIsEnabled(fill)) {
+    return "None";
+  }
+  return fill.type === "solid"
+    ? fill.color.toUpperCase()
+    : fill.type === "linear-gradient"
+      ? "Linear gradient"
+      : "Radial gradient";
+}
+
+function FillSectionAction({
+  fill,
+  meta,
+  patchSelection,
+}: {
+  fill: Paint;
+  meta: string;
+  patchSelection: (patch: NodePatch) => void;
+}) {
+  const enabled = fillIsEnabled(fill);
+  return (
+    <div className="flex min-w-0 items-center gap-6">
+      <span className={SECTION_META}>{enabled ? meta : "None"}</span>
+      <button
+        type="button"
+        className={STROKE_TOGGLE}
+        aria-label="Fill"
+        aria-pressed={enabled}
+        onClick={() => patchSelection({ fill: toggledFill(fill) })}
+      >
+        {enabled ? "Remove" : "Add"}
+      </button>
+    </div>
+  );
+}
+
 function PanelSection({
   title,
   meta,
@@ -715,17 +769,22 @@ function FillEditor({
   previewSelection: (patch: NodePatch) => void;
   cancelPreview: () => void;
 }) {
+  const enabled = fillIsEnabled(node.fill);
   return (
     <>
-      <PaintEditor
-        paint={node.fill}
-        label="Fill"
-        target="fill"
-        onCommit={(fill) => patchSelection({ fill })}
-        onPreview={(fill) => previewSelection({ fill })}
-        onCancelPreview={cancelPreview}
-      />
-      <div className="mt-12 grid grid-cols-[54px_minmax(0,1fr)] items-center gap-8">
+      {enabled && (
+        <PaintEditor
+          paint={node.fill}
+          label="Fill"
+          target="fill"
+          onCommit={(fill) => patchSelection({ fill })}
+          onPreview={(fill) => previewSelection({ fill })}
+          onCancelPreview={cancelPreview}
+        />
+      )}
+      <div
+        className={`${enabled ? "mt-12" : ""} grid grid-cols-[54px_minmax(0,1fr)] items-center gap-8`}
+      >
         <span className="text-[11px] font-[600] text-ink-dim">Opacity</span>
         <div className={OPACITY_FIELD}>
           <OpacityField
@@ -1008,12 +1067,12 @@ function DesignSection({
 
       <PanelSection
         title="Fill"
-        meta={
-          node.fill.type === "solid"
-            ? node.fill.color.toUpperCase()
-            : node.fill.type === "linear-gradient"
-              ? "Linear gradient"
-              : "Radial gradient"
+        action={
+          <FillSectionAction
+            fill={node.fill}
+            meta={fillMeta(node.fill)}
+            patchSelection={patchSelection}
+          />
         }
       >
         <FillEditor
@@ -2784,26 +2843,22 @@ function MultiDesignSection({
           </button>
         )}
       </PanelSection>
-      <PanelSection title="Fill" meta="Applies to selection">
-        <PaintEditor
-          paint={first.fill}
-          label="Fill"
-          target="fill"
-          onCommit={(fill) => patchSelection({ fill })}
-          onPreview={(fill) => previewSelection({ fill })}
-          onCancelPreview={cancelPreview}
+      <PanelSection
+        title="Fill"
+        action={
+          <FillSectionAction
+            fill={first.fill}
+            meta="Applies to selection"
+            patchSelection={patchSelection}
+          />
+        }
+      >
+        <FillEditor
+          node={first}
+          patchSelection={patchSelection}
+          previewSelection={previewSelection}
+          cancelPreview={cancelPreview}
         />
-        <div className="mt-12 grid grid-cols-[54px_minmax(0,1fr)] items-center gap-8">
-          <span className="text-[11px] font-[600] text-ink-dim">Opacity</span>
-          <div className={OPACITY_FIELD}>
-            <OpacityField
-              value={first.opacity}
-              onPreview={(opacity) => previewSelection({ opacity })}
-              onCommit={(opacity) => patchSelection({ opacity })}
-              onCancel={cancelPreview}
-            />
-          </div>
-        </div>
         <div className="mt-14 border-t border-panel-hairline pt-12">
           <div className={`${STROKE_HEAD} mb-8`}>
             <span>Palette</span>

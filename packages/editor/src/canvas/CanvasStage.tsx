@@ -246,6 +246,17 @@ type DragState =
       moved: boolean;
     };
 
+export function penPathAppearance(
+  closed: boolean,
+): Pick<PathNode, "fill" | "stroke"> {
+  return closed
+    ? { fill: { type: "solid", color: "#111827" } }
+    : {
+        fill: { type: "solid", color: "#00000000" },
+        stroke: { color: "#111827", width: 2, align: "center" },
+      };
+}
+
 /** Tools that drag-to-draw; a plain click places the default size. */
 const SHAPE_DRAW_TOOLS = new Set<Tool>([
   "rectangle",
@@ -1432,7 +1443,7 @@ export function CanvasStage({
       opacity: 1,
       visible: true,
       locked: false,
-      fill: { type: "solid", color: "#111827" },
+      ...penPathAppearance(closed),
       d: patch.d!,
       fillRule: "nonzero",
       intrinsicWidth: patch.intrinsicWidth!,
